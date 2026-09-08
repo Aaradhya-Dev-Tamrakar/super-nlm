@@ -1,0 +1,10 @@
+.venv/
+.git/
+.gitignore
+tools/
+tests/
+__pycache__/
+*.pyc
+*.tmp
+launch*.bat
+launch*.ps1
