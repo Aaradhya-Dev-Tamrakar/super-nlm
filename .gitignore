@@ -1,0 +1,28 @@
+# Logs and databases
+*.log
+*.sqlite
+*.sqlite3
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Node / NPM
+node_modules/
+dist/
+build/
+
+# Python
+__pycache__/
+*.py[cod]
+*.class
+.venv/
+env/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
