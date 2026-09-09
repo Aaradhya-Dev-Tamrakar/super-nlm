@@ -298,12 +298,12 @@ def is_rate_limit_or_quota_error(err: str) -> bool:
     ]
     return any(sig in lower for sig in signals)
 
-async def check_or_share_with_pro(notebook_id: str, source_profile_id: str, pro_email: str) -> bool:
+async def ensure_notebook_shared(notebook_id: str, source_profile_id: str, target_email: str) -> bool:
     """
-    Checks if the Pro account is already a collaborator on the notebook.
-    If not, automatically invites the Pro account as an editor.
+    Checks if target_email is already a collaborator on notebook_id via source_profile_id.
+    If not, automatically invites target_email as an editor.
     """
-    if not pro_email:
+    if not target_email or not source_profile_id:
         return False
 
     # Check current sharing status
@@ -313,21 +313,25 @@ async def check_or_share_with_pro(notebook_id: str, source_profile_id: str, pro_
             data = json.loads(status_res["stdout"])
             collaborators = data.get("collaborators", [])
             for c in collaborators:
-                if c.get("email", "").lower() == pro_email.lower():
-                    logger.info(f"Notebook {notebook_id} is already shared with Pro AI ({pro_email})")
+                if c.get("email", "").lower() == target_email.lower():
+                    logger.info(f"Notebook {notebook_id} is already shared with {target_email}")
                     return True
         except Exception as e:
             logger.warning(f"Could not parse share status for notebook {notebook_id}: {e}")
 
-    # Invite Pro account
-    logger.info(f"Inviting Pro AI ({pro_email}) to notebook {notebook_id} via profile {source_profile_id}")
+    # Invite target account as editor
+    logger.info(f"Inviting {target_email} to notebook {notebook_id} via profile {source_profile_id}")
     invite_res = await run_nlm_cmd([
-        "share", "invite", notebook_id, pro_email,
+        "share", "invite", notebook_id, target_email,
         "--role", "editor",
         "--profile", source_profile_id
     ], timeout=25)
 
     return invite_res["success"]
+
+async def check_or_share_with_pro(notebook_id: str, source_profile_id: str, pro_email: str) -> bool:
+    """Backward-compatible wrapper for Pro fallback sharing."""
+    return await ensure_notebook_shared(notebook_id, source_profile_id, pro_email)
 
 async def query_notebook_with_pro_fallback(
     profile_id: str,

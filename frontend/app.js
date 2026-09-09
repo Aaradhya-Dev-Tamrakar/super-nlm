@@ -624,11 +624,11 @@ function renderAccountPills() {
   container.innerHTML = '';
 
   // "All Accounts" pill
-  const totalCount = state.notebooks.length;
+  const uniqueCount = new Set(state.notebooks.map(n => n.id)).size;
   const allPill = createPill({
     id: 'all',
     label: 'All Accounts',
-    count: totalCount,
+    count: uniqueCount,
     isActive: state.activeProfileFilter === 'all',
     isPro: false
   });
@@ -698,13 +698,68 @@ function createPill({ id, label, count, color, isActive, isPro }) {
 }
 
 function getVisibleNotebooks() {
-  return state.notebooks.filter(n => {
-    const matchesAccount = state.activeProfileFilter === 'all' || n.profileId === state.activeProfileFilter;
-    const matchesSearch = !state.searchQuery || 
-      (n.title && n.title.toLowerCase().includes(state.searchQuery)) ||
-      (n.profileName && n.profileName.toLowerCase().includes(state.searchQuery)) ||
-      (n.profileEmail && n.profileEmail.toLowerCase().includes(state.searchQuery));
-    return matchesAccount && matchesSearch;
+  if (state.activeProfileFilter !== 'all') {
+    return state.notebooks.filter(n => {
+      const matchesAccount = n.profileId === state.activeProfileFilter;
+      const matchesSearch = !state.searchQuery || 
+        (n.title && n.title.toLowerCase().includes(state.searchQuery)) ||
+        (n.profileName && n.profileName.toLowerCase().includes(state.searchQuery)) ||
+        (n.profileEmail && n.profileEmail.toLowerCase().includes(state.searchQuery));
+      return matchesAccount && matchesSearch;
+    });
+  }
+
+  // When 'all' is active, consolidate notebooks with the same ID into a single representation
+  const consolidatedMap = new Map();
+  for (const n of state.notebooks) {
+    if (!consolidatedMap.has(n.id)) {
+      consolidatedMap.set(n.id, {
+        ...n,
+        allProfiles: [{
+          profileId: n.profileId,
+          profileName: n.profileName,
+          profileEmail: n.profileEmail,
+          tier: n.tier,
+          color: n.color
+        }]
+      });
+    } else {
+      const existing = consolidatedMap.get(n.id);
+      if (!existing.allProfiles.some(p => p.profileId === n.profileId)) {
+        existing.allProfiles.push({
+          profileId: n.profileId,
+          profileName: n.profileName,
+          profileEmail: n.profileEmail,
+          tier: n.tier,
+          color: n.color
+        });
+      }
+      // If any profile has Pro tier, promote the consolidated tier to 'pro'
+      if (n.tier === 'pro') {
+        existing.tier = 'pro';
+        existing.profileId = n.profileId;
+        existing.profileName = n.profileName;
+        existing.color = n.color;
+      }
+      if (n.updated_at && (!existing.updated_at || n.updated_at > existing.updated_at)) {
+        existing.updated_at = n.updated_at;
+      }
+      if ((n.source_count || 0) > (existing.source_count || 0)) {
+        existing.source_count = n.source_count;
+      }
+    }
+  }
+
+  const consolidatedList = Array.from(consolidatedMap.values());
+  return consolidatedList.filter(n => {
+    if (!state.searchQuery) return true;
+    const matchesTitle = n.title && n.title.toLowerCase().includes(state.searchQuery);
+    const matchesAnyProfile = n.allProfiles && n.allProfiles.some(p =>
+      (p.profileName && p.profileName.toLowerCase().includes(state.searchQuery)) ||
+      (p.profileEmail && p.profileEmail.toLowerCase().includes(state.searchQuery)) ||
+      (p.profileId && p.profileId.toLowerCase().includes(state.searchQuery))
+    );
+    return matchesTitle || matchesAnyProfile;
   });
 }
 
@@ -788,10 +843,20 @@ function renderNotebooksGrid() {
               class="notebook-select-checkbox rounded bg-[var(--m3-surface)] border-[var(--m3-outline)] text-[var(--google-blue)] focus:ring-0 cursor-pointer w-4 h-4 transition-transform active:scale-95"
               ${isSelected ? 'checked' : ''}
             >
-            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)]">
-              <span class="w-1.5 h-1.5 rounded-full" style="background-color: ${notebook.color}"></span>
-              <span>${escapeHtml(notebook.profileName)}</span>
-            </span>
+            ${notebook.allProfiles && notebook.allProfiles.length > 1 ? `
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)]" title="${escapeHtml(notebook.allProfiles.map(p => p.profileName || p.profileId).join(' • '))}">
+                <span class="flex items-center -space-x-1">
+                  ${notebook.allProfiles.map(p => `<span class="w-2 h-2 rounded-full border border-[var(--m3-surface)]" style="background-color: ${p.color || '#3b82f6'}"></span>`).join('')}
+                </span>
+                <span>${escapeHtml(notebook.profileName)}</span>
+                <span class="text-[10px] text-[var(--google-blue)] font-medium font-mono bg-[var(--google-blue-container)]/50 px-1 py-0.2 rounded">+${notebook.allProfiles.length - 1} shared</span>
+              </span>
+            ` : `
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)]">
+                <span class="w-1.5 h-1.5 rounded-full" style="background-color: ${notebook.color}"></span>
+                <span>${escapeHtml(notebook.profileName)}</span>
+              </span>
+            `}
           </div>
 
           ${isPro ? `
@@ -1285,6 +1350,7 @@ function renderChatMessageBubble(msg) {
             <span class="flex items-center gap-1.5 font-sans">
               <span class="w-1.5 h-1.5 rounded-full bg-[var(--google-green)]"></span>
               <span>Gemini Notebook Verified</span>
+              ${msg.executedProfileId ? `<span class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[var(--m3-surface-container)] text-[var(--google-blue)] border border-[var(--google-blue)]/20" title="Answered via account ${escapeHtml(msg.executedProfileId)}">via ${escapeHtml(msg.executedProfileId)}</span>` : ''}
             </span>
             <button
               type="button"
@@ -1475,9 +1541,46 @@ function updateAllNotebookCardButtons() {
 }
 
 window.openChatModal = function(notebookId, profileId, title) {
-  state.activeChat = { notebookId, profileId, title };
-  document.getElementById('chat-modal-title').textContent = title;
-  document.getElementById('chat-modal-subtitle').textContent = `Account: ${profileId}`;
+  // If profileId wasn't passed or we want the best default, prefer the pro profile if available
+  const defaultProProfile = state.profiles.find(p => p.isDefaultPro || p.tier === 'pro');
+  const initialProfileId = profileId || (defaultProProfile ? defaultProProfile.id : (state.profiles[0]?.id || 'default'));
+
+  state.activeChat = { notebookId, profileId: initialProfileId, title };
+  const titleEl = document.getElementById('chat-modal-title');
+  if (titleEl) titleEl.textContent = title;
+  
+  const profileSelect = document.getElementById('chat-profile-select');
+  const profileBadge = document.getElementById('chat-profile-badge');
+
+  if (profileSelect) {
+    profileSelect.innerHTML = state.profiles.map(p => {
+      const isSelected = p.id === initialProfileId;
+      const tierLabel = (p.isDefaultPro || p.tier === 'pro') ? 'PRO AI ⭐' : 'Standard';
+      return `<option value="${p.id}" ${isSelected ? 'selected' : ''}>${escapeHtml(p.displayName || p.id)} (${tierLabel})</option>`;
+    }).join('');
+
+    const updateProfileUI = () => {
+      const selectedId = profileSelect.value;
+      const selProfile = state.profiles.find(p => p.id === selectedId);
+      if (state.activeChat) state.activeChat.profileId = selectedId;
+      if (profileBadge) {
+        if (selProfile && (selProfile.isDefaultPro || selProfile.tier === 'pro')) {
+          profileBadge.classList.remove('hidden');
+          profileBadge.classList.add('inline-flex');
+        } else {
+          profileBadge.classList.add('hidden');
+          profileBadge.classList.remove('inline-flex');
+        }
+      }
+      const introProfileEl = document.getElementById('chat-intro-profile-code');
+      if (introProfileEl) {
+        introProfileEl.textContent = selectedId;
+      }
+    };
+
+    profileSelect.onchange = updateProfileUI;
+    updateProfileUI();
+  }
   
   const thread = document.getElementById('chat-thread');
   const chatInput = document.getElementById('chat-input');
@@ -1487,7 +1590,7 @@ window.openChatModal = function(notebookId, profileId, title) {
   const introCard = `
     <div class="p-4 rounded-2xl m3-subcard text-xs text-[var(--m3-on-surface-variant)] flex items-center gap-2.5">
       <i data-lucide="info" class="w-4 h-4 text-[var(--google-blue)] shrink-0"></i>
-      <span>Connected to <strong>${escapeHtml(title)}</strong> via account <code class="px-1.5 py-0.5 rounded bg-[var(--m3-surface-container)] text-[var(--google-blue)] font-mono">${profileId}</code>. Ask any question to its indexed sources below.</span>
+      <span>Connected to <strong>${escapeHtml(title)}</strong>. Querying via account <code id="chat-intro-profile-code" class="px-1.5 py-0.5 rounded bg-[var(--m3-surface-container)] text-[var(--google-blue)] font-mono">${initialProfileId}</code>. Select your query profile above or ask any question below.</span>
     </div>
   `;
 
@@ -1550,11 +1653,14 @@ function handleClearCurrentChat() {
   clearNotebookChatHistory(notebookId);
   state.conversationIds.delete(notebookId);
 
+  const profileSelect = document.getElementById('chat-profile-select');
+  const activeProf = (profileSelect && profileSelect.value) || profileId;
+
   const thread = document.getElementById('chat-thread');
   thread.innerHTML = `
     <div class="p-4 rounded-2xl m3-subcard text-xs text-[var(--m3-on-surface-variant)] flex items-center gap-2.5">
       <i data-lucide="info" class="w-4 h-4 text-[var(--google-blue)] shrink-0"></i>
-      <span>Connected to <strong>${escapeHtml(title)}</strong> via account <code class="px-1.5 py-0.5 rounded bg-[var(--m3-surface-container)] text-[var(--google-blue)] font-mono">${profileId}</code>. Ask any question to its indexed sources below.</span>
+      <span>Connected to <strong>${escapeHtml(title)}</strong>. Querying via account <code id="chat-intro-profile-code" class="px-1.5 py-0.5 rounded bg-[var(--m3-surface-container)] text-[var(--google-blue)] font-mono">${activeProf}</code>. Select your query profile above or ask any question below.</span>
     </div>
   `;
   if (window.lucide) lucide.createIcons();
@@ -1565,8 +1671,11 @@ async function handleChatSubmit(e) {
   e.preventDefault();
   if (!state.activeChat) return;
 
+  const profileSelect = document.getElementById('chat-profile-select');
+  const profileId = (profileSelect && profileSelect.value) ? profileSelect.value : state.activeChat.profileId;
+  state.activeChat.profileId = profileId;
+
   const notebookId = state.activeChat.notebookId;
-  const profileId = state.activeChat.profileId;
   const title = state.activeChat.title;
 
   if (state.activeQueries.has(notebookId)) {
@@ -1675,6 +1784,7 @@ async function handleChatSubmit(e) {
         conversationId: data.conversationId || conversationId,
         handledByProFallback: !!data.handledByProFallback,
         fallbackReason: data.fallbackReason || '',
+        executedProfileId: data.executedProfileId || profileId,
         timestamp: Date.now()
       };
       history.push(assistantMsg);

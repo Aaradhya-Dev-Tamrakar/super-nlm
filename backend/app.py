@@ -21,7 +21,7 @@ from backend.nlm_client import (
     fetch_notebooks_for_profile, query_notebook,
     query_notebook_with_pro_fallback,
     synthesize_cross_notebook, launch_cli_login, delete_cli_profile,
-    run_nlm_cmd
+    run_nlm_cmd, ensure_notebook_shared
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -227,6 +227,18 @@ async def ask_notebook(req: QueryRequest):
             pro_email = p.email
             break
 
+    # If the executing profile is not among the profiles known to have this notebook, auto-share
+    cached_notebooks = await get_cached_notebooks()
+    accessible_profiles = [n.profileId for n in cached_notebooks if n.id == req.notebookId]
+    if accessible_profiles and req.profileId not in accessible_profiles:
+        source_profile_id = accessible_profiles[0]
+        if profile.email:
+            try:
+                logger.info(f"Auto-sharing notebook {req.notebookId} from '{source_profile_id}' with '{profile.email}' for query execution")
+                await ensure_notebook_shared(req.notebookId, source_profile_id, profile.email)
+            except Exception as e:
+                logger.warning(f"Failed to auto-share notebook {req.notebookId} with {profile.email}: {e}")
+
     res = await query_notebook_with_pro_fallback(
         profile_id=req.profileId,
         notebook_id=req.notebookId,
@@ -235,6 +247,7 @@ async def ask_notebook(req: QueryRequest):
         pro_profile_id=pro_profile_id,
         pro_email=pro_email
     )
+    res["executedProfileId"] = req.profileId
     return res
 
 @app.post("/api/cross-query")

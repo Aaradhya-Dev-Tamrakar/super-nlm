@@ -90,6 +90,29 @@ def test_regression_query_conversation_support():
     assert req.conversationId == "conv_123"
     print('  [PASS] Multi-turn: QueryRequest supports optional conversationId tracking.')
 
+def test_regression_query_profile_selection():
+    client = TestClient(app)
+    # Test that /api/query accepts execution profile and returns executedProfileId
+    res = client.post("/api/query", json={
+        "notebookId": "test-notebook-id",
+        "profileId": "default",
+        "question": "Hello"
+    })
+    # Will fail query execution for non-existent notebook, but should process with 200 JSON error payload or 404
+    assert res.status_code == 200
+    data = res.json()
+    assert data.get("executedProfileId") == "default"
+    print('  [PASS] Query Profile: Executed profile is preserved and returned in query response.')
+
+def test_regression_unique_notebook_aggregation():
+    client = TestClient(app)
+    res = client.get("/api/notebooks")
+    assert res.status_code == 200
+    notebooks = res.json()
+    unique_ids = set(n["id"] for n in notebooks)
+    assert len(unique_ids) > 0
+    print(f'  [PASS] Deduplication: Successfully identified {len(unique_ids)} unique notebook IDs across profiles.')
+
 if __name__ == '__main__':
     print('Running Super-NLM Regression Tests...')
     test_regression_security()
@@ -98,4 +121,6 @@ if __name__ == '__main__':
     test_regression_tunnel_stdout()
     test_regression_query_error_extraction()
     test_regression_query_conversation_support()
+    test_regression_query_profile_selection()
+    test_regression_unique_notebook_aggregation()
     print('\nALL REGRESSION TESTS PASSED!')
