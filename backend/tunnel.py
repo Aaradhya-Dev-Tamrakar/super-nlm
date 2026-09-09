@@ -37,10 +37,31 @@ def ensure_cloudflared() -> Optional[Path]:
         print(f"❌ [Cloudflare Tunnel] Failed to download cloudflared: {e}")
         return None
 
+def copy_to_clipboard(text: str) -> bool:
+    """Copies text to the Windows clipboard using native clip.exe."""
+    try:
+        proc = subprocess.Popen(["clip"], stdin=subprocess.PIPE, text=True)
+        proc.communicate(input=text)
+        return True
+    except Exception:
+        return False
+
+def print_qr_code(url: str):
+    """Prints an ASCII QR code to the terminal for easy scanning with phone camera."""
+    try:
+        import qrcode
+        qr = qrcode.QRCode(border=1)
+        qr.add_data(url)
+        print(" 📷 Scan with your phone camera to open instantly:")
+        qr.print_ascii(invert=True)
+    except Exception:
+        pass
+
 def start_cloudflare_tunnel(local_port: int, on_url_found: Optional[Callable[[str], None]] = None) -> Optional[subprocess.Popen]:
     """
     Starts an ephemeral Cloudflare Quick Tunnel forwarding to http://127.0.0.1:{local_port}.
-    Captures and returns the public https://*.trycloudflare.com URL.
+    Captures the public https://*.trycloudflare.com URL, copies it to the clipboard,
+    and displays an ASCII QR code for phone camera scanning.
     """
     binary = ensure_cloudflared()
     if not binary:
@@ -73,11 +94,21 @@ def start_cloudflare_tunnel(local_port: int, on_url_found: Optional[Callable[[st
                 if match and not found:
                     found = True
                     public_url = match.group(0)
+
+                    # 1. Copy directly to Windows clipboard
+                    copied = copy_to_clipboard(public_url)
+
                     print("\n" + "="*65)
                     print(f" 🌍 PUBLIC CLOUDFLARE TUNNEL ACTIVE:")
                     print(f" 🔗 {public_url}")
+                    if copied:
+                        print(f" 📋 [COPIED TO CLIPBOARD!] Press Ctrl+V to paste anywhere.")
                     print(f" 📱 Access this URL from your phone, tablet, or laptop anywhere!")
                     print("="*65 + "\n")
+
+                    # 2. Print QR Code for instant phone camera scanning
+                    print_qr_code(public_url)
+
                     if on_url_found:
                         on_url_found(public_url)
 

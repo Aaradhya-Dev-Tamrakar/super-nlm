@@ -209,12 +209,28 @@ async def query_notebook(profile_id: str, notebook_id: str, question: str) -> Di
         }
 
     try:
-        data = json.loads(res["stdout"])
+        # Strip ANSI escape sequences if any
+        clean_stdout = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', res["stdout"]).strip()
+        data = json.loads(clean_stdout)
         # Format can be string or structured dict with 'answer' and 'citations'
         if isinstance(data, dict):
+            answer_text = (
+                data.get("answer")
+                or data.get("text")
+                or data.get("response")
+                or data.get("content")
+                or data.get("output")
+                or data.get("result")
+            )
+            if not answer_text and "error" in data:
+                return {
+                    "success": False,
+                    "error": data["error"],
+                    "answer": None
+                }
             return {
                 "success": True,
-                "answer": data.get("answer") or data.get("text") or str(data),
+                "answer": answer_text if answer_text is not None else str(data),
                 "citations": data.get("citations", []),
                 "raw": data
             }
@@ -227,9 +243,10 @@ async def query_notebook(profile_id: str, notebook_id: str, question: str) -> Di
             }
     except Exception:
         # Fallback to plain text if stdout is not JSON
+        clean_stdout = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', res["stdout"]).strip()
         return {
             "success": True,
-            "answer": res["stdout"],
+            "answer": clean_stdout,
             "citations": [],
             "raw": res["stdout"]
         }

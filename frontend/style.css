@@ -1,76 +1,124 @@
 /* ==========================================================================
-   Super-NLM Hub | High-Fidelity Spatial & Glassmorphism Design System
-   Generated under Antigravity UI/UX Pro Max & Motion Design Standards
+   Super-NLM Hub | Google Material Design 3 & NotebookLM Theme
+   Comprehensive Google Light / Dark / System Color Systems
    ========================================================================== */
 
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Google+Sans+Text:wght@400;500;700&family=Roboto+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 
 :root {
-  --font-display: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-google: 'Google Sans', 'Google Sans Text', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  --font-mono: 'Roboto Mono', 'JetBrains Mono', monospace;
   
-  --bg-deep: #060913;
-  --bg-surface: rgba(15, 23, 42, 0.72);
-  --bg-surface-elevated: rgba(30, 41, 59, 0.75);
+  /* -------------------------------------------------------------
+     GOOGLE MATERIAL 3 LIGHT PALETTE (Default)
+     Matched to Google One & Google Gemini Web UI
+     ------------------------------------------------------------- */
+  --m3-surface: #ffffff;
+  --m3-surface-dim: #f8fafd;
+  --m3-surface-container-lowest: #ffffff;
+  --m3-surface-container-low: #f8fafd;
+  --m3-surface-container: #ffffff;
+  --m3-surface-container-high: #f0f4f9;
+  --m3-surface-container-highest: #e9eef6;
   
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-highlight: rgba(99, 102, 241, 0.35);
-  --border-pro: rgba(245, 158, 11, 0.35);
+  /* Content & Typography Colors */
+  --m3-on-surface: #1f1f1f;
+  --m3-on-surface-variant: #444746;
+  --m3-on-surface-subtle: #5f6368;
   
-  --glow-brand: rgba(99, 102, 241, 0.25);
-  --glow-pro: rgba(245, 158, 11, 0.25);
+  /* Google 4-Color Accents (Light) */
+  --google-blue: #0b57d0;
+  --google-blue-container: #c2e7ff;
+  --google-blue-on-container: #001d35;
+  --google-blue-hover: #0842a0;
+
+  --google-green: #146c2e;
+  --google-green-container: #c4eed0;
+  --google-green-on-container: #072711;
+
+  --google-yellow: #8f6200;
+  --google-yellow-container: #feefc3;
+  --google-yellow-on-container: #241a00;
+
+  --google-red: #b3261e;
+  --google-red-container: #f9dedc;
+  --google-red-on-container: #410e0b;
+
+  /* Outlines & Dividers */
+  --m3-outline: #747775;
+  --m3-outline-variant: #e1e3e1;
+
+  /* Shadows & Elevation */
+  --m3-shadow-card: 0 1px 2px 0 rgba(60, 64, 67, 0.1), 0 1px 3px 1px rgba(60, 64, 67, 0.06);
+  --m3-shadow-card-hover: 0 1px 3px 0 rgba(60, 64, 67, 0.2), 0 4px 8px 3px rgba(60, 64, 67, 0.1);
+  --m3-dialog-shadow: 0 16px 40px rgba(0, 0, 0, 0.16);
+
+  /* Physics Timing */
+  --ease-m3: cubic-bezier(0.2, 0.0, 0.0, 1.0);
+  --ease-m3-expressive: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* -------------------------------------------------------------
+   GOOGLE MATERIAL 3 DARK PALETTE (html.dark)
+   Matched to Google Drive & Google Account Dark UI
+   ------------------------------------------------------------- */
+html.dark {
+  --m3-surface: #131314;
+  --m3-surface-dim: #0e0e0f;
+  --m3-surface-container-lowest: #0b0b0c;
+  --m3-surface-container-low: #1e1f20;
+  --m3-surface-container: #1e1f20;
+  --m3-surface-container-high: #282a2d;
+  --m3-surface-container-highest: #333538;
   
-  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* Content & Typography Colors */
+  --m3-on-surface: #e3e3e3;
+  --m3-on-surface-variant: #c4c7c5;
+  --m3-on-surface-subtle: #8e918f;
+  
+  /* Google 4-Color Accents (Dark) */
+  --google-blue: #8ab4f8;
+  --google-blue-container: #004a77;
+  --google-blue-on-container: #c2e7ff;
+  --google-blue-hover: #aecbfa;
+
+  --google-green: #81c995;
+  --google-green-container: #0f5223;
+  --google-green-on-container: #c4eed0;
+
+  --google-yellow: #fdd663;
+  --google-yellow-container: #473a00;
+  --google-yellow-on-container: #ffe088;
+
+  --google-red: #f28b82;
+  --google-red-container: #601410;
+  --google-red-on-container: #fce8e6;
+
+  /* Outlines & Dividers */
+  --m3-outline: #444746;
+  --m3-outline-variant: #282a2d;
+
+  /* Shadows & Elevation */
+  --m3-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --m3-shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --m3-dialog-shadow: 0 12px 36px rgba(0, 0, 0, 0.7);
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
-  font-family: var(--font-display);
-  background-color: var(--bg-deep);
-  color: #f1f5f9;
+  font-family: var(--font-google);
+  background-color: var(--m3-surface);
+  color: var(--m3-on-surface);
   overflow-x: hidden;
   position: relative;
-  min-height: 100vh;
+  min-height: 100dvh;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
-/* Ambient dynamic glow orbs */
-body::before {
-  content: '';
-  position: fixed;
-  top: -10vw;
-  left: -10vw;
-  width: 50vw;
-  height: 50vw;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(99, 102, 241, 0.12) 0%, rgba(79, 70, 229, 0.04) 45%, transparent 70%);
-  pointer-events: none;
-  z-index: 0;
-  filter: blur(40px);
-}
-
-body::after {
-  content: '';
-  position: fixed;
-  bottom: -15vw;
-  right: -10vw;
-  width: 55vw;
-  height: 55vw;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(139, 92, 246, 0.09) 0%, rgba(245, 158, 11, 0.03) 50%, transparent 70%);
-  pointer-events: none;
-  z-index: 0;
-  filter: blur(50px);
-}
-
-/* Subtle micro-grid overlay for developer aesthetic */
-.bg-grid-pattern {
-  background-size: 32px 32px;
-  background-image: 
-    linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-}
-
-/* Custom subtle scrollbars */
+/* Google-style subtle scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -81,12 +129,12 @@ body::after {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(51, 65, 85, 0.6);
+  background: var(--m3-outline-variant);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(71, 85, 105, 0.9);
+  background: var(--m3-outline);
 }
 
 .scrollbar-none::-webkit-scrollbar {
@@ -97,129 +145,164 @@ body::after {
   scrollbar-width: none;
 }
 
-/* Spatial Glass Cards */
-.glass-card {
-  background: var(--bg-surface);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--border-subtle);
-  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.35), inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
-  transition: transform 0.25s var(--ease-spring), 
-              border-color 0.25s ease, 
-              box-shadow 0.25s ease;
+/* Google Workspace App Bar */
+.google-app-bar {
+  background-color: var(--m3-surface);
+  border-bottom: 1px solid var(--m3-outline-variant);
+}
+
+/* Material 3 Elevated Card */
+.m3-card {
+  background-color: var(--m3-surface-container);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: 16px;
+  box-shadow: var(--m3-shadow-card);
+  transition: transform 0.2s var(--ease-m3-expressive), 
+              background-color 0.2s ease, 
+              border-color 0.2s ease, 
+              box-shadow 0.2s ease;
   position: relative;
-  overflow: hidden;
 }
 
-.glass-card:hover {
-  transform: translateY(-3px) scale(1.008);
-  border-color: var(--border-highlight);
-  box-shadow: 
-    0 16px 32px -8px rgba(0, 0, 0, 0.45), 
-    0 0 24px -4px var(--glow-brand),
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
+.m3-card:hover {
+  background-color: var(--m3-surface-container-high);
+  border-color: var(--m3-outline);
+  transform: translateY(-2px);
+  box-shadow: var(--m3-shadow-card-hover);
 }
 
-.glass-card-pro:hover {
-  border-color: var(--border-pro);
-  box-shadow: 
-    0 16px 32px -8px rgba(0, 0, 0, 0.45), 
-    0 0 24px -4px var(--glow-pro),
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
+.m3-card.selected {
+  background-color: rgba(11, 87, 208, 0.08);
+  border-color: var(--google-blue);
+  box-shadow: 0 0 0 1px var(--google-blue), var(--m3-shadow-card-hover);
 }
 
-/* Glass Header & Floating Docks */
-.glass-nav {
-  background: rgba(10, 15, 29, 0.82);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.2);
+html.dark .m3-card.selected {
+  background-color: rgba(0, 74, 119, 0.25);
+  border-color: var(--google-blue);
 }
 
-.glass-pill {
-  background: rgba(15, 23, 42, 0.6);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  transition: all 0.2s var(--ease-spring);
+/* Material 3 Chips (Pills) */
+.m3-chip {
+  background-color: var(--m3-surface-container);
+  border: 1px solid var(--m3-outline-variant);
+  color: var(--m3-on-surface-variant);
+  border-radius: 9999px;
+  transition: all 0.18s var(--ease-m3);
 }
 
-.glass-pill:hover {
-  background: rgba(30, 41, 59, 0.8);
-  border-color: rgba(255, 255, 255, 0.15);
+.m3-chip:hover {
+  background-color: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  border-color: var(--m3-outline);
 }
 
-.glass-pill.active {
-  background: rgba(99, 102, 241, 0.15);
-  border-color: rgba(99, 102, 241, 0.5);
-  color: #fff;
-  box-shadow: 0 0 16px -2px rgba(99, 102, 241, 0.3);
+.m3-chip.active {
+  background-color: var(--google-blue-container);
+  border-color: transparent;
+  color: var(--google-blue-on-container);
+  font-weight: 500;
 }
 
-/* Elevated Modal System */
-.glass-modal {
-  background: rgba(11, 17, 33, 0.94);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 
-    0 25px 60px -15px rgba(0, 0, 0, 0.8),
-    0 0 40px -10px rgba(99, 102, 241, 0.15),
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.1);
+/* Google Buttons */
+.google-btn-primary {
+  background-color: var(--google-blue);
+  color: #ffffff;
+  font-weight: 500;
+  border-radius: 9999px;
+  transition: all 0.18s var(--ease-m3);
 }
 
-/* Button & Interactive Physics */
-.btn-tactile {
-  transition: all 0.18s var(--ease-spring);
-  position: relative;
-  overflow: hidden;
+html.dark .google-btn-primary {
+  color: #041e49;
 }
 
-.btn-tactile:active {
-  transform: scale(0.96);
+.google-btn-primary:hover {
+  background-color: var(--google-blue-hover);
+  box-shadow: 0 1px 3px 1px rgba(0, 0, 0, 0.2);
 }
 
-/* Shimmer highlight effect on buttons */
-.btn-shimmer::after {
-  content: '';
-  position: absolute;
-  top: -50%;
-  left: -50%;
-  width: 200%;
-  height: 200%;
-  background: linear-gradient(
-    60deg,
-    transparent 20%,
-    rgba(255, 255, 255, 0.1) 40%,
-    transparent 60%
-  );
-  transform: rotate(30deg);
-  pointer-events: none;
-  transition: opacity 0.3s;
-  opacity: 0;
+.google-btn-primary:active {
+  transform: scale(0.98);
 }
 
-.btn-shimmer:hover::after {
-  opacity: 1;
-  animation: shimmer-sweep 1.2s infinite;
+.google-btn-tonal {
+  background-color: var(--google-blue-container);
+  color: var(--google-blue-on-container);
+  font-weight: 500;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  transition: all 0.18s var(--ease-m3);
 }
 
-@keyframes shimmer-sweep {
-  0% { transform: translateX(-100%) rotate(30deg); }
-  100% { transform: translateX(100%) rotate(30deg); }
+.google-btn-tonal:hover {
+  filter: brightness(0.95);
 }
 
-/* Code & Monospace Badges */
-.font-mono-tight {
-  font-family: var(--font-mono);
-  letter-spacing: -0.02em;
+html.dark .google-btn-tonal {
+  background-color: var(--m3-surface-container-high);
+  color: var(--google-blue);
 }
 
-/* Smooth modal animations */
-@keyframes modal-enter {
+html.dark .google-btn-tonal:hover {
+  background-color: var(--google-blue-container);
+  color: var(--google-blue-on-container);
+}
+
+.google-btn-tonal:active {
+  transform: scale(0.98);
+}
+
+.google-btn-outlined {
+  background-color: transparent;
+  color: var(--m3-on-surface-variant);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: 9999px;
+  transition: all 0.18s var(--ease-m3);
+}
+
+.google-btn-outlined:hover {
+  background-color: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+  border-color: var(--m3-outline);
+}
+
+.google-btn-outlined:active {
+  transform: scale(0.98);
+}
+
+/* Google Search Input Pill */
+.google-search-pill {
+  background-color: var(--m3-surface-container-high);
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  color: var(--m3-on-surface);
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.google-search-pill:hover {
+  background-color: var(--m3-surface-container-highest);
+}
+
+.google-search-pill:focus-within {
+  background-color: var(--m3-surface-container);
+  border-color: var(--google-blue);
+  box-shadow: 0 0 0 1px var(--google-blue);
+}
+
+/* Material 3 Dialog */
+.m3-dialog {
+  background-color: var(--m3-surface-container);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: 28px;
+  box-shadow: var(--m3-dialog-shadow);
+}
+
+/* Animation Timelines */
+@keyframes m3-enter {
   0% {
     opacity: 0;
-    transform: scale(0.95) translateY(8px);
+    transform: scale(0.97) translateY(4px);
   }
   100% {
     opacity: 1;
@@ -227,15 +310,15 @@ body::after {
   }
 }
 
-.animate-modal-enter {
-  animation: modal-enter 0.22s var(--ease-spring) forwards;
+.animate-m3-enter {
+  animation: m3-enter 0.2s var(--ease-m3-expressive) forwards;
 }
 
-/* Stagger card entrance */
-@keyframes card-fade-in {
+/* Stagger card entry */
+@keyframes m3-card-fade {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
@@ -243,17 +326,265 @@ body::after {
   }
 }
 
-.card-stagger-enter {
-  animation: card-fade-in 0.3s var(--ease-spring) backwards;
+.animate-m3-stagger {
+  animation: m3-card-fade 0.25s var(--ease-m3-expressive) backwards;
 }
 
-/* Pulse animation for Pro and Sync */
-@keyframes pulse-ring {
-  0% { transform: scale(0.95); opacity: 0.8; }
-  50% { transform: scale(1.15); opacity: 0.3; }
-  100% { transform: scale(0.95); opacity: 0.8; }
+/* Dimension-matched Skeleton Shimmer */
+@keyframes google-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
 }
 
-.pulse-glow-amber {
-  box-shadow: 0 0 15px -2px rgba(245, 158, 11, 0.45);
+.google-skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(128, 128, 128, 0.08) 0%,
+    rgba(128, 128, 128, 0.18) 50%,
+    rgba(128, 128, 128, 0.08) 100%
+  );
+  background-size: 200% 100%;
+  animation: google-shimmer 1.6s infinite linear;
+}
+
+/* Monospace font */
+.font-mono-tight {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1;
+}
+
+/* Theme Selector Menu (Google Material 3 Dropdown) */
+.m3-menu {
+  background-color: var(--m3-surface-container);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: 12px;
+  box-shadow: var(--m3-dialog-shadow);
+  min-width: 140px;
+  padding: 6px;
+  z-index: 50;
+}
+
+.m3-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 8px;
+  color: var(--m3-on-surface-variant);
+  transition: all 0.15s ease;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+}
+
+.m3-menu-item:hover {
+  background-color: var(--m3-surface-container-high);
+  color: var(--m3-on-surface);
+}
+
+.m3-menu-item.active {
+  background-color: var(--google-blue-container);
+  color: var(--google-blue-on-container);
+}
+
+html.dark .m3-menu-item.active {
+  background-color: var(--google-blue-container);
+  color: var(--google-blue-on-container);
+}
+
+/* Theme Adaptive Utility Containers */
+.m3-subcard {
+  background-color: var(--m3-surface-container-low);
+  border: 1px solid var(--m3-outline-variant);
+  color: var(--m3-on-surface);
+}
+
+/* ==========================================================================
+   Human-Readable Markdown Formatting (.nlm-markdown)
+   Matches Material 3 dark/light surfaces cleanly
+   ========================================================================== */
+.nlm-markdown {
+  font-size: 0.8125rem;
+  line-height: 1.625;
+  color: var(--m3-on-surface);
+  word-break: break-word;
+}
+
+.nlm-markdown > *:first-child {
+  margin-top: 0 !important;
+}
+
+.nlm-markdown > *:last-child {
+  margin-bottom: 0 !important;
+}
+
+.nlm-markdown p {
+  margin-bottom: 0.75rem;
+}
+
+.nlm-markdown h1,
+.nlm-markdown h2,
+.nlm-markdown h3,
+.nlm-markdown h4 {
+  color: var(--m3-on-surface);
+  font-weight: 600;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.35;
+}
+
+.nlm-markdown h1 { font-size: 1.125rem; border-bottom: 1px solid var(--m3-outline-variant); padding-bottom: 0.25rem; }
+.nlm-markdown h2 { font-size: 1rem; border-bottom: 1px solid var(--m3-outline-variant); padding-bottom: 0.2rem; }
+.nlm-markdown h3 { font-size: 0.875rem; }
+.nlm-markdown h4 { font-size: 0.8125rem; font-weight: 600; }
+
+.nlm-markdown ul,
+.nlm-markdown ol {
+  margin-bottom: 0.75rem;
+  padding-left: 1.25rem;
+}
+
+.nlm-markdown ul {
+  list-style-type: disc;
+}
+
+.nlm-markdown ol {
+  list-style-type: decimal;
+}
+
+.nlm-markdown li {
+  margin-bottom: 0.25rem;
+}
+
+.nlm-markdown li > p {
+  margin-bottom: 0.25rem;
+}
+
+.nlm-markdown strong {
+  color: var(--m3-on-surface);
+  font-weight: 600;
+}
+
+.nlm-markdown em {
+  font-style: italic;
+  color: var(--m3-on-surface-variant);
+}
+
+.nlm-markdown blockquote {
+  border-left: 3px solid var(--google-blue);
+  background-color: var(--m3-surface-container);
+  padding: 0.5rem 0.75rem;
+  border-radius: 0 8px 8px 0;
+  margin: 0.75rem 0;
+  color: var(--m3-on-surface-variant);
+  font-style: italic;
+}
+
+.nlm-markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  background-color: var(--m3-surface-container-highest);
+  color: var(--google-blue);
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  border: 1px solid var(--m3-outline-variant);
+}
+
+.nlm-markdown pre {
+  background-color: var(--m3-surface-container-lowest);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin: 0.75rem 0;
+  overflow-x: auto;
+}
+
+.nlm-markdown pre code {
+  background-color: transparent;
+  color: #c2e7ff;
+  padding: 0;
+  border: none;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.nlm-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.75rem;
+}
+
+.nlm-markdown th,
+.nlm-markdown td {
+  border: 1px solid var(--m3-outline-variant);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+
+.nlm-markdown th {
+  background-color: var(--m3-surface-container-high);
+  font-weight: 600;
+  color: var(--m3-on-surface);
+}
+
+.nlm-markdown tr:nth-child(even) {
+  background-color: var(--m3-surface-container-low);
+}
+
+.nlm-markdown hr {
+  border: none;
+  border-top: 1px solid var(--m3-outline-variant);
+  margin: 1rem 0;
+}
+
+.nlm-markdown a {
+  color: var(--google-blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.nlm-markdown a:hover {
+  color: var(--google-blue-hover);
+}
+
+/* Citation reference chips container */
+.citation-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-top: 0.625rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--m3-outline-variant);
+}
+
+.citation-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  font-family: var(--font-mono);
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  background-color: var(--m3-surface-container-high);
+  border: 1px solid var(--m3-outline);
+  color: var(--m3-on-surface-variant);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.citation-chip i {
+  width: 0.6875rem;
+  height: 0.6875rem;
+  color: var(--google-blue);
+  flex-shrink: 0;
 }

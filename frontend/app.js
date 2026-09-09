@@ -1,5 +1,5 @@
-// Super-NLM Hub Frontend Application Logic
-// Enhanced with UI/UX Pro Max & Motion Design Standards
+// Super-NLM Hub Studio Frontend Application Logic
+// Calibrated under design-taste-frontend standards: Variance 8, Motion 6, Density 4
 
 let state = {
   profiles: [],
@@ -8,15 +8,75 @@ let state = {
   searchQuery: '',
   selectedNotebooks: new Map(), // key: notebookId, value: { notebookId, profileId, title }
   activeChat: null, // { notebookId, profileId, title }
+  chatHistories: new Map(), // key: notebookId, value: array of message objects
+  isLoading: false,
 };
 
 // Initialize Application
 document.addEventListener('DOMContentLoaded', async () => {
+  initTheme();
+  loadAllChatHistories();
   setupEventListeners();
+  showSkeletons(true);
   await loadProfiles();
   await loadNotebooks();
+  showSkeletons(false);
   if (window.lucide) lucide.createIcons();
 });
+
+// ----------------- THEME CONTROLLER (Google Light / Dark / System) -----------------
+const THEME_STORAGE_KEY = 'supernlm_theme_mode';
+
+function initTheme() {
+  const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || 'system';
+  applyTheme(savedTheme, false);
+
+  // Listen for OS system theme changes
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    const currentTheme = localStorage.getItem(THEME_STORAGE_KEY) || 'system';
+    if (currentTheme === 'system') {
+      applyTheme('system', false);
+    }
+  });
+}
+
+function applyTheme(theme, save = true) {
+  if (save) {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }
+
+  const htmlEl = document.documentElement;
+  const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const effectiveDark = theme === 'dark' || (theme === 'system' && isSystemDark);
+
+  if (effectiveDark) {
+    htmlEl.classList.add('dark');
+  } else {
+    htmlEl.classList.remove('dark');
+  }
+
+  // Update theme trigger button icon
+  const iconEl = document.getElementById('theme-active-icon');
+  if (iconEl) {
+    const iconName = theme === 'light' ? 'sun' : theme === 'dark' ? 'moon' : 'laptop';
+    iconEl.setAttribute('data-lucide', iconName);
+  }
+
+  // Update active state in theme dropdown menu
+  document.querySelectorAll('.m3-menu-item[data-theme]').forEach(btn => {
+    const btnTheme = btn.getAttribute('data-theme');
+    const checkIcon = btn.querySelector('.theme-check-icon');
+    if (btnTheme === theme) {
+      btn.classList.add('active');
+      if (checkIcon) checkIcon.classList.remove('hidden');
+    } else {
+      btn.classList.remove('active');
+      if (checkIcon) checkIcon.classList.add('hidden');
+    }
+  });
+
+  if (window.lucide) lucide.createIcons();
+}
 
 function setupEventListeners() {
   // Global search input
@@ -43,6 +103,19 @@ function setupEventListeners() {
   const syncBtn = document.getElementById('btn-sync');
   if (syncBtn) syncBtn.addEventListener('click', handleSyncAll);
 
+  // Empty state sync button
+  const emptySyncBtn = document.getElementById('btn-empty-sync');
+  if (emptySyncBtn) emptySyncBtn.addEventListener('click', handleSyncAll);
+
+  // Sidebar add account button
+  const sidebarAddBtn = document.getElementById('btn-sidebar-add-account');
+  if (sidebarAddBtn) {
+    sidebarAddBtn.addEventListener('click', () => {
+      openModal('modal-accounts');
+      renderAccountsModalList();
+    });
+  }
+
   // Manage Accounts Modal triggers
   const manageAccountsBtn = document.getElementById('btn-manage-accounts');
   if (manageAccountsBtn) {
@@ -54,9 +127,11 @@ function setupEventListeners() {
   const closeAccountsBtn = document.getElementById('close-modal-accounts');
   if (closeAccountsBtn) closeAccountsBtn.addEventListener('click', () => closeModal('modal-accounts'));
 
-  // Chat Modal close
+  // Chat Modal close & actions
   const closeChatBtn = document.getElementById('close-modal-chat');
   if (closeChatBtn) closeChatBtn.addEventListener('click', () => closeModal('modal-chat'));
+  const clearChatBtn = document.getElementById('btn-clear-chat');
+  if (clearChatBtn) clearChatBtn.addEventListener('click', handleClearCurrentChat);
   const chatForm = document.getElementById('form-chat');
   if (chatForm) chatForm.addEventListener('submit', handleChatSubmit);
 
@@ -85,6 +160,40 @@ function setupEventListeners() {
     });
   }
 
+  // Theme Dropdown Toggle
+  const themeToggleBtn = document.getElementById('btn-theme-toggle');
+  const themeDropdown = document.getElementById('theme-dropdown');
+  if (themeToggleBtn && themeDropdown) {
+    themeToggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isHidden = themeDropdown.classList.contains('hidden');
+      if (isHidden) {
+        themeDropdown.classList.remove('hidden');
+        themeToggleBtn.setAttribute('aria-expanded', 'true');
+      } else {
+        themeDropdown.classList.add('hidden');
+        themeToggleBtn.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!themeDropdown.contains(e.target) && e.target !== themeToggleBtn) {
+        themeDropdown.classList.add('hidden');
+        themeToggleBtn.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    // Theme option clicks
+    document.querySelectorAll('.m3-menu-item[data-theme]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const theme = btn.getAttribute('data-theme');
+        applyTheme(theme, true);
+        themeDropdown.classList.add('hidden');
+        themeToggleBtn.setAttribute('aria-expanded', 'false');
+      });
+    });
+  }
+
   // Close modals on outside click
   ['modal-accounts', 'modal-chat', 'modal-cross'].forEach(id => {
     const modal = document.getElementById(id);
@@ -96,6 +205,21 @@ function setupEventListeners() {
   });
 }
 
+function showSkeletons(show) {
+  const skeletonGrid = document.getElementById('skeleton-grid');
+  const notebooksGrid = document.getElementById('notebooks-grid');
+  if (!skeletonGrid || !notebooksGrid) return;
+  if (show) {
+    skeletonGrid.classList.remove('hidden');
+    skeletonGrid.classList.add('grid');
+    notebooksGrid.classList.add('hidden');
+  } else {
+    skeletonGrid.classList.add('hidden');
+    skeletonGrid.classList.remove('grid');
+    notebooksGrid.classList.remove('hidden');
+  }
+}
+
 // ----------------- API CALLS -----------------
 
 async function loadProfiles() {
@@ -103,13 +227,21 @@ async function loadProfiles() {
     const res = await fetch('/api/profiles');
     if (res.ok) {
       state.profiles = await res.json();
+      
       const accountsCount = document.getElementById('accounts-count');
       if (accountsCount) accountsCount.textContent = state.profiles.length;
       
+      const telemetryProfiles = document.getElementById('telemetry-profiles');
+      if (telemetryProfiles) telemetryProfiles.textContent = state.profiles.length;
+
       const proProfile = state.profiles.find(p => p.isDefaultPro);
       if (proProfile && proProfile.email) {
         const proLabel = document.getElementById('pro-email-label');
         if (proLabel) proLabel.textContent = proProfile.email;
+        const sidebarProEmail = document.getElementById('sidebar-pro-email');
+        if (sidebarProEmail) sidebarProEmail.textContent = proProfile.email;
+        const crossEngineLabel = document.getElementById('cross-engine-label');
+        if (crossEngineLabel) crossEngineLabel.textContent = `Pro AI Node: ${proProfile.email}`;
       }
       renderAccountPills();
     }
@@ -123,6 +255,10 @@ async function loadNotebooks() {
     const res = await fetch('/api/notebooks');
     if (res.ok) {
       state.notebooks = await res.json();
+      
+      const telemetryNotebooks = document.getElementById('telemetry-notebooks');
+      if (telemetryNotebooks) telemetryNotebooks.textContent = state.notebooks.length;
+
       renderAccountPills();
       renderNotebooksGrid();
     }
@@ -136,6 +272,7 @@ async function handleSyncAll() {
   const syncIcon = document.getElementById('sync-icon');
   if (syncBtn) syncBtn.disabled = true;
   if (syncIcon) syncIcon.classList.add('animate-spin');
+  showSkeletons(true);
 
   try {
     const startTime = performance.now();
@@ -147,6 +284,10 @@ async function handleSyncAll() {
     const synced = await res.json();
     state.notebooks = synced;
     await loadProfiles();
+    
+    const telemetryNotebooks = document.getElementById('telemetry-notebooks');
+    if (telemetryNotebooks) telemetryNotebooks.textContent = state.notebooks.length;
+
     renderAccountPills();
     renderNotebooksGrid();
 
@@ -156,6 +297,7 @@ async function handleSyncAll() {
     console.error('Sync error:', err);
     showToast('Sync error: ' + err.message, 'error');
   } finally {
+    showSkeletons(false);
     if (syncBtn) syncBtn.disabled = false;
     if (syncIcon) syncIcon.classList.remove('animate-spin');
   }
@@ -175,7 +317,7 @@ function renderAccountPills() {
     label: 'All Accounts',
     count: totalCount,
     isActive: state.activeProfileFilter === 'all',
-    badge: null
+    isPro: false
   });
   allPill.addEventListener('click', () => {
     state.activeProfileFilter = 'all';
@@ -193,7 +335,7 @@ function renderAccountPills() {
       count: count,
       color: p.color,
       isActive: state.activeProfileFilter === p.id,
-      badge: p.isDefaultPro ? '⭐️ PRO AI' : (p.tier === 'pro' ? 'PRO' : null)
+      isPro: p.isDefaultPro || p.tier === 'pro'
     });
     pill.addEventListener('click', () => {
       state.activeProfileFilter = p.id;
@@ -205,8 +347,8 @@ function renderAccountPills() {
 
   // Add Account shortcut button
   const addBtn = document.createElement('button');
-  addBtn.className = 'btn-tactile flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-slate-400 hover:text-indigo-300 hover:bg-slate-800/80 border border-dashed border-slate-700/80 transition whitespace-nowrap';
-  addBtn.innerHTML = '<i data-lucide="plus" class="w-3.5 h-3.5"></i> <span>Add Account</span>';
+  addBtn.className = 'google-btn-outlined flex items-center gap-1.5 px-3 py-1.5 text-xs transition whitespace-nowrap';
+  addBtn.innerHTML = '<i data-lucide="plus" class="w-3.5 h-3.5 text-[#8ab4f8]"></i> <span>Add Account</span>';
   addBtn.addEventListener('click', () => {
     openModal('modal-accounts');
     renderAccountsModalList();
@@ -216,28 +358,28 @@ function renderAccountPills() {
   if (window.lucide) lucide.createIcons();
 }
 
-function createPill({ id, label, count, color, isActive, badge }) {
+function createPill({ id, label, count, color, isActive, isPro }) {
   const btn = document.createElement('button');
-  const baseClasses = 'glass-pill btn-tactile flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-medium transition whitespace-nowrap cursor-pointer';
-  const activeClasses = isActive ? 'active' : 'text-slate-400 hover:text-slate-200';
+  const baseClasses = 'm3-chip flex items-center gap-2 px-3.5 py-1.5 text-xs transition whitespace-nowrap cursor-pointer';
+  const activeClasses = isActive ? 'active' : 'hover:text-[var(--m3-on-surface)]';
 
   btn.className = `${baseClasses} ${activeClasses}`;
   
   let dotHtml = '';
   if (color) {
-    dotHtml = `<span class="w-2 h-2 rounded-full shrink-0 shadow-sm" style="background-color: ${color}; box-shadow: 0 0 6px ${color}80;"></span>`;
+    dotHtml = `<span class="w-2 h-2 rounded-full shrink-0" style="background-color: ${color};"></span>`;
   }
 
   let badgeHtml = '';
-  if (badge) {
-    badgeHtml = `<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">${badge}</span>`;
+  if (isPro) {
+    badgeHtml = `<span class="text-[9px] font-medium px-1.5 py-0.2 rounded-full bg-[var(--google-yellow-container)] text-[var(--google-yellow)] border border-[var(--google-yellow)]/30 flex items-center gap-1"><i data-lucide="sparkles" class="w-2.5 h-2.5 text-[var(--google-yellow)]"></i> PRO</span>`;
   }
 
   btn.innerHTML = `
     ${dotHtml}
     <span class="tracking-tight">${escapeHtml(label)}</span>
     ${badgeHtml}
-    <span class="px-1.5 py-0.5 text-[10px] rounded-md bg-slate-800/80 text-slate-400 font-mono font-medium">${count}</span>
+    <span class="px-1.5 py-0.2 text-[10px] rounded-full m3-subcard text-[var(--m3-on-surface-subtle)] font-mono">${count}</span>
   `;
   return btn;
 }
@@ -287,68 +429,66 @@ function renderNotebooksGrid() {
     }) : 'Recent';
 
     const isPro = notebook.tier === 'pro';
-    const cardClass = isPro ? 'glass-card glass-card-pro' : 'glass-card';
 
     return `
       <div 
-        class="${cardClass} card-stagger-enter rounded-2xl p-5 flex flex-col justify-between group relative ${isSelected ? 'ring-2 ring-indigo-500 bg-indigo-950/30' : ''}"
-        style="animation-delay: ${Math.min(idx * 30, 300)}ms;"
+        class="m3-card animate-m3-stagger p-5 flex flex-col justify-between group relative ${isSelected ? 'selected' : ''}"
+        style="animation-delay: ${Math.min(idx * 20, 200)}ms;"
       >
         
-        <!-- Top row: Selection Checkbox, Account Badge, Pro Badge -->
+        <!-- Top row: Selection Checkbox, Account Tag, Pro Tier Badge -->
         <div class="flex items-start justify-between gap-2 mb-3">
-          <div class="flex items-center gap-2.5">
+          <div class="flex items-center gap-2">
             <input
               type="checkbox"
               data-id="${notebook.id}"
               data-profile="${notebook.profileId}"
               data-title="${escapeHtml(notebook.title)}"
-              class="notebook-select-checkbox rounded-md bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer w-4 h-4 transition-transform active:scale-90"
+              class="notebook-select-checkbox rounded bg-[var(--m3-surface)] border-[var(--m3-outline)] text-[var(--google-blue)] focus:ring-0 cursor-pointer w-4 h-4 transition-transform active:scale-95"
               ${isSelected ? 'checked' : ''}
             >
-            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium border shadow-sm"
-                  style="border-color: ${notebook.color}40; background-color: ${notebook.color}15; color: ${notebook.color}">
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)]">
               <span class="w-1.5 h-1.5 rounded-full" style="background-color: ${notebook.color}"></span>
-              <span class="font-medium">${escapeHtml(notebook.profileName)}</span>
+              <span>${escapeHtml(notebook.profileName)}</span>
             </span>
           </div>
 
           ${isPro ? `
-            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30 shadow-sm shadow-amber-500/10">
-              <i data-lucide="sparkles" class="w-3 h-3 text-amber-400"></i> PRO AI
+            <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-[var(--google-yellow-container)]/50 text-[var(--google-yellow)] border border-[var(--google-yellow)]/30">
+              <i data-lucide="sparkles" class="w-3 h-3 text-[var(--google-yellow)]"></i> PRO AI
             </span>
           ` : `
-            <span class="text-[11px] font-mono text-slate-500">${escapeHtml(notebook.profileId)}</span>
+            <span class="text-[10px] font-mono text-[var(--m3-on-surface-subtle)]">${escapeHtml(notebook.profileId)}</span>
           `}
         </div>
 
         <!-- Notebook Title & Meta -->
         <div class="mb-4 flex-1">
-          <h3 class="text-sm font-semibold text-slate-100 group-hover:text-indigo-300 transition-colors line-clamp-2 leading-snug tracking-tight">
+          <h3 class="text-[15px] font-medium text-[var(--m3-on-surface)] group-hover:text-[var(--google-blue)] transition-colors line-clamp-2 leading-snug tracking-normal">
             ${escapeHtml(notebook.title)}
           </h3>
-          <div class="flex items-center gap-3 mt-2 text-[11px] text-slate-400 font-medium">
+          <div class="flex items-center gap-3 mt-2 text-xs text-[var(--m3-on-surface-subtle)]">
             <span class="flex items-center gap-1.5">
-              <i data-lucide="file-text" class="w-3.5 h-3.5 text-slate-500"></i>
-              <span class="font-mono text-slate-300">${notebook.source_count || 0}</span> sources
+              <i data-lucide="file-text" class="w-3.5 h-3.5 text-[var(--m3-on-surface-subtle)]"></i>
+              <span class="font-mono text-[var(--m3-on-surface)] font-medium">${notebook.source_count || 0}</span> sources
             </span>
-            <span class="text-slate-600">•</span>
+            <span class="text-[var(--m3-outline-variant)]">•</span>
             <span class="flex items-center gap-1.5">
-              <i data-lucide="clock" class="w-3.5 h-3.5 text-slate-500"></i>
+              <i data-lucide="clock" class="w-3.5 h-3.5 text-[var(--m3-on-surface-subtle)]"></i>
               <span>${dateFormatted}</span>
             </span>
           </div>
         </div>
 
         <!-- Bottom Action Row -->
-        <div class="flex items-center justify-between pt-3 border-t border-slate-800/80 gap-2">
-          <!-- Ask Notebook Button -->
+        <div class="flex items-center justify-between pt-3 border-t border-[var(--m3-outline-variant)] gap-2">
+          <!-- Query Notebook Button -->
           <button
             onclick="openChatModal('${notebook.id}', '${notebook.profileId}', '${escapeHtml(notebook.title)}')"
-            class="btn-tactile flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800/90 hover:bg-indigo-600 hover:text-white text-slate-300 border border-slate-700/80 transition-colors shadow-sm"
+            class="google-btn-tonal flex items-center gap-1.5 px-3.5 py-1.5 text-xs shadow-sm"
           >
             <i data-lucide="message-square" class="w-3.5 h-3.5"></i>
-            <span>Ask</span>
+            <span>Query</span>
           </button>
 
           <!-- Deep Link to NotebookLM Web -->
@@ -357,10 +497,10 @@ function renderNotebooksGrid() {
             target="_blank"
             rel="noopener noreferrer"
             title="Open in official NotebookLM web interface"
-            class="btn-tactile flex items-center gap-1.5 text-xs text-slate-400 hover:text-indigo-300 transition-colors py-1 px-2 rounded-lg hover:bg-slate-800/50"
+            class="google-btn-outlined flex items-center gap-1.5 text-xs text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] py-1 px-2.5"
           >
             <span>Open Web</span>
-            <i data-lucide="external-link" class="w-3 h-3 text-slate-500 group-hover:text-indigo-400"></i>
+            <i data-lucide="external-link" class="w-3 h-3 text-[var(--m3-on-surface-subtle)]"></i>
           </a>
         </div>
 
@@ -416,20 +556,20 @@ function renderAccountsModalList() {
   container.innerHTML = state.profiles.map(p => {
     const isPro = p.isDefaultPro;
     return `
-      <div class="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/80 border border-slate-800/90 hover:border-slate-700/80 transition-all">
+      <div class="flex items-center justify-between p-3.5 rounded-2xl m3-subcard hover:border-[var(--m3-outline)] transition-all">
         <div class="flex items-center gap-3">
-          <span class="w-3.5 h-3.5 rounded-full shrink-0 shadow-sm" style="background-color: ${p.color}; box-shadow: 0 0 8px ${p.color}80;"></span>
+          <span class="w-3.5 h-3.5 rounded-full shrink-0" style="background-color: ${p.color};"></span>
           <div>
             <div class="flex items-center gap-2">
-              <span class="text-xs font-bold text-white tracking-tight">${escapeHtml(p.displayName)}</span>
-              <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">${p.id}</span>
+              <span class="text-xs font-medium text-[var(--m3-on-surface)] tracking-normal">${escapeHtml(p.displayName)}</span>
+              <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[var(--m3-surface-container)] text-[var(--m3-on-surface-subtle)] border border-[var(--m3-outline-variant)]">${p.id}</span>
               ${isPro ? `
-                <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center gap-1">
-                  <i data-lucide="sparkles" class="w-2.5 h-2.5"></i> DEFAULT PRO AI
+                <span class="text-[9px] font-medium px-2 py-0.5 rounded-full bg-[var(--google-yellow-container)]/50 text-[var(--google-yellow)] border border-[var(--google-yellow)]/30 flex items-center gap-1">
+                  <i data-lucide="sparkles" class="w-2.5 h-2.5"></i> DEFAULT PRO
                 </span>
               ` : ''}
             </div>
-            <p class="text-[11px] text-slate-400 font-mono mt-0.5">${escapeHtml(p.email || 'No email reported yet')}</p>
+            <p class="text-[11px] text-[var(--m3-on-surface-subtle)] font-mono mt-0.5">${escapeHtml(p.email || 'No email reported yet')}</p>
           </div>
         </div>
 
@@ -437,10 +577,10 @@ function renderAccountsModalList() {
           <!-- Re-login button -->
           <button
             onclick="handleTriggerLogin('${p.id}')"
-            title="Authenticate or re-login with Google Chrome"
-            class="btn-tactile px-2.5 py-1.5 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition"
+            title="Authenticate with Google Chrome"
+            class="google-btn-outlined px-3 py-1 text-xs font-medium"
           >
-            <i data-lucide="log-in" class="w-3.5 h-3.5 inline text-slate-400"></i>
+            <i data-lucide="log-in" class="w-3.5 h-3.5 inline text-[var(--m3-on-surface-subtle)]"></i>
             <span>Login</span>
           </button>
 
@@ -449,7 +589,7 @@ function renderAccountsModalList() {
             <button
               onclick="handleSetPro('${p.id}')"
               title="Set this account as the primary Pro AI synthesis engine"
-              class="btn-tactile px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 transition"
+              class="google-btn-tonal px-3 py-1 text-xs text-[var(--google-yellow)] bg-[var(--google-yellow-container)]/40 hover:bg-[var(--google-yellow-container)]/70 border border-[var(--google-yellow)]/30"
             >
               Make Pro
             </button>
@@ -459,9 +599,9 @@ function renderAccountsModalList() {
           <button
             onclick="handleDeleteAccount('${p.id}')"
             title="Delete account profile"
-            class="btn-tactile p-1.5 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition"
+            class="p-2 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-red)] hover:bg-[var(--google-red-container)]/30 transition"
           >
-            <i data-lucide="trash-2" class="w-4 h-4"></i>
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
           </button>
         </div>
       </div>
@@ -495,7 +635,7 @@ async function handleAddAccountSubmit(e) {
       document.getElementById('form-add-account').reset();
       await loadProfiles();
       renderAccountsModalList();
-      showToast(`Account profile '${name}' added! ${launchLogin ? 'Opening Chrome window...' : ''}`, 'success');
+      showToast(`Account profile '${name}' added. ${launchLogin ? 'Opening sign-in window...' : ''}`, 'success');
     } else {
       const err = await res.json();
       showToast('Failed: ' + (err.detail || 'Could not add account'), 'error');
@@ -550,6 +690,123 @@ async function handleDeleteAccount(profileId) {
   }
 }
 
+// ----------------- CHAT STORAGE & MARKDOWN HELPERS -----------------
+
+const CHAT_STORAGE_PREFIX = 'supernlm_chat_';
+
+function loadAllChatHistories() {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(CHAT_STORAGE_PREFIX)) {
+        const notebookId = key.substring(CHAT_STORAGE_PREFIX.length);
+        const stored = localStorage.getItem(key);
+        if (stored) {
+          state.chatHistories.set(notebookId, JSON.parse(stored));
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Could not read chat histories from localStorage:', err);
+  }
+}
+
+function saveNotebookChatHistory(notebookId) {
+  try {
+    const history = state.chatHistories.get(notebookId) || [];
+    localStorage.setItem(CHAT_STORAGE_PREFIX + notebookId, JSON.stringify(history));
+  } catch (err) {
+    console.warn(`Could not save chat history for ${notebookId}:`, err);
+  }
+}
+
+function clearNotebookChatHistory(notebookId) {
+  state.chatHistories.delete(notebookId);
+  try {
+    localStorage.removeItem(CHAT_STORAGE_PREFIX + notebookId);
+  } catch (err) {
+    console.warn(`Could not remove chat history for ${notebookId}:`, err);
+  }
+}
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  if (window.marked && window.DOMPurify) {
+    try {
+      const rawHtml = marked.parse(text, { breaks: true, gfm: true });
+      return DOMPurify.sanitize(rawHtml);
+    } catch (e) {
+      console.warn('Markdown parsing error:', e);
+    }
+  }
+  return escapeHtml(text);
+}
+
+function renderCitationsHtml(citations) {
+  if (!Array.isArray(citations) || citations.length === 0) return '';
+  const chips = citations.map((cite, idx) => {
+    let title = '';
+    if (typeof cite === 'string') {
+      title = cite;
+    } else if (typeof cite === 'object' && cite !== null) {
+      title = cite.title || cite.source_title || cite.text || `Source ${idx + 1}`;
+    } else {
+      title = `Source ${idx + 1}`;
+    }
+    return `
+      <span class="citation-chip" title="${escapeHtml(title)}">
+        <i data-lucide="file-text"></i>
+        <span>[${idx + 1}] ${escapeHtml(title)}</span>
+      </span>
+    `;
+  }).join('');
+
+  return `
+    <div class="citation-container">
+      <div class="w-full text-[10px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-1 flex items-center gap-1">
+        <i data-lucide="bookmark" class="w-3 h-3 text-[var(--google-blue)]"></i>
+        <span>Cited Sources (${citations.length})</span>
+      </div>
+      ${chips}
+    </div>
+  `;
+}
+
+function renderChatMessageBubble(msg) {
+  if (msg.role === 'user') {
+    return `
+      <div class="flex justify-end animate-m3-enter">
+        <div class="max-w-md p-3.5 rounded-2xl rounded-tr-sm bg-[var(--google-blue-container)] text-[var(--google-blue-on-container)] text-xs leading-relaxed shadow-sm font-medium">
+          ${escapeHtml(msg.content)}
+        </div>
+      </div>
+    `;
+  } else {
+    const fallbackBadge = msg.handledByProFallback ? `
+      <div class="mb-2.5 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-[var(--google-yellow-container)] text-[var(--google-yellow)] border border-[var(--google-yellow)]/30">
+        <i data-lucide="sparkles" class="w-3 h-3 text-[var(--google-yellow)]"></i>
+        <span>${escapeHtml(msg.fallbackReason || 'Handled via Pro AI Fallback')}</span>
+      </div>
+    ` : '';
+
+    const formattedAnswer = renderMarkdown(msg.content);
+    const citationsHtml = renderCitationsHtml(msg.citations);
+
+    return `
+      <div class="flex items-start gap-2.5 animate-m3-enter">
+        <div class="w-8 h-8 rounded-full bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] flex items-center justify-center text-[var(--google-blue)] shadow-sm shrink-0">
+          <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+        </div>
+        <div class="flex-1 p-4 rounded-2xl rounded-tl-sm m3-subcard text-[var(--m3-on-surface)] text-xs leading-relaxed shadow-sm">
+          ${fallbackBadge}
+          <div class="nlm-markdown">${formattedAnswer}</div>
+          ${citationsHtml}
+        </div>
+      </div>
+    `;
+  }
+}
+
 // ----------------- CHAT MODAL -----------------
 
 window.openChatModal = function(notebookId, profileId, title) {
@@ -558,18 +815,49 @@ window.openChatModal = function(notebookId, profileId, title) {
   document.getElementById('chat-modal-subtitle').textContent = `Account: ${profileId}`;
   
   const thread = document.getElementById('chat-thread');
-  thread.innerHTML = `
-    <div class="p-3.5 rounded-xl bg-slate-900/70 border border-slate-800 text-xs text-slate-300 flex items-center gap-2.5">
-      <i data-lucide="info" class="w-4 h-4 text-indigo-400 shrink-0"></i>
-      <span>Connected to <strong>${escapeHtml(title)}</strong> via account <code class="px-1 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono">${profileId}</code>. Ask any question to its sources below.</span>
+  
+  // Introductory system card
+  const introCard = `
+    <div class="p-4 rounded-2xl m3-subcard text-xs text-[var(--m3-on-surface-variant)] flex items-center gap-2.5">
+      <i data-lucide="info" class="w-4 h-4 text-[var(--google-blue)] shrink-0"></i>
+      <span>Connected to <strong>${escapeHtml(title)}</strong> via account <code class="px-1.5 py-0.5 rounded bg-[var(--m3-surface-container)] text-[var(--google-blue)] font-mono">${profileId}</code>. Ask any question to its indexed sources below.</span>
     </div>
   `;
 
+  // Restore existing history if present
+  const history = state.chatHistories.get(notebookId) || [];
+  if (history.length > 0) {
+    const renderedMessages = history.map(msg => renderChatMessageBubble(msg)).join('');
+    thread.innerHTML = introCard + renderedMessages;
+  } else {
+    thread.innerHTML = introCard;
+  }
+
   openModal('modal-chat');
   if (window.lucide) lucide.createIcons();
+  thread.scrollTop = thread.scrollHeight;
   const chatInput = document.getElementById('chat-input');
   if (chatInput) chatInput.focus();
 };
+
+function handleClearCurrentChat() {
+  if (!state.activeChat) return;
+  const notebookId = state.activeChat.notebookId;
+  const title = state.activeChat.title;
+  const profileId = state.activeChat.profileId;
+
+  clearNotebookChatHistory(notebookId);
+
+  const thread = document.getElementById('chat-thread');
+  thread.innerHTML = `
+    <div class="p-4 rounded-2xl m3-subcard text-xs text-[var(--m3-on-surface-variant)] flex items-center gap-2.5">
+      <i data-lucide="info" class="w-4 h-4 text-[var(--google-blue)] shrink-0"></i>
+      <span>Connected to <strong>${escapeHtml(title)}</strong> via account <code class="px-1.5 py-0.5 rounded bg-[var(--m3-surface-container)] text-[var(--google-blue)] font-mono">${profileId}</code>. Ask any question to its indexed sources below.</span>
+    </div>
+  `;
+  if (window.lucide) lucide.createIcons();
+  showToast('Chat history cleared for this notebook', 'info');
+}
 
 async function handleChatSubmit(e) {
   e.preventDefault();
@@ -580,26 +868,40 @@ async function handleChatSubmit(e) {
   if (!question) return;
 
   const thread = document.getElementById('chat-thread');
+  const notebookId = state.activeChat.notebookId;
 
-  // Append user bubble
-  thread.innerHTML += `
-    <div class="flex justify-end animate-modal-enter">
-      <div class="max-w-md p-3.5 rounded-2xl rounded-tr-sm bg-gradient-to-r from-indigo-600 to-indigo-500 text-white text-xs leading-relaxed shadow-md shadow-indigo-600/20">
-        ${escapeHtml(question)}
-      </div>
-    </div>
-  `;
+  // Retrieve or initialize history for this notebook
+  let history = state.chatHistories.get(notebookId);
+  if (!history) {
+    history = [];
+    state.chatHistories.set(notebookId, history);
+  }
 
-  // Append loading bubble
+  // Push and render user prompt
+  const userMsg = {
+    role: 'user',
+    content: question,
+    timestamp: Date.now()
+  };
+  history.push(userMsg);
+  saveNotebookChatHistory(notebookId);
+
+  thread.innerHTML += renderChatMessageBubble(userMsg);
+
+  // Append Google skeleton bubble
   const loaderId = 'loader-' + Date.now();
   thread.innerHTML += `
-    <div id="${loaderId}" class="flex items-start gap-2.5 animate-modal-enter">
-      <div class="w-7 h-7 rounded-xl bg-slate-800 border border-slate-700/80 flex items-center justify-center text-indigo-400 shadow-sm shrink-0">
-        <i data-lucide="bot" class="w-4 h-4"></i>
+    <div id="${loaderId}" class="flex items-start gap-2.5 animate-m3-enter">
+      <div class="w-8 h-8 rounded-full bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] flex items-center justify-center text-[var(--google-blue)] shadow-sm shrink-0">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
       </div>
-      <div class="p-3.5 rounded-2xl rounded-tl-sm bg-slate-900/80 text-slate-300 text-xs flex items-center gap-2 border border-slate-800">
-        <i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin text-indigo-400"></i>
-        <span>Querying notebook sources...</span>
+      <div class="flex-1 p-4 rounded-2xl m3-subcard space-y-2">
+        <div class="flex items-center gap-2 text-xs text-[var(--m3-on-surface-subtle)]">
+          <span class="w-2 h-2 rounded-full bg-[var(--google-blue)] animate-ping"></span>
+          <span>Google AI is synthesizing sources...</span>
+        </div>
+        <div class="h-3 w-3/4 rounded-full google-skeleton"></div>
+        <div class="h-3 w-1/2 rounded-full google-skeleton"></div>
       </div>
     </div>
   `;
@@ -624,29 +926,24 @@ async function handleChatSubmit(e) {
     if (res.ok) {
       const data = await res.json();
       const answer = data.answer || 'No response returned.';
-      const fallbackBadge = data.handledByProFallback ? `
-        <div class="mb-2.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-          <i data-lucide="sparkles" class="w-3 h-3 text-amber-400"></i>
-          <span>${escapeHtml(data.fallbackReason || 'Handled via Pro AI Engine Fallback')}</span>
-        </div>
-      ` : '';
+      
+      const assistantMsg = {
+        role: 'assistant',
+        content: answer,
+        citations: data.citations || [],
+        handledByProFallback: !!data.handledByProFallback,
+        fallbackReason: data.fallbackReason || '',
+        timestamp: Date.now()
+      };
+      history.push(assistantMsg);
+      saveNotebookChatHistory(notebookId);
 
-      thread.innerHTML += `
-        <div class="flex items-start gap-2.5 animate-modal-enter">
-          <div class="w-7 h-7 rounded-xl bg-slate-800 border border-slate-700/80 flex items-center justify-center text-indigo-400 shadow-sm shrink-0">
-            <i data-lucide="bot" class="w-4 h-4"></i>
-          </div>
-          <div class="flex-1 p-4 rounded-2xl rounded-tl-sm bg-slate-900/90 text-slate-200 text-xs leading-relaxed border border-slate-800 shadow-sm whitespace-pre-wrap">
-            ${fallbackBadge}
-            ${escapeHtml(answer)}
-          </div>
-        </div>
-      `;
+      thread.innerHTML += renderChatMessageBubble(assistantMsg);
     } else {
       const err = await res.json();
       thread.innerHTML += `
-        <div class="p-3.5 rounded-xl bg-rose-950/40 border border-rose-800/80 text-rose-300 text-xs animate-modal-enter flex items-center gap-2">
-          <i data-lucide="alert-circle" class="w-4 h-4 text-rose-400 shrink-0"></i>
+        <div class="p-3.5 rounded-2xl bg-[var(--google-red-container)]/30 border border-[var(--google-red)]/30 text-[var(--google-red)] text-xs animate-m3-enter flex items-center gap-2">
+          <i data-lucide="alert-circle" class="w-4 h-4 shrink-0"></i>
           <span>Query failed: ${escapeHtml(err.detail || 'Error running query')}</span>
         </div>
       `;
@@ -655,8 +952,8 @@ async function handleChatSubmit(e) {
     const loader = document.getElementById(loaderId);
     if (loader) loader.remove();
     thread.innerHTML += `
-      <div class="p-3.5 rounded-xl bg-rose-950/40 border border-rose-800/80 text-rose-300 text-xs animate-modal-enter flex items-center gap-2">
-        <i data-lucide="wifi-off" class="w-4 h-4 text-rose-400 shrink-0"></i>
+      <div class="p-3.5 rounded-2xl bg-[var(--google-red-container)]/30 border border-[var(--google-red)]/30 text-[var(--google-red)] text-xs animate-m3-enter flex items-center gap-2">
+        <i data-lucide="wifi-off" class="w-4 h-4 shrink-0"></i>
         <span>Network Error: ${escapeHtml(err.message)}</span>
       </div>
     `;
@@ -673,15 +970,15 @@ function openCrossSynthesisModal() {
   const selected = Array.from(state.selectedNotebooks.values());
 
   if (selected.length === 0) {
-    showToast('Please select at least 2 notebooks from different accounts first!', 'info');
+    showToast('Select at least 2 notebooks from different accounts first.', 'info');
     return;
   }
 
   container.innerHTML = selected.map(n => `
-    <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs bg-slate-900/80 border border-slate-700/80 text-slate-200 shadow-sm">
-      <span class="font-mono text-indigo-400 text-[10px]">${escapeHtml(n.profileId)}</span>
-      <span class="text-slate-600">:</span>
-      <strong class="font-medium tracking-tight">${escapeHtml(n.title)}</strong>
+    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs m3-subcard shadow-sm">
+      <span class="font-mono text-[var(--google-blue)] text-[10px] font-medium">${escapeHtml(n.profileId)}</span>
+      <span class="text-[var(--m3-outline-variant)]">:</span>
+      <strong class="font-medium tracking-normal text-[var(--m3-on-surface)]">${escapeHtml(n.title)}</strong>
     </span>
   `).join('');
 
@@ -693,14 +990,14 @@ function openCrossSynthesisModal() {
 async function handleRunCrossSynthesis() {
   const prompt = document.getElementById('cross-prompt-input').value.trim();
   if (!prompt) {
-    showToast('Please enter a synthesis prompt or research goal!', 'info');
+    showToast('Please enter a synthesis prompt or research goal.', 'info');
     return;
   }
 
   const selected = Array.from(state.selectedNotebooks.values());
   const btn = document.getElementById('btn-run-cross-synthesis');
   btn.disabled = true;
-  btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> <span>Synthesizing across accounts...</span>';
+  btn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> <span>Synthesizing across accounts...</span>';
   if (window.lucide) lucide.createIcons();
 
   const resultsContainer = document.getElementById('cross-results-container');
@@ -718,9 +1015,10 @@ async function handleRunCrossSynthesis() {
 
     if (res.ok) {
       const data = await res.json();
-      resultsBody.textContent = data.combinedContext || 'No synthesis produced.';
+      const markdownContext = data.combinedContext || 'No synthesis produced.';
+      resultsBody.innerHTML = `<div class="nlm-markdown">${renderMarkdown(markdownContext)}</div>`;
       resultsContainer.classList.remove('hidden');
-      showToast('Cross-account synthesis completed!', 'success');
+      showToast('Cross-account synthesis completed successfully.', 'success');
     } else {
       const err = await res.json();
       showToast('Synthesis error: ' + (err.detail || 'Failed to synthesize'), 'error');
@@ -729,7 +1027,7 @@ async function handleRunCrossSynthesis() {
     showToast('Error: ' + err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<i data-lucide="sparkles" class="w-4 h-4"></i> <span>Run Multi-Account Synthesis</span>';
+    btn.innerHTML = '<i data-lucide="sparkles" class="w-3.5 h-3.5"></i> <span>Execute Multi-Account Synthesis</span>';
     if (window.lucide) lucide.createIcons();
   }
 }
@@ -764,14 +1062,14 @@ function showToast(message, type = 'info') {
   if (!container) return;
 
   const toast = document.createElement('div');
-  const bg = type === 'error' ? 'bg-rose-950/90 border-rose-600/50 text-rose-200'
-           : type === 'success' ? 'bg-emerald-950/90 border-emerald-600/50 text-emerald-200'
-           : 'bg-slate-900/95 border-slate-700/80 text-slate-200';
+  const bg = type === 'error' ? 'bg-[var(--google-red-container)] border-[var(--google-red)]/40 text-[var(--google-red)]'
+           : type === 'success' ? 'bg-[var(--google-green-container)] border-[var(--google-green)]/40 text-[var(--google-green)]'
+           : 'bg-[var(--m3-surface-container-high)] border-[var(--m3-outline-variant)] text-[var(--m3-on-surface)]';
   const icon = type === 'error' ? 'alert-circle' : type === 'success' ? 'check-circle' : 'info';
 
-  toast.className = `pointer-events-auto flex items-center gap-2.5 px-4 py-3 rounded-2xl border text-xs font-semibold shadow-2xl backdrop-blur-xl transition-all duration-300 transform translate-y-3 opacity-0 ${bg}`;
+  toast.className = `pointer-events-auto flex items-center gap-2.5 px-4 py-2.5 rounded-full border text-xs font-medium shadow-2xl transition-all duration-200 transform translate-y-2 opacity-0 ${bg}`;
   toast.innerHTML = `
-    <i data-lucide="${icon}" class="w-4 h-4 shrink-0"></i>
+    <i data-lucide="${icon}" class="w-3.5 h-3.5 shrink-0"></i>
     <span>${escapeHtml(message)}</span>
   `;
 
@@ -783,11 +1081,12 @@ function showToast(message, type = 'info') {
   }
 
   requestAnimationFrame(() => {
-    toast.classList.remove('translate-y-3', 'opacity-0');
+    toast.classList.remove('translate-y-2', 'opacity-0');
   });
 
   setTimeout(() => {
-    toast.classList.add('opacity-0', 'translate-y-3');
-    setTimeout(() => toast.remove(), 300);
-  }, 4500);
+    toast.classList.add('opacity-0', 'translate-y-2');
+    setTimeout(() => toast.remove(), 250);
+  }, 4000);
 }
+

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Super-NLM Hub | Unified Multi-Account NotebookLM</title>
+  <title>Super-NLM Hub | Unified Multi-Account NotebookLM Studio</title>
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -13,22 +13,22 @@
       theme: {
         extend: {
           fontFamily: {
-            sans: ['"Plus Jakarta Sans"', 'Inter', 'sans-serif'],
-            mono: ['"JetBrains Mono"', 'monospace'],
+            sans: ['"Google Sans"', '"Google Sans Text"', '"Plus Jakarta Sans"', '-apple-system', 'Roboto', 'sans-serif'],
+            mono: ['"Roboto Mono"', '"JetBrains Mono"', 'monospace'],
           },
           colors: {
-            brand: {
-              50: '#eef2ff',
-              100: '#e0e7ff',
-              400: '#818cf8',
-              500: '#6366f1',
-              600: '#4f46e5',
-              700: '#4338ca',
-            },
-            pro: {
-              amber: '#f59e0b',
-              gold: '#fbbf24',
-              glow: '#d97706',
+            google: {
+              blue: '#8ab4f8',
+              blueContainer: '#004a77',
+              blueOnContainer: '#c2e7ff',
+              green: '#81c995',
+              yellow: '#fdd663',
+              red: '#f28b82',
+              surface: '#131314',
+              surfaceContainer: '#1e1f20',
+              surfaceHigh: '#282a2d',
+              outline: '#444746',
+              outlineVariant: '#333538',
             }
           }
         }
@@ -38,170 +38,292 @@
   
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Markdown & HTML Sanitizer -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="bg-[#060913] text-slate-100 min-h-screen font-sans antialiased flex flex-col selection:bg-indigo-500/30 selection:text-indigo-200">
+<body class="min-h-[100dvh] font-sans antialiased flex flex-col selection:bg-[#8ab4f8]/30">
 
-  <!-- TOP NAVBAR -->
-  <header class="sticky top-0 z-40 glass-nav">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+  <!-- GOOGLE WORKSPACE APP BAR -->
+  <header class="sticky top-0 z-40 google-app-bar backdrop-blur-md">
+    <div class="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
       
-      <!-- Brand & Title -->
-      <div class="flex items-center gap-3.5">
-        <div class="relative group cursor-pointer">
-          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-amber-400 p-[1.5px] shadow-lg shadow-indigo-500/20 group-hover:shadow-indigo-500/40 transition-all duration-300">
-            <div class="w-full h-full bg-[#0b101f] rounded-[10px] flex items-center justify-center">
-              <i data-lucide="layers" class="w-5 h-5 text-indigo-400 group-hover:scale-110 transition-transform duration-200"></i>
-            </div>
+      <!-- Brand & Product Title (NotebookLM Style) -->
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl m3-subcard flex items-center justify-center shadow-sm">
+          <!-- Google 4-Color Quad Accent Dot -->
+          <div class="grid grid-cols-2 gap-1 p-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#8ab4f8]"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-[#f28b82]"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-[#81c995]"></span>
+            <span class="w-1.5 h-1.5 rounded-full bg-[#fdd663]"></span>
           </div>
         </div>
         <div>
           <div class="flex items-center gap-2">
-            <span class="text-base sm:text-lg font-bold tracking-tight text-white flex items-center gap-1.5">
-              Super-NLM
-              <span class="text-xs text-indigo-400 font-mono font-medium">v2.0</span>
-            </span>
-            <span class="text-[9px] uppercase font-bold tracking-widest px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/25">
-              Unified Hub
+            <span class="text-[17px] font-medium tracking-tight flex items-center gap-1.5">
+              NotebookLM
+              <span class="text-[11px] font-normal text-[var(--google-blue)] px-2 py-0.5 rounded-full bg-[var(--google-blue-container)] border border-[var(--google-blue)]/20 font-mono">Hub v2.0</span>
             </span>
           </div>
-          <p class="text-[11px] text-slate-400 flex items-center gap-1.5 font-medium">
-            <span class="relative flex h-2 w-2">
-              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          <div class="text-[11px] text-[var(--m3-on-surface-subtle)] flex items-center gap-1.5">
+            <span class="relative flex h-1.5 w-1.5">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#81c995] opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#81c995]"></span>
             </span>
-            Pro AI Engine: <span class="text-amber-400 font-mono font-semibold" id="pro-email-label">aaradhyadevtmr@gmail.com</span>
-          </p>
+            <span>Pro AI Engine:</span>
+            <span class="text-[var(--google-yellow)] font-mono text-[11px]" id="pro-email-label">aaradhyadevtmr@gmail.com</span>
+          </div>
         </div>
       </div>
 
-      <!-- Search Bar -->
-      <div class="flex-1 max-w-lg relative hidden sm:block">
-        <div class="relative group">
-          <i data-lucide="search" class="w-4 h-4 text-slate-400 group-focus-within:text-indigo-400 absolute left-3.5 top-3 transition-colors"></i>
+      <!-- Google Pill Search Bar -->
+      <div class="flex-1 max-w-xl relative hidden md:block">
+        <div class="google-search-pill flex items-center px-4 py-2 gap-2.5">
+          <i data-lucide="search" class="w-4 h-4 text-[var(--m3-on-surface-subtle)] shrink-0"></i>
           <input
             type="text"
             id="search-input"
-            placeholder="Search notebooks, accounts, sources... (Ctrl+K)"
-            class="w-full pl-10 pr-14 py-2 bg-slate-900/80 border border-slate-700/70 hover:border-slate-600 rounded-xl text-xs text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-inner"
+            placeholder="Search notebooks, sources, accounts... (Ctrl+K)"
+            class="w-full bg-transparent text-xs text-[var(--m3-on-surface)] placeholder-[var(--m3-on-surface-subtle)] focus:outline-none font-sans"
           >
-          <kbd class="absolute right-3 top-2 px-1.5 py-0.5 text-[10px] font-mono font-medium text-slate-400 bg-slate-800/90 rounded border border-slate-700 pointer-events-none shadow-sm">
+          <kbd class="px-2 py-0.5 text-[9px] font-mono font-medium text-[var(--m3-on-surface-subtle)] bg-[var(--m3-surface-container)] rounded-md border border-[var(--m3-outline-variant)] pointer-events-none">
             Ctrl K
           </kbd>
         </div>
       </div>
 
-      <!-- Right Header Actions -->
+      <!-- Header Action Buttons (Google Material Buttons) -->
       <div class="flex items-center gap-2">
-        <!-- Sync All Button -->
+        <!-- Sync Button -->
         <button
           id="btn-sync"
-          title="Refresh all notebooks across all Google accounts"
-          class="btn-tactile flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700/80 hover:border-slate-600 shadow-sm"
+          title="Sync notebooks across all accounts"
+          class="google-btn-outlined flex items-center gap-1.5 px-3 py-1.5 text-xs"
         >
-          <i data-lucide="refresh-cw" id="sync-icon" class="w-3.5 h-3.5 text-slate-400"></i>
-          <span class="hidden md:inline">Sync All</span>
+          <i data-lucide="refresh-cw" id="sync-icon" class="w-3.5 h-3.5"></i>
+          <span class="hidden sm:inline">Sync All</span>
         </button>
 
-        <!-- Cross-Account Synthesis Button -->
+        <!-- Cross Synthesis Button -->
         <button
           id="btn-open-cross-modal"
-          class="btn-tactile flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 hover:border-indigo-500/50 shadow-sm"
+          class="google-btn-tonal flex items-center gap-1.5 px-3 py-1.5 text-xs"
         >
-          <i data-lucide="sparkles" class="w-3.5 h-3.5 text-indigo-400"></i>
-          <span class="hidden md:inline">Cross Synthesis</span>
+          <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+          <span class="hidden sm:inline">Cross Synthesis</span>
         </button>
 
-        <!-- Manage Accounts Modal Trigger -->
+        <!-- Accounts Manager -->
         <button
           id="btn-manage-accounts"
-          class="btn-tactile btn-shimmer flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white shadow-md shadow-indigo-600/25 border border-indigo-400/30"
+          class="google-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-xs shadow-sm"
         >
           <i data-lucide="users" class="w-3.5 h-3.5"></i>
           <span>Accounts (<span id="accounts-count">1</span>)</span>
         </button>
+
+        <!-- Google Theme Switcher (Light / Dark / System) -->
+        <div class="relative">
+          <button
+            id="btn-theme-toggle"
+            title="Switch theme (Light, Dark, System)"
+            class="google-btn-outlined p-2 flex items-center justify-center text-xs"
+            aria-haspopup="true"
+            aria-expanded="false"
+          >
+            <i data-lucide="moon" id="theme-active-icon" class="w-4 h-4"></i>
+          </button>
+          
+          <div id="theme-dropdown" class="m3-menu absolute right-0 mt-2 hidden animate-m3-enter">
+            <button class="m3-menu-item" data-theme="light">
+              <div class="flex items-center gap-2">
+                <i data-lucide="sun" class="w-3.5 h-3.5 text-[#e37400]"></i>
+                <span>Light</span>
+              </div>
+              <i data-lucide="check" class="w-3.5 h-3.5 theme-check-icon hidden"></i>
+            </button>
+            <button class="m3-menu-item" data-theme="dark">
+              <div class="flex items-center gap-2">
+                <i data-lucide="moon" class="w-3.5 h-3.5 text-[#8ab4f8]"></i>
+                <span>Dark</span>
+              </div>
+              <i data-lucide="check" class="w-3.5 h-3.5 theme-check-icon hidden"></i>
+            </button>
+            <button class="m3-menu-item" data-theme="system">
+              <div class="flex items-center gap-2">
+                <i data-lucide="laptop" class="w-3.5 h-3.5 text-[#5f6368]"></i>
+                <span>System</span>
+              </div>
+              <i data-lucide="check" class="w-3.5 h-3.5 theme-check-icon hidden"></i>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </header>
 
-  <!-- MAIN WRAPPER -->
-  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full space-y-6 relative z-10">
+  <!-- WORKSPACE BODY (Asymmetric Material 3 Grid) -->
+  <div class="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full flex flex-col lg:flex-row gap-6 relative z-10">
 
-    <!-- ACCOUNT FILTER PILLS -->
-    <div class="flex items-center gap-2 overflow-x-auto pb-1.5 scrollbar-none" id="account-pills-container">
-      <!-- Dynamically filled: "All Accounts", "Personal (Pro)", "Work", etc. -->
-    </div>
-
-    <!-- SELECTION BAR (When checkboxes are clicked for cross-synthesis) -->
-    <div id="selection-banner" class="hidden items-center justify-between p-3.5 rounded-2xl bg-indigo-950/70 border border-indigo-500/40 text-xs shadow-xl backdrop-blur-md animate-modal-enter">
-      <div class="flex items-center gap-3">
-        <span class="flex h-2.5 w-2.5 rounded-full bg-indigo-400 animate-pulse"></span>
-        <span id="selection-text" class="text-indigo-200 font-semibold">0 notebooks selected across accounts</span>
-      </div>
-      <div class="flex items-center gap-2">
-        <button id="btn-clear-selection" class="px-3 py-1.5 text-slate-400 hover:text-slate-200 text-xs font-medium rounded-lg hover:bg-slate-800/60 transition">
-          Clear Selection
-        </button>
-        <button id="btn-synthesize-selected" class="btn-tactile px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-indigo-600/30 border border-indigo-400/30">
-          <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-300"></i>
-          <span>Synthesize with Pro AI</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- STATS / SUMMARY BAR -->
-    <div class="flex items-center justify-between text-xs text-slate-400 px-1">
-      <div class="flex items-center gap-2">
-        <span>Showing <strong id="visible-count" class="text-slate-200 font-mono">0</strong> notebooks</span>
-        <span class="text-slate-600">•</span>
-        <span id="active-filter-label" class="text-slate-300 font-medium">All Accounts</span>
-      </div>
-      <div class="flex items-center gap-4 text-[11px]">
-        <span class="flex items-center gap-1.5">
-          <span class="w-2 h-2 rounded-full bg-amber-400 shadow-sm shadow-amber-400/50"></span>
-          <span class="text-slate-300 font-medium">Pro AI Tier</span>
-        </span>
-        <span class="flex items-center gap-1.5">
-          <span class="w-2 h-2 rounded-full bg-slate-500"></span>
-          <span class="text-slate-400">Standard Tier</span>
-        </span>
-      </div>
-    </div>
-
-    <!-- NOTEBOOKS GRID -->
-    <div id="notebooks-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" style="perspective: 1200px;">
-      <!-- Notebook cards dynamically rendered here -->
-    </div>
-
-    <!-- EMPTY STATE -->
-    <div id="empty-state" class="hidden flex-col items-center justify-center py-20 text-center space-y-4">
-      <div class="w-16 h-16 rounded-2xl bg-slate-900/90 border border-slate-800 flex items-center justify-center shadow-lg">
-        <i data-lucide="book-open" class="w-8 h-8 text-slate-600"></i>
-      </div>
-      <div class="space-y-1">
-        <h3 class="text-sm font-bold text-slate-200 tracking-tight">No notebooks found</h3>
-        <p class="text-xs text-slate-400 max-w-sm">No notebooks match your current search query or active filter. Try resetting filters or sync your accounts.</p>
-      </div>
-    </div>
-
-  </main>
-
-  <!-- MODAL: MANAGE ACCOUNTS (N Accounts CRUD) -->
-  <div id="modal-accounts" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 backdrop-blur-md p-4">
-    <div class="glass-modal rounded-2xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-modal-enter">
+    <!-- LEFT DRAWER / SYSTEM PANEL -->
+    <aside class="w-full lg:w-72 shrink-0 space-y-4">
       
-      <!-- Modal Header -->
-      <div class="px-6 py-4 border-b border-slate-800/80 flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-            <i data-lucide="users" class="w-5 h-5"></i>
+      <!-- Operational Diagnostics Card -->
+      <div class="m3-card p-4 space-y-4">
+        <div class="flex items-center justify-between pb-3 border-b border-[var(--m3-outline-variant)]">
+          <div class="flex items-center gap-2">
+            <i data-lucide="layout-grid" class="w-4 h-4 text-[var(--google-blue)]"></i>
+            <h2 class="text-xs font-medium uppercase tracking-wider text-[var(--m3-on-surface-variant)]">Workspace Status</h2>
           </div>
-          <div>
-            <h3 class="text-sm font-bold text-white tracking-tight">Google Accounts Manager</h3>
-            <p class="text-xs text-slate-400">Add, authenticate, and configure multi-account routing</p>
+          <span class="text-[10px] font-mono text-[var(--google-green)] bg-[var(--google-green-container)] border border-[var(--google-green)]/30 px-2 py-0.5 rounded-full">
+            Connected
+          </span>
+        </div>
+
+        <!-- Telemetry Numbers -->
+        <div class="grid grid-cols-2 gap-2.5">
+          <div class="p-3 rounded-xl m3-subcard">
+            <p class="text-[10px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider">Notebooks</p>
+            <p id="telemetry-notebooks" class="text-xl font-bold font-mono text-[var(--m3-on-surface)] mt-0.5">0</p>
+          </div>
+          <div class="p-3 rounded-xl m3-subcard">
+            <p class="text-[10px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider">Accounts</p>
+            <p id="telemetry-profiles" class="text-xl font-bold font-mono text-[var(--google-blue)] mt-0.5">0</p>
           </div>
         </div>
-        <button id="close-modal-accounts" class="btn-tactile p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition">
+
+        <!-- Pro Tier Routing Panel -->
+        <div class="p-3.5 rounded-xl bg-[var(--google-yellow-container)]/30 border border-[var(--google-yellow)]/30 space-y-1.5">
+          <div class="flex items-center gap-1.5 text-[var(--google-yellow)] font-medium text-xs">
+            <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
+            <span>Google One Pro AI Node</span>
+          </div>
+          <p class="text-[11px] text-[var(--m3-on-surface)] font-mono break-all" id="sidebar-pro-email">
+            aaradhyadevtmr@gmail.com
+          </p>
+          <p class="text-[10px] text-[var(--m3-on-surface-subtle)] leading-relaxed">
+            Multi-account fallback routing and Gemini Pro high-fidelity inference enabled.
+          </p>
+        </div>
+
+        <!-- Connect Account Action Button -->
+        <button
+          id="btn-sidebar-add-account"
+          class="google-btn-tonal w-full py-2 px-3 text-xs flex items-center justify-center gap-2"
+        >
+          <i data-lucide="user-plus" class="w-3.5 h-3.5"></i>
+          <span>Add Google Account</span>
+        </button>
+      </div>
+
+      <!-- Google Workspace Info Card -->
+      <div class="m3-card p-4 space-y-2.5 text-xs">
+        <h3 class="text-xs font-medium text-[var(--m3-on-surface-variant)] uppercase tracking-wider flex items-center gap-1.5">
+          <i data-lucide="info" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
+          <span>Multi-Account Tips</span>
+        </h3>
+        <ul class="text-[11px] text-[var(--m3-on-surface-subtle)] space-y-1.5">
+          <li>• Check multiple notebooks to run cross-account synthesis.</li>
+          <li>• Click <strong class="text-[var(--m3-on-surface)]">Query</strong> to chat with any notebook's indexed sources.</li>
+          <li>• Use <kbd class="px-1.5 py-0.5 rounded m3-subcard text-[var(--m3-on-surface-variant)] font-mono text-[9px]">Ctrl+K</kbd> to search across accounts.</li>
+        </ul>
+      </div>
+
+    </aside>
+
+    <!-- MAIN NOTEBOOK CANVAS -->
+    <main class="flex-1 min-w-0 space-y-5">
+
+      <!-- MATERIAL 3 FILTER CHIPS -->
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div class="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none flex-1" id="account-pills-container">
+          <!-- Populated with M3 chips: "All Accounts", "Personal", "Work", etc. -->
+        </div>
+      </div>
+
+      <!-- FLOATING SELECTION SNACKBAR (For Cross-Synthesis) -->
+      <div id="selection-banner" class="hidden items-center justify-between p-3.5 rounded-2xl m3-card border-[var(--google-blue)] text-xs shadow-2xl animate-m3-enter">
+        <div class="flex items-center gap-3">
+          <span class="flex h-2 w-2 rounded-full bg-[var(--google-blue)]"></span>
+          <span id="selection-text" class="text-[var(--m3-on-surface)] font-medium">0 notebooks selected across accounts</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btn-clear-selection" class="google-btn-outlined px-3 py-1 text-xs">
+            Clear Selection
+          </button>
+          <button id="btn-synthesize-selected" class="google-btn-primary px-3.5 py-1 text-xs flex items-center gap-1.5">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+            <span>Synthesize with Pro AI</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- WORKSPACE METRICS BAR -->
+      <div class="flex items-center justify-between text-xs text-[var(--m3-on-surface-subtle)] px-1">
+        <div class="flex items-center gap-2">
+          <span>Showing <strong id="visible-count" class="text-[var(--m3-on-surface)] font-mono font-medium">0</strong> notebooks</span>
+          <span class="text-[var(--m3-outline-variant)]">•</span>
+          <span id="active-filter-label" class="text-[var(--m3-on-surface-variant)] font-medium">All Accounts</span>
+        </div>
+        <div class="flex items-center gap-4 text-[11px]">
+          <span class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-[var(--google-yellow)]"></span>
+            <span class="text-[var(--m3-on-surface-variant)]">Pro AI Tier</span>
+          </span>
+          <span class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-[var(--m3-outline)]"></span>
+            <span class="text-[var(--m3-on-surface-subtle)]">Standard Tier</span>
+          </span>
+        </div>
+      </div>
+
+      <!-- SKELETON LOADERS (During fetch) -->
+      <div id="skeleton-grid" class="hidden grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div class="m3-card p-5 h-44 google-skeleton"></div>
+        <div class="m3-card p-5 h-44 google-skeleton"></div>
+        <div class="m3-card p-5 h-44 google-skeleton"></div>
+      </div>
+
+      <!-- NOTEBOOKS MATRIX GRID -->
+      <div id="notebooks-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <!-- Notebook cards dynamically rendered here -->
+      </div>
+
+      <!-- EMPTY STATE -->
+      <div id="empty-state" class="hidden flex-col items-center justify-center py-20 text-center space-y-4 m3-card p-8">
+        <div class="w-12 h-12 rounded-full m3-subcard flex items-center justify-center text-[var(--m3-on-surface-subtle)]">
+          <i data-lucide="book-open" class="w-5 h-5"></i>
+        </div>
+        <div class="space-y-1 max-w-sm">
+          <h3 class="text-sm font-medium text-[var(--m3-on-surface)]">No notebooks found</h3>
+          <p class="text-xs text-[var(--m3-on-surface-subtle)] leading-relaxed">No notebooks match your current search query or active account filter.</p>
+        </div>
+        <button id="btn-empty-sync" class="google-btn-outlined px-4 py-1.5 text-xs">
+          Sync Notebooks Now
+        </button>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- MODAL: MANAGE ACCOUNTS (Material 3 Dialog) -->
+  <div id="modal-accounts" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div class="m3-dialog max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-m3-enter">
+      
+      <!-- Modal Header -->
+      <div class="px-6 py-4 border-b border-[var(--m3-outline-variant)] flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="p-2 rounded-full bg-[var(--google-blue-container)] text-[var(--google-blue)]">
+            <i data-lucide="users" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h3 class="text-sm font-medium text-[var(--m3-on-surface)]">Google Accounts Manager</h3>
+            <p class="text-xs text-[var(--m3-on-surface-subtle)]">Manage authenticated profiles and select default Pro AI engine</p>
+          </div>
+        </div>
+        <button id="close-modal-accounts" class="p-1.5 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] hover:bg-[var(--m3-surface-container-high)] transition">
           <i data-lucide="x" class="w-4 h-4"></i>
         </button>
       </div>
@@ -211,68 +333,68 @@
         
         <!-- Connected Accounts List -->
         <div>
-          <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-            <span>Connected Profiles</span>
+          <h4 class="text-xs font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-3">
+            Connected Profiles
           </h4>
-          <div id="accounts-list" class="space-y-2.5">
+          <div id="accounts-list" class="space-y-2">
             <!-- Dynamically populated accounts -->
           </div>
         </div>
 
-        <!-- Add New Account Form Section -->
-        <div class="p-5 rounded-2xl bg-slate-900/60 border border-slate-800/80 space-y-4">
+        <!-- Add New Account Form -->
+        <div class="p-4 rounded-2xl m3-subcard space-y-3.5">
           <div class="flex items-center justify-between">
-            <h4 class="text-xs font-bold text-slate-200 flex items-center gap-2 uppercase tracking-wide">
-              <i data-lucide="user-plus" class="w-4 h-4 text-indigo-400"></i>
+            <h4 class="text-xs font-medium text-[var(--m3-on-surface)] flex items-center gap-2 uppercase tracking-wide">
+              <i data-lucide="user-plus" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
               Connect Another Google Account
             </h4>
-            <span class="text-[11px] text-slate-400">Work, College, Personal, Research...</span>
+            <span class="text-[11px] text-[var(--m3-on-surface-subtle)]">Work, Personal, Research</span>
           </div>
 
-          <form id="form-add-account" class="space-y-3.5">
+          <form id="form-add-account" class="space-y-3">
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Profile ID / Key</label>
+                <label class="block text-[11px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-1">Profile Key</label>
                 <input
                   type="text"
                   id="input-account-id"
-                  placeholder="e.g. work, college, biz"
+                  placeholder="e.g. work, college, research"
                   required
-                  class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                  class="w-full px-3.5 py-2 bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] rounded-xl text-xs text-[var(--m3-on-surface)] placeholder-[var(--m3-on-surface-subtle)] focus:outline-none focus:border-[var(--google-blue)]"
                 >
               </div>
               <div>
-                <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Display Label</label>
+                <label class="block text-[11px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-1">Display Label</label>
                 <input
                   type="text"
                   id="input-account-name"
                   placeholder="e.g. Acme Corp / Work"
                   required
-                  class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                  class="w-full px-3.5 py-2 bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] rounded-xl text-xs text-[var(--m3-on-surface)] placeholder-[var(--m3-on-surface-subtle)] focus:outline-none focus:border-[var(--google-blue)]"
                 >
               </div>
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Account Tier</label>
-                <select id="select-account-tier" class="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20">
+                <label class="block text-[11px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-1">Account Tier</label>
+                <select id="select-account-tier" class="w-full px-3.5 py-2 bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] rounded-xl text-xs text-[var(--m3-on-surface)] focus:outline-none focus:border-[var(--google-blue)]">
                   <option value="standard">Standard Account</option>
                   <option value="pro">Pro AI Account</option>
                 </select>
               </div>
               <div>
-                <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Badge Color</label>
+                <label class="block text-[11px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-1">Badge Color</label>
                 <div class="flex items-center gap-2.5">
-                  <input type="color" id="input-account-color" value="#10b981" class="w-8 h-8 rounded-lg border-0 bg-transparent cursor-pointer">
-                  <span class="text-xs font-mono text-slate-300" id="color-hex-label">#10b981</span>
+                  <input type="color" id="input-account-color" value="#8ab4f8" class="w-8 h-8 rounded-lg border-0 bg-transparent cursor-pointer">
+                  <span class="text-xs font-mono text-[var(--m3-on-surface-variant)]" id="color-hex-label">#8ab4f8</span>
                 </div>
               </div>
             </div>
 
-            <div class="flex items-center gap-2.5 pt-1">
-              <input type="checkbox" id="check-launch-login" checked class="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0">
-              <label for="check-launch-login" class="text-xs text-slate-300 cursor-pointer select-none">
+            <div class="flex items-center gap-2 pt-1">
+              <input type="checkbox" id="check-launch-login" checked class="rounded bg-[var(--m3-surface-container)] border-[var(--m3-outline)] text-[var(--google-blue)] focus:ring-0">
+              <label for="check-launch-login" class="text-xs text-[var(--m3-on-surface-variant)] cursor-pointer select-none">
                 Open Google Chrome sign-in window immediately upon creation
               </label>
             </div>
@@ -280,9 +402,9 @@
             <div class="pt-2 flex justify-end">
               <button
                 type="submit"
-                class="btn-tactile px-4 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white flex items-center gap-2 shadow-md shadow-indigo-600/20"
+                class="google-btn-primary px-4 py-2 text-xs flex items-center gap-1.5"
               >
-                <i data-lucide="plus" class="w-4 h-4"></i>
+                <i data-lucide="plus" class="w-3.5 h-3.5"></i>
                 <span>Add & Connect Account</span>
               </button>
             </div>
@@ -293,47 +415,53 @@
     </div>
   </div>
 
-  <!-- MODAL: NOTEBOOK CHAT / QUERY -->
-  <div id="modal-chat" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 backdrop-blur-md p-4">
-    <div class="glass-modal rounded-2xl max-w-2xl w-full h-[82vh] flex flex-col shadow-2xl overflow-hidden animate-modal-enter">
+  <!-- MODAL: NOTEBOOK QUERY (Material 3 Dialog) -->
+  <div id="modal-chat" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div class="m3-dialog max-w-2xl w-full h-[82vh] flex flex-col overflow-hidden animate-m3-enter">
       
       <!-- Chat Header -->
-      <div class="px-6 py-4 border-b border-slate-800/80 flex items-center justify-between">
+      <div class="px-6 py-4 border-b border-[var(--m3-outline-variant)] flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-            <i data-lucide="message-square" class="w-5 h-5"></i>
+          <div class="p-2 rounded-full bg-[var(--google-blue-container)] text-[var(--google-blue)]">
+            <i data-lucide="message-square" class="w-4 h-4"></i>
           </div>
           <div>
-            <h3 class="text-sm font-bold text-white tracking-tight line-clamp-1" id="chat-modal-title">Chat with Notebook</h3>
-            <p class="text-xs text-slate-400 font-mono" id="chat-modal-subtitle">Profile: default</p>
+            <h3 class="text-sm font-medium text-[var(--m3-on-surface)] line-clamp-1" id="chat-modal-title">Query Notebook</h3>
+            <p class="text-xs text-[var(--m3-on-surface-subtle)] font-mono" id="chat-modal-subtitle">Profile: default</p>
           </div>
         </div>
-        <button id="close-modal-chat" class="btn-tactile p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition">
-          <i data-lucide="x" class="w-4 h-4"></i>
-        </button>
+        <div class="flex items-center gap-1.5">
+          <button id="btn-clear-chat" title="Clear conversation history" class="px-2.5 py-1 rounded-full text-xs text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-red)] hover:bg-[var(--google-red-container)]/30 border border-transparent hover:border-[var(--google-red)]/30 transition flex items-center gap-1">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            <span class="hidden sm:inline">Clear</span>
+          </button>
+          <button id="close-modal-chat" class="p-1.5 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] hover:bg-[var(--m3-surface-container-high)] transition">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
       </div>
 
       <!-- Messages Thread -->
-      <div id="chat-thread" class="flex-1 p-6 overflow-y-auto space-y-4">
-        <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-300 leading-relaxed">
-          Ask questions directly to the sources indexed in this notebook. Responses are generated securely using the notebook's account session.
+      <div id="chat-thread" class="flex-1 p-6 overflow-y-auto space-y-4 bg-[var(--m3-surface)]">
+        <div class="p-4 rounded-2xl m3-subcard text-xs text-[var(--m3-on-surface-variant)] leading-relaxed">
+          Ask questions directly to the sources indexed in this notebook. Responses are generated securely using the notebook's Google account session.
         </div>
       </div>
 
-      <!-- Chat Input -->
-      <div class="p-4 border-t border-slate-800/80 bg-slate-950/60">
+      <!-- Chat Input Form -->
+      <div class="p-4 border-t border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container)]">
         <form id="form-chat" class="flex items-center gap-2">
           <input
             type="text"
             id="chat-input"
             placeholder="Ask a question about this notebook's sources..."
             required
-            class="flex-1 px-4 py-2.5 bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-slate-200 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+            class="flex-1 px-4 py-2.5 bg-[var(--m3-surface)] border border-[var(--m3-outline-variant)] rounded-full text-xs text-[var(--m3-on-surface)] placeholder-[var(--m3-on-surface-subtle)] focus:outline-none focus:border-[var(--google-blue)]"
           >
           <button
             type="submit"
             id="btn-chat-send"
-            class="btn-tactile px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-indigo-600/20"
+            class="google-btn-primary px-4 py-2.5 text-xs flex items-center gap-1.5"
           >
             <span>Ask</span>
             <i data-lucide="send" class="w-3.5 h-3.5"></i>
@@ -344,69 +472,69 @@
     </div>
   </div>
 
-  <!-- MODAL: CROSS-ACCOUNT SYNTHESIS -->
-  <div id="modal-cross" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 backdrop-blur-md p-4">
-    <div class="glass-modal rounded-2xl max-w-3xl w-full h-[85vh] flex flex-col shadow-2xl overflow-hidden animate-modal-enter">
+  <!-- MODAL: CROSS-ACCOUNT SYNTHESIS (Material 3 Dialog) -->
+  <div id="modal-cross" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div class="m3-dialog max-w-3xl w-full h-[85vh] flex flex-col overflow-hidden animate-m3-enter">
       
       <!-- Header -->
-      <div class="px-6 py-4 border-b border-slate-800/80 flex items-center justify-between">
+      <div class="px-6 py-4 border-b border-[var(--m3-outline-variant)] flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-sm shadow-amber-500/10">
-            <i data-lucide="sparkles" class="w-5 h-5"></i>
+          <div class="p-2 rounded-full bg-[var(--google-yellow-container)] text-[var(--google-yellow)]">
+            <i data-lucide="sparkles" class="w-4 h-4"></i>
           </div>
           <div>
-            <h3 class="text-sm font-bold text-white tracking-tight">Cross-Account Synthesis Engine</h3>
-            <p class="text-xs text-amber-400/90 flex items-center gap-1.5 font-medium">
-              <span>Powered by Pro AI: aaradhyadevtmr@gmail.com</span>
+            <h3 class="text-sm font-medium text-[var(--m3-on-surface)]">Cross-Account Synthesis Engine</h3>
+            <p class="text-xs text-[var(--google-yellow)] font-mono" id="cross-engine-label">
+              Pro AI Engine: Active
             </p>
           </div>
         </div>
-        <button id="close-modal-cross" class="btn-tactile p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition">
+        <button id="close-modal-cross" class="p-1.5 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] hover:bg-[var(--m3-surface-container-high)] transition">
           <i data-lucide="x" class="w-4 h-4"></i>
         </button>
       </div>
 
       <!-- Body -->
-      <div class="p-6 overflow-y-auto flex-1 space-y-4">
+      <div class="p-6 overflow-y-auto flex-1 space-y-4 bg-[var(--m3-surface)]">
         <div>
-          <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Selected Notebooks for Synthesis</label>
+          <label class="block text-[11px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-2">Selected Notebooks for Synthesis</label>
           <div id="cross-notebooks-chips" class="flex flex-wrap gap-2">
             <!-- Chips of selected notebooks -->
           </div>
         </div>
 
         <div>
-          <label class="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Synthesis Prompt / Research Goal</label>
+          <label class="block text-[11px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-2">Synthesis Prompt / Research Goal</label>
           <textarea
             id="cross-prompt-input"
             rows="3"
-            placeholder="e.g. Compare the insights between these notebooks, extract common themes, and generate an executive summary..."
-            class="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 leading-relaxed"
+            placeholder="e.g. Compare the findings between these notebooks, extract common themes, and synthesize an executive brief..."
+            class="w-full px-4 py-3 bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] rounded-2xl text-xs text-[var(--m3-on-surface)] placeholder-[var(--m3-on-surface-subtle)] focus:outline-none focus:border-[var(--google-blue)] leading-relaxed"
           ></textarea>
         </div>
 
         <div class="flex justify-end">
           <button
             id="btn-run-cross-synthesis"
-            class="btn-tactile btn-shimmer px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-indigo-600 hover:from-amber-400 hover:to-indigo-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg shadow-indigo-500/20 border border-indigo-400/20"
+            class="google-btn-primary px-5 py-2 text-xs flex items-center gap-2"
           >
-            <i data-lucide="sparkles" class="w-4 h-4"></i>
-            <span>Run Multi-Account Synthesis</span>
+            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+            <span>Execute Multi-Account Synthesis</span>
           </button>
         </div>
 
         <!-- Synthesis Results Section -->
-        <div id="cross-results-container" class="hidden space-y-3 pt-4 border-t border-slate-800/80">
-          <h4 class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Synthesized Result</h4>
-          <div id="cross-results-body" class="p-5 rounded-xl bg-slate-950/70 border border-slate-800 text-xs text-slate-200 leading-relaxed whitespace-pre-wrap font-sans"></div>
+        <div id="cross-results-container" class="hidden space-y-2.5 pt-4 border-t border-[var(--m3-outline-variant)]">
+          <h4 class="text-xs font-medium text-[var(--m3-on-surface-variant)] uppercase tracking-wider">Synthesized Result</h4>
+          <div id="cross-results-body" class="p-4 rounded-2xl m3-subcard text-xs text-[var(--m3-on-surface)] leading-relaxed whitespace-pre-wrap font-sans"></div>
         </div>
       </div>
 
     </div>
   </div>
 
-  <!-- Toast Notifications Container -->
-  <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2.5 pointer-events-none"></div>
+  <!-- Toast Notifications Container (Google Snackbar Style) -->
+  <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
 
   <script src="/static/app.js"></script>
 </body>
