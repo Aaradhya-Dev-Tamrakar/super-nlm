@@ -28,13 +28,16 @@ def register_tools(server: MCPServer):
         conversation_id: Optional[str] = None,
         source_ids: Optional[str] = None,
         timeout: int = 120,
-        new_conversation: bool = False
+        new_conversation: bool = False,
+        use_pro: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
-        Ask questions to a Google NotebookLM notebook with automatic multi-account rotation.
-        Rotates between all authenticated Google accounts per query to preserve quota across
-        parallel agents. If an account encounters a rate limit / 429, it automatically places
-        that account in cooldown and transparently retries on the next available account.
+        Ask questions to a Google NotebookLM notebook with automatic multi-account rotation
+        or direct Pro account execution.
+
+        By default, rotates between all authenticated Google accounts per query to preserve quota.
+        If 'use_pro' is True, or if the query contains phrases like 'use pro', 'pro account',
+        'pro model', 'with pro', etc., the query routes directly to your Pro AI account.
 
         Args:
             notebook_id: UUID or alias of the target Google Notebook.
@@ -43,6 +46,8 @@ def register_tools(server: MCPServer):
             source_ids: Optional comma-separated source IDs to restrict focus (default: all sources).
             timeout: Query timeout in seconds (default: 120).
             new_conversation: Whether to start a fresh conversation instead of reusing context.
+            use_pro: Set to True to directly route to the Pro AI account (bypassing round-robin).
+                     If omitted/None, auto-detects mentions of 'pro' in the query string.
         """
         return await rotator.execute_query_rotated(
             notebook_id=notebook_id,
@@ -50,7 +55,8 @@ def register_tools(server: MCPServer):
             conversation_id=conversation_id,
             source_ids=source_ids,
             timeout=timeout,
-            new_conversation=new_conversation
+            new_conversation=new_conversation,
+            require_pro=use_pro
         )
 
     @server.tool()

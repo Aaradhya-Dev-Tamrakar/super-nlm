@@ -42,4 +42,10 @@ DEFAULT_SEED_PROFILES = [
 # Google Gemini Pro/Flash API for 2nd-stage multi-notebook synthesis
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 DEFAULT_SYNTHESIS_MODEL = "gemini-2.5-flash"
-SYNTHESIS_FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-pro"]
+SYNTHESIS_FALLBACK_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-flash-latest",
+    "gemini-2.5-flash-preview",
+    "gemini-3.1-pro-preview",
+    "gemini-pro-latest"
+]

@@ -92,17 +92,22 @@ def test_regression_query_conversation_support():
 
 def test_regression_query_profile_selection():
     client = TestClient(app)
+    # Dynamically retrieve an active profile to test query routing
+    prof_res = client.get("/api/profiles")
+    assert prof_res.status_code == 200
+    profiles = prof_res.json()
+    profile_id = profiles[0]["id"] if profiles else "default"
+
     # Test that /api/query accepts execution profile and returns executedProfileId
     res = client.post("/api/query", json={
         "notebookId": "test-notebook-id",
-        "profileId": "default",
+        "profileId": profile_id,
         "question": "Hello"
     })
-    # Will fail query execution for non-existent notebook, but should process with 200 JSON error payload or 404
     assert res.status_code == 200
     data = res.json()
-    assert data.get("executedProfileId") == "default"
-    print('  [PASS] Query Profile: Executed profile is preserved and returned in query response.')
+    assert data.get("executedProfileId") == profile_id
+    print(f'  [PASS] Query Profile: Executed profile ({profile_id}) is preserved and returned in query response.')
 
 def test_regression_unique_notebook_aggregation():
     client = TestClient(app)

@@ -93,6 +93,7 @@ async def run_nlm_cmd(args: List[str], timeout: int = 60) -> Dict[str, Any]:
     except asyncio.TimeoutError:
         try:
             proc.kill()
+            await proc.wait()
         except Exception:
             pass
         return {
@@ -329,7 +330,8 @@ def classify_quota_error(err: str) -> Optional[str]:
     burst_signals = [
         "rate limit", "quota", "429", "too many requests",
         "resource has been exhausted", "resource_exhausted",
-        "exceeded", "throttled", "limit reached", "temporarily unavailable"
+        "exceeded", "throttled", "limit reached", "temporarily unavailable",
+        "503", "service unavailable", "overloaded", "backend error"
     ]
     if any(sig in lower for sig in burst_signals):
         return "burst"

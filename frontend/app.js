@@ -371,14 +371,24 @@ function setupEventListeners() {
       if (!copyBtn) return;
       const content = copyBtn.getAttribute('data-content');
       if (!content) return;
-      navigator.clipboard.writeText(content);
-      copyBtn.innerHTML = '<i data-lucide="check" class="w-3 h-3 text-[var(--google-green)]"></i> <span class="text-[var(--google-green)] font-medium">Copied!</span>';
-      if (window.lucide) lucide.createIcons();
-      showToast('Response copied to clipboard', 'success');
-      setTimeout(() => {
-        copyBtn.innerHTML = '<i data-lucide="copy" class="w-3 h-3"></i> <span>Copy</span>';
+      
+      const copySuccess = () => {
+        copyBtn.innerHTML = '<i data-lucide="check" class="w-3 h-3 text-[var(--google-green)]"></i> <span class="text-[var(--google-green)] font-medium">Copied!</span>';
         if (window.lucide) lucide.createIcons();
-      }, 2000);
+        showToast('Response copied to clipboard', 'success');
+        setTimeout(() => {
+          copyBtn.innerHTML = '<i data-lucide="copy" class="w-3 h-3"></i> <span>Copy</span>';
+          if (window.lucide) lucide.createIcons();
+        }, 2000);
+      };
+
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(content).then(copySuccess).catch(() => {
+          fallbackCopyText(content, copySuccess);
+        });
+      } else {
+        fallbackCopyText(content, copySuccess);
+      }
     });
   }
 
@@ -2026,9 +2036,6 @@ function handleQueryFailure(notebookId, profileId, title, errorMsg) {
     isModalOpen('modal-chat') &&
     state.activeChat &&
     state.activeChat.notebookId === notebookId;
-    isModalOpen('modal-chat') &&
-    state.activeChat &&
-    state.activeChat.notebookId === notebookId;
 
   if (isCurrentlyOpenForThisNotebook) {
     const loader = document.getElementById(`loader-${notebookId}`);
@@ -2800,3 +2807,21 @@ function showToast(message, type = 'info', action = null) {
   }, duration);
 }
 
+function fallbackCopyText(text, callback) {
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.top = '0';
+    textArea.style.left = '0';
+    textArea.style.opacity = '0';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    if (successful && callback) callback();
+  } catch (err) {
+    console.warn('Fallback copy failed:', err);
+  }
+}

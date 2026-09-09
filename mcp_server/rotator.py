@@ -42,6 +42,8 @@ class AccountRotator:
         self._cooldowns: Dict[str, Dict[str, Any]] = {}
         # (notebook_id, target_email) -> True if sharing has been verified
         self._shared_cache: Set[Tuple[str, str]] = set()
+        # conversation_id -> profile_id to pin multi-turn chat sessions to the same Google account
+        self._conversation_owners: Dict[str, str] = {}
         # profile_id -> stats
         self._stats: Dict[str, Dict[str, int]] = {}
 
@@ -181,8 +183,9 @@ class AccountRotator:
             return True
 
         cache_key = (notebook_id, profile.email.lower())
-        if cache_key in self._shared_cache:
-            return True
+        async with self._lock:
+            if cache_key in self._shared_cache:
+                return True
 
         try:
             cached_notebooks = await get_cached_notebooks()
@@ -190,7 +193,8 @@ class AccountRotator:
 
             # If the profile itself is the owner, access is granted
             if notebook_entry and notebook_entry.profileId == profile.id:
-                self._shared_cache.add(cache_key)
+                async with self._lock:
+                    self._shared_cache.add(cache_key)
                 return True
 
             # If owned by another account, invite this account
@@ -202,14 +206,27 @@ class AccountRotator:
                 )
                 success = await ensure_notebook_shared(notebook_id, source_profile_id, profile.email)
                 if success:
-                    self._shared_cache.add(cache_key)
+                    async with self._lock:
+                        self._shared_cache.add(cache_key)
                 return success
         except Exception as e:
             logger.warning(f"Error checking or auto-sharing notebook {notebook_id}: {e}")
 
         # Fallback: assume access exists
-        self._shared_cache.add(cache_key)
+        async with self._lock:
+            self._shared_cache.add(cache_key)
         return True
+
+    async def get_default_pro_profile(self) -> Optional[AccountProfile]:
+        """Returns the primary configured Pro AI profile, or first pro tier profile."""
+        profiles = await self.get_active_profiles()
+        for p in profiles:
+            if getattr(p, "isDefaultPro", False):
+                return p
+        for p in profiles:
+            if getattr(p, "tier", "") == "pro":
+                return p
+        return profiles[0] if profiles else None
 
     async def execute_query_rotated(
         self,
@@ -219,22 +236,98 @@ class AccountRotator:
         source_ids: Optional[Any] = None,
         timeout: int = 120,
         new_conversation: bool = False,
-        max_attempts: Optional[int] = None
+        max_attempts: Optional[int] = None,
+        require_pro: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
-        Executes a query by rotating through available accounts.
-        If an account hits a burst 429 or daily quota cap:
-          - Places account into appropriate cooldown (120s vs midnight UTC).
-          - Transparently retries the query on the next available account.
+        Executes a query by rotating through available accounts, or routing directly
+        to the Pro account if requested or detected in the query.
+        
+        Args:
+            require_pro: If True, bypasses round-robin and uses the Pro AI account directly.
+                         If None, automatically detects mentions like 'pro', 'pro account',
+                         'use pro', or 'pro model' in the prompt/query.
         """
+        # Detect if pro account is requested via flag or natural language in question
+        if require_pro is None:
+            q_lower = question.lower()
+            pro_triggers = [
+                "use pro", "pro account", "pro model", "pro tier", "via pro",
+                "with pro", "using pro", "direct pro", "only pro", "pro engine",
+                "require pro", "[pro]"
+            ]
+            require_pro = any(trigger in q_lower for trigger in pro_triggers)
+
         profiles = await self.get_active_profiles()
+
+        if require_pro:
+            pro_profile = await self.get_default_pro_profile()
+            if pro_profile:
+                logger.info(
+                    f"[DIRECT PRO ROUTE] Using Pro account '{pro_profile.id}' ({pro_profile.email}) "
+                    f"for notebook '{notebook_id}'"
+                )
+                await self.ensure_profile_has_access(notebook_id, pro_profile)
+                res = await query_notebook(
+                    profile_id=pro_profile.id,
+                    notebook_id=notebook_id,
+                    question=question,
+                    conversation_id=conversation_id,
+                    source_ids=source_ids,
+                    timeout=timeout,
+                    new_conversation=new_conversation
+                )
+                if res.get("success"):
+                    self.record_success(pro_profile.id)
+                    return {
+                        "success": True,
+                        "answer": res.get("answer"),
+                        "citations": res.get("citations", []),
+                        "conversation_id": res.get("conversationId") or conversation_id,
+                        "rotation_stats": {
+                            "mode": "direct_pro",
+                            "executed_profile_id": pro_profile.id,
+                            "executed_profile_email": pro_profile.email,
+                            "executed_profile_tier": pro_profile.tier,
+                            "attempts_count": 1,
+                            "quota_fallbacks_triggered": 0
+                        }
+                    }
+                else:
+                    err_msg = str(res.get("error") or "")
+                    logger.warning(f"Direct Pro query failed on '{pro_profile.id}': {err_msg}")
+                    return {
+                        "success": False,
+                        "error": f"Direct Pro query failed on account '{pro_profile.id}' ({pro_profile.email}): {err_msg}",
+                        "conversation_id": conversation_id,
+                        "rotation_stats": {
+                            "mode": "direct_pro",
+                            "executed_profile_id": pro_profile.id,
+                            "attempts_count": 1
+                        }
+                    }
+
         limit_attempts = max_attempts or max(len(profiles), 2)
+
+        # Multi-turn session pinning: if conversation_id is provided and known, pin to owner
+        pinned_profile_id = None
+        if conversation_id and not new_conversation:
+            async with self._lock:
+                pinned_profile_id = self._conversation_owners.get(conversation_id)
 
         excluded: Set[str] = set()
         attempt_history = []
 
         for attempt in range(1, limit_attempts + 1):
-            profile, query_number = await self.pick_next_profile(exclude_ids=excluded)
+            if pinned_profile_id and pinned_profile_id not in excluded:
+                profile = next((p for p in profiles if p.id == pinned_profile_id), None)
+                if not profile:
+                    profile, query_number = await self.pick_next_profile(exclude_ids=excluded)
+                else:
+                    query_number = self._counter + 1
+            else:
+                profile, query_number = await self.pick_next_profile(exclude_ids=excluded)
+
             logger.info(
                 f"[ROTATION #{query_number}] Dispatching query to notebook '{notebook_id}' "
                 f"using profile '{profile.id}' ({profile.email or 'no email'}, tier: {profile.tier})"
@@ -257,11 +350,15 @@ class AccountRotator:
             # 3. Check for success
             if res.get("success"):
                 self.record_success(profile.id)
+                final_conv_id = res.get("conversationId") or conversation_id
+                if final_conv_id:
+                    async with self._lock:
+                        self._conversation_owners[final_conv_id] = profile.id
                 return {
                     "success": True,
                     "answer": res.get("answer"),
                     "citations": res.get("citations", []),
-                    "conversation_id": res.get("conversationId") or conversation_id,
+                    "conversation_id": final_conv_id,
                     "rotation_stats": {
                         "global_query_count": query_number,
                         "executed_profile_id": profile.id,

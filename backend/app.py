@@ -305,11 +305,13 @@ async def ask_notebook_rotated(
     conversation_id: Optional[str] = Query(None, description="Optional conversation ID for multi-turn chat"),
     source_ids: Optional[str] = Query(None, description="Optional comma-separated source IDs"),
     timeout: int = Query(120, description="Query timeout in seconds"),
-    new_conversation: bool = Query(False, description="Start fresh conversation")
+    new_conversation: bool = Query(False, description="Start fresh conversation"),
+    use_pro: Optional[bool] = Query(None, description="Directly route to Pro account without rotation")
 ):
     """
     Queries a notebook with automatic multi-account round-robin rotation, auto-sharing,
-    and automatic cooldown fallback if rate-limited.
+    and automatic cooldown fallback if rate-limited. If use_pro is True (or if query mentions 'pro'),
+    bypasses rotation and routes directly to the primary Pro AI account.
     """
     return await rotator.execute_query_rotated(
         notebook_id=notebook_id,
@@ -317,7 +319,8 @@ async def ask_notebook_rotated(
         conversation_id=conversation_id,
         source_ids=source_ids,
         timeout=timeout,
-        new_conversation=new_conversation
+        new_conversation=new_conversation,
+        require_pro=use_pro
     )
 
 # ----------------- STATIC FRONTEND -----------------
