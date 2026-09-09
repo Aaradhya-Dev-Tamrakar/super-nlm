@@ -13,6 +13,58 @@
 - **In-App Quick Chat:** Ask questions directly to any notebook without switching Google accounts or opening browser tabs.
 - **Cross-Account Synthesis:** Select 2 or more notebooks across different accounts and synthesize them using your Pro AI model.
 - **Direct Deep Links:** Jump straight to any notebook in Google's official Gemini Notebook web interface.
+- **Model Context Protocol (MCP) Server:** Native MCP integration with round-robin multi-account rotation, allowing parallel AI agents in Antigravity or Claude to query notebooks without exhausting rate limits on any single account.
+
+---
+
+## 🤖 Super-NLM MCP Server (Account Rotation for Parallel Agents)
+
+Super-NLM includes a built-in MCP server (`super-nlm-mcp`) designed specifically for parallel agent orchestration. When multiple AI agents query notebooks concurrently, single-account quotas are quickly exhausted. Super-NLM distributes queries evenly across all your configured Google accounts and handles rate limits automatically.
+
+### Key Capabilities
+
+- **Round-Robin Rotation:** A global monotonic counter alternates queries across all authenticated Google accounts (`default`, `secondary`, etc.) so quota load is balanced evenly.
+- **Automatic Quota Cooldown (120s):** If an account encounters a rate limit (HTTP 429 / `RESOURCE_EXHAUSTED`), it is automatically placed in a 120-second cooldown window and the query is transparently retried on the next available account.
+- **Smart Recovery Fallback:** If all accounts are cooling down, the engine picks the account closest to recovery rather than failing immediately.
+- **Lazy Auto-Sharing Cache:** If an account needs to query a notebook owned by another account, Super-NLM invites the query account as an editor behind the scenes and caches the permission in-memory.
+- **Zero-Quota Catalog Exploration:** Notebook and profile listings are served directly from the local cache without consuming any Google API quota.
+
+### Available MCP Tools
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `query_notebook` | `notebook_id`, `query`, `source_ids?`, `conversation_id?`, `timeout?`, `new_conversation?` | Main query tool with automatic multi-account rotation and rate-limit fallback. |
+| `list_notebooks` | `search?`, `profile_id?` | Search and list notebooks across all accounts from cache (**0 quota used**). |
+| `list_profiles` | *none* | List all registered accounts, connection statuses, tiers, and emails. |
+| `sync_notebooks` | *none* | Trigger a complete background refresh of notebooks across all Google accounts. |
+| `cross_query` | `notebook_ids[]`, `query`, `synthesizer_profile_id?` | Parallel query across multiple notebooks with Pro AI synthesis. |
+| `rotation_status` | *none* | Real-time diagnostics: global query count, active cooldown timers, per-account stats. |
+
+### MCP Client Setup
+
+Add Super-NLM to your MCP client configuration (e.g. `mcp_config.json` in Antigravity, Claude Desktop, or Claude Code):
+
+```json
+{
+  "mcpServers": {
+    "super-nlm": {
+      "command": "F:\\Aaradhya-Dev-Tamrakar\\super-nlm\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "mcp_server"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
+```
+
+Or run directly from the terminal via the installed console script:
+```powershell
+.venv\Scripts\super-nlm-mcp.exe
+```
 
 ---
 
@@ -83,8 +135,12 @@ If you don't want to keep your laptop powered on, deploy Super-NLM directly to *
 
 ## 📁 Architecture
 
+- **MCP Server (`mcp_server/`):**
+  - `server.py`: MCPServer instance running over standard I/O (stdio) transport for agent tool calls.
+  - `rotator.py`: Thread-safe `AccountRotator` managing atomic query counting, 120s cooldowns, and auto-sharing.
+  - `tools.py`: Tool declarations for `query_notebook`, `list_notebooks`, `list_profiles`, `sync_notebooks`, `cross_query`, and `rotation_status`.
 - **Backend (`backend/`):**
-  - `app.py`: FastAPI server serving endpoints for profiles, cached notebooks, sync, queries, and cross-account synthesis.
+  - `app.py`: FastAPI server serving endpoints for profiles, cached notebooks, sync, queries, rotated queries, and cross-account synthesis.
   - `nlm_client.py`: Async subprocess execution layer wrapping Google's `nlm` CLI with multi-profile isolation.
   - `storage.py`: Thread-safe persistence for `profiles.json` and `notebooks_cache.json`.
   - `config.py`: Configuration and default Pro account initialization.
@@ -92,3 +148,4 @@ If you don't want to keep your laptop powered on, deploy Super-NLM directly to *
   - `index.html`: Responsive, dark-mode single-page interface styled with Tailwind CSS.
   - `app.js`: Reactive event handling, search filtering, modals, and API communication.
   - `style.css`: Custom animations, glassmorphism, and scrollbars.
+

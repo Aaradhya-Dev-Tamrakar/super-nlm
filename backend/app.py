@@ -23,6 +23,7 @@ from backend.nlm_client import (
     synthesize_cross_notebook, launch_cli_login, delete_cli_profile,
     run_nlm_cmd, ensure_notebook_shared
 )
+from mcp_server.rotator import rotator
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("super_nlm")
@@ -268,6 +269,33 @@ async def ask_cross_notebook(req: CrossQueryRequest):
 
     res = await synthesize_cross_notebook(req.notebooks, req.question, synthesizer)
     return res
+
+@app.get("/api/rotation/status")
+async def get_rotation_diagnostics():
+    """Returns current query counter, per-profile statistics, and cooldown status."""
+    return await rotator.get_status()
+
+@app.post("/api/query/rotated")
+async def ask_notebook_rotated(
+    notebook_id: str = Query(..., description="Target notebook UUID"),
+    question: str = Query(..., description="Question to ask"),
+    conversation_id: Optional[str] = Query(None, description="Optional conversation ID for multi-turn chat"),
+    source_ids: Optional[str] = Query(None, description="Optional comma-separated source IDs"),
+    timeout: int = Query(120, description="Query timeout in seconds"),
+    new_conversation: bool = Query(False, description="Start fresh conversation")
+):
+    """
+    Queries a notebook with automatic multi-account round-robin rotation, auto-sharing,
+    and automatic cooldown fallback if rate-limited.
+    """
+    return await rotator.execute_query_rotated(
+        notebook_id=notebook_id,
+        question=question,
+        conversation_id=conversation_id,
+        source_ids=source_ids,
+        timeout=timeout,
+        new_conversation=new_conversation
+    )
 
 # ----------------- STATIC FRONTEND -----------------
 

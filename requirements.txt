@@ -16,3 +16,4 @@ typing-extensions==4.16.0
 typing-inspection==0.4.4
 uvicorn==0.52.4
 qrcode>=7.4.2
+mcp>=2.0.0

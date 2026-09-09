@@ -202,7 +202,10 @@ async def query_notebook(
     profile_id: str,
     notebook_id: str,
     question: str,
-    conversation_id: Optional[str] = None
+    conversation_id: Optional[str] = None,
+    source_ids: Optional[Any] = None,
+    timeout: int = 120,
+    new_conversation: bool = False
 ) -> Dict[str, Any]:
     """
     Runs a query against a specific notebook under a specific profile.
@@ -212,12 +215,19 @@ async def query_notebook(
         "query", "notebook", notebook_id, question,
         "--profile", profile_id,
         "--json",
-        "--timeout", "120"
+        "--timeout", str(timeout)
     ]
     if conversation_id:
         args.extend(["--conversation-id", conversation_id])
+    if new_conversation:
+        args.append("--new-conversation")
+    if source_ids:
+        if isinstance(source_ids, list):
+            args.extend(["--source-ids", ",".join(str(s) for s in source_ids)])
+        else:
+            args.extend(["--source-ids", str(source_ids)])
 
-    res = await run_nlm_cmd(args, timeout=130)
+    res = await run_nlm_cmd(args, timeout=timeout + 15)
 
     clean_stdout = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', res.get("stdout") or "").strip()
     clean_stderr = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', res.get("stderr") or "").strip()

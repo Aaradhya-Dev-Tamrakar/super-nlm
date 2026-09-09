@@ -1,0 +1,12 @@
+{
+  "super-nlm": {
+    "command": "F:\\Aaradhya-Dev-Tamrakar\\super-nlm\\.venv\\Scripts\\python.exe",
+    "args": [
+      "-m",
+      "mcp_server"
+    ],
+    "env": {
+      "PYTHONUNBUFFERED": "1"
+    }
+  }
+}
