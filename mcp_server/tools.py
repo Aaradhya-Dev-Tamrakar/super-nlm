@@ -13,7 +13,7 @@ from backend.nlm_client import (
     synthesize_cross_notebook,
     get_cli_profiles
 )
-from backend.models import NotebookRef
+from backend.models import NotebookRef, detect_course_info
 from mcp_server.rotator import rotator
 
 logger = logging.getLogger("super_nlm.tools")
@@ -56,17 +56,32 @@ def register_tools(server: MCPServer):
     @server.tool()
     async def list_notebooks(
         search: Optional[str] = None,
-        profile_id: Optional[str] = None
+        profile_id: Optional[str] = None,
+        category: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         List all notebooks across all connected Google accounts from the Super-NLM cache.
         Does not consume Google API quota.
 
         Args:
-            search: Optional filter keyword matching notebook title or account name/email.
+            search: Optional filter keyword matching notebook title, account name/email, or course code.
             profile_id: Optional filter to only show notebooks from a specific profile.
+            category: Optional filter: "study" (course NLMs), "projects", or "all".
         """
         notebooks = await get_cached_notebooks()
+
+        for n in notebooks:
+            is_study, course_code, cat = detect_course_info(n.title, n.id)
+            n.is_study = is_study
+            n.course_code = course_code
+            n.category = cat
+
+        if category and category.lower() != "all":
+            cat_lower = category.lower().strip()
+            if cat_lower in ("study", "courses", "course"):
+                notebooks = [n for n in notebooks if n.is_study]
+            elif cat_lower in ("projects", "project", "other"):
+                notebooks = [n for n in notebooks if not n.is_study]
 
         if profile_id and profile_id != "all":
             notebooks = [n for n in notebooks if n.profileId == profile_id]
@@ -75,7 +90,7 @@ def register_tools(server: MCPServer):
             s = search.lower().strip()
             notebooks = [
                 n for n in notebooks
-                if s in n.title.lower() or s in n.profileName.lower() or s in n.profileEmail.lower()
+                if s in n.title.lower() or s in n.profileName.lower() or s in n.profileEmail.lower() or (n.course_code and s in n.course_code.lower())
             ]
 
         return [n.model_dump() for n in notebooks]

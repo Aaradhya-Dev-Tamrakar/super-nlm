@@ -29,6 +29,37 @@ class ProfileUpdateRequest(BaseModel):
     icon: Optional[str] = None
     isDefaultPro: Optional[bool] = None
 
+import re
+
+# Known explicit course notebook IDs
+COURSE_NOTEBOOK_IDS = {
+    "96a12a04-073e-43ca-9f6d-ca0048d63486",  # CT653 - Artificial Intelligence
+    "c627a211-552e-496b-9ebb-42d22ac05a95",  # EX751 - Wireless Communications
+    "bc8653c3-a1d3-42b7-bca1-cd8e4effc038",  # CT704 - Digital Signal Analysis and Processing
+    "c3c8ecd4-2884-42a1-aa49-c4de168c1ec7",  # EX752 - RF and Microwave Engineering
+    "94cd4e14-802d-4231-b27d-6a4f4a2e6182",  # ME708 - Organization and Management
+    "56cdad30-13d3-4621-a0b7-8f841858476b",  # EX725 04 - Aeronautical Telecommunication
+}
+
+# Regex pattern matching academic semester course codes e.g. "CT653", "EX751", "ME708", "EX725 04", "CT704"
+COURSE_CODE_REGEX = re.compile(r'^([A-Z]{2,4}\s*\d{3}(?:\s*\d{2})?)\s*[-:]\s*(.+)', re.IGNORECASE)
+
+def detect_course_info(title: str, notebook_id: str):
+    """
+    Detects if a notebook is a study course notebook and extracts its course code.
+    Returns (is_study: bool, course_code: Optional[str], category: str).
+    """
+    if notebook_id in COURSE_NOTEBOOK_IDS:
+        match = COURSE_CODE_REGEX.match(title.strip())
+        code = match.group(1).upper() if match else title.split("-")[0].strip()
+        return True, code, "study"
+
+    match = COURSE_CODE_REGEX.match(title.strip())
+    if match:
+        return True, match.group(1).upper(), "study"
+
+    return False, None, "general"
+
 class Notebook(BaseModel):
     id: str
     title: str
@@ -39,6 +70,17 @@ class Notebook(BaseModel):
     profileEmail: str
     tier: str = "standard"
     color: str = "#6366f1"
+    category: Optional[str] = "general"
+    is_study: Optional[bool] = False
+    course_code: Optional[str] = None
+
+    def model_post_init(self, __context):
+        if not self.is_study or not self.course_code:
+            is_study, course_code, cat = detect_course_info(self.title, self.id)
+            if is_study:
+                self.is_study = True
+                self.course_code = course_code
+                self.category = cat
 
 class QueryRequest(BaseModel):
     notebookId: str

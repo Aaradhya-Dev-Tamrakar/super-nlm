@@ -5,6 +5,7 @@ let state = {
   profiles: [],
   notebooks: [],
   activeProfileFilter: 'all',
+  activeCategoryFilter: 'all', // 'all' | 'study' | 'projects'
   searchQuery: '',
   selectedNotebooks: new Map(), // key: notebookId, value: { notebookId, profileId, title }
   activeChat: null, // { notebookId, profileId, title }
@@ -14,6 +15,38 @@ let state = {
   isLoading: false,
 };
 
+// ----------------- COURSE & STUDY CLASSIFICATION -----------------
+const COURSE_NOTEBOOK_IDS = new Set([
+  '96a12a04-073e-43ca-9f6d-ca0048d63486', // CT653 - Artificial Intelligence
+  'c627a211-552e-496b-9ebb-42d22ac05a95', // EX751 - Wireless Communications
+  'bc8653c3-a1d3-42b7-bca1-cd8e4effc038', // CT704 - Digital Signal Analysis and Processing
+  'c3c8ecd4-2884-42a1-aa49-c4de168c1ec7', // EX752 - RF and Microwave Engineering
+  '94cd4e14-802d-4231-b27d-6a4f4a2e6182', // ME708 - Organization and Management
+  '56cdad30-13d3-4621-a0b7-8f841858476b', // EX725 04 - Aeronautical Telecommunication
+]);
+
+const COURSE_CODE_REGEX = /^([A-Z]{2,4}\s*\d{3}(?:\s*\d{2})?)\s*[-:]\s*(.+)/i;
+
+function isStudyNotebook(notebook) {
+  if (!notebook) return false;
+  if (notebook.is_study === true || notebook.category === 'study') return true;
+  if (COURSE_NOTEBOOK_IDS.has(notebook.id)) return true;
+  const title = (notebook.title || '').trim();
+  return COURSE_CODE_REGEX.test(title);
+}
+
+function getCourseCode(notebook) {
+  if (!notebook) return null;
+  if (notebook.course_code) return notebook.course_code;
+  const title = (notebook.title || '').trim();
+  const match = title.match(COURSE_CODE_REGEX);
+  if (match) return match[1].toUpperCase();
+  if (COURSE_NOTEBOOK_IDS.has(notebook.id)) {
+    return title.split('-')[0].trim().toUpperCase();
+  }
+  return null;
+}
+
 // Initialize Application
 document.addEventListener('DOMContentLoaded', async () => {
   initTheme();
@@ -21,6 +54,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadAllChatHistories();
   setupEventListeners();
   renderAccountPills();
+  renderCategoryChips();
   showSkeletons(true);
   await loadProfiles();
   await loadNotebooks();
@@ -243,6 +277,13 @@ function setupEventListeners() {
       return;
     }
 
+    // Shortcut 'u' (without Shift/Ctrl): Toggle Study / Course NLMs filter
+    if (e.key.toLowerCase() === 'u' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      toggleStudyFilter();
+      return;
+    }
+
     // Shortcut '1' to '9': Profile / Account filter switching
     if (e.key >= '1' && e.key <= '9') {
       e.preventDefault();
@@ -356,6 +397,12 @@ function setupEventListeners() {
       openModal('modal-accounts');
       renderAccountsModalList();
     });
+  }
+
+  // Sidebar telemetry courses quick filter trigger
+  const telemetryCoursesBtn = document.getElementById('btn-telemetry-courses');
+  if (telemetryCoursesBtn) {
+    telemetryCoursesBtn.addEventListener('click', toggleStudyFilter);
   }
 
   // Manage Accounts Modal triggers
@@ -574,9 +621,10 @@ async function loadNotebooks() {
       state.notebooks = await res.json();
       
       const telemetryNotebooks = document.getElementById('telemetry-notebooks');
-      if (telemetryNotebooks) telemetryNotebooks.textContent = state.notebooks.length;
+      if (telemetryNotebooks) telemetryNotebooks.textContent = new Set(state.notebooks.map(n => n.id)).size;
 
       renderAccountPills();
+      renderCategoryChips();
       renderNotebooksGrid();
     }
   } catch (err) {
@@ -610,9 +658,10 @@ async function handleSyncAll() {
     await loadProfiles();
     
     const telemetryNotebooks = document.getElementById('telemetry-notebooks');
-    if (telemetryNotebooks) telemetryNotebooks.textContent = state.notebooks.length;
+    if (telemetryNotebooks) telemetryNotebooks.textContent = new Set(state.notebooks.map(n => n.id)).size;
 
     renderAccountPills();
+    renderCategoryChips();
     renderNotebooksGrid();
 
     const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
@@ -697,6 +746,96 @@ function renderAccountPills() {
   if (window.lucide) lucide.createIcons();
 }
 
+function renderCategoryChips() {
+  const container = document.getElementById('category-pills-container');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  const uniqueNotebooksMap = new Map();
+  for (const n of state.notebooks) {
+    if (!uniqueNotebooksMap.has(n.id)) {
+      uniqueNotebooksMap.set(n.id, n);
+    }
+  }
+  const uniqueNotebooks = Array.from(uniqueNotebooksMap.values());
+  const totalCount = uniqueNotebooks.length;
+  const studyCount = uniqueNotebooks.filter(n => isStudyNotebook(n)).length;
+  const projectsCount = totalCount - studyCount;
+
+  // Update telemetry courses counter
+  const telemetryCourses = document.getElementById('telemetry-courses');
+  if (telemetryCourses) telemetryCourses.textContent = studyCount;
+
+  // All Categories chip
+  const allChip = document.createElement('button');
+  allChip.type = 'button';
+  allChip.className = `m3-chip flex items-center gap-1.5 px-3 py-1.5 text-xs transition whitespace-nowrap cursor-pointer ${
+    state.activeCategoryFilter === 'all' ? 'active' : 'hover:text-[var(--m3-on-surface)]'
+  }`;
+  allChip.innerHTML = `
+    <span>All</span>
+    <span class="px-1.5 py-0.2 text-[10px] rounded-full m3-subcard text-[var(--m3-on-surface-subtle)] font-mono">${totalCount}</span>
+  `;
+  allChip.addEventListener('click', () => {
+    state.activeCategoryFilter = 'all';
+    renderCategoryChips();
+    renderNotebooksGrid();
+    showToast('Showing all notebooks', 'info');
+  });
+  container.appendChild(allChip);
+
+  // Study / Courses chip
+  const studyChip = document.createElement('button');
+  studyChip.type = 'button';
+  studyChip.id = 'chip-filter-study';
+  studyChip.className = `m3-chip flex items-center gap-1.5 px-3.5 py-1.5 text-xs transition whitespace-nowrap cursor-pointer ${
+    state.activeCategoryFilter === 'study' ? 'active font-medium' : 'hover:text-[var(--m3-on-surface)]'
+  }`;
+  studyChip.innerHTML = `
+    <i data-lucide="graduation-cap" class="w-3.5 h-3.5 ${state.activeCategoryFilter === 'study' ? 'text-[var(--google-blue)]' : 'text-[#81c995]'}"></i>
+    <span>Study Courses</span>
+    <span class="px-1.5 py-0.2 text-[10px] rounded-full m3-subcard font-mono ${state.activeCategoryFilter === 'study' ? 'text-[var(--google-blue)]' : 'text-[var(--m3-on-surface-subtle)]'}">${studyCount}</span>
+  `;
+  studyChip.addEventListener('click', () => {
+    toggleStudyFilter();
+  });
+  container.appendChild(studyChip);
+
+  // Projects & Notes chip
+  const projChip = document.createElement('button');
+  projChip.type = 'button';
+  projChip.className = `m3-chip flex items-center gap-1.5 px-3 py-1.5 text-xs transition whitespace-nowrap cursor-pointer ${
+    state.activeCategoryFilter === 'projects' ? 'active' : 'hover:text-[var(--m3-on-surface)]'
+  }`;
+  projChip.innerHTML = `
+    <i data-lucide="folder-git-2" class="w-3.5 h-3.5 text-[var(--m3-on-surface-subtle)]"></i>
+    <span>Projects</span>
+    <span class="px-1.5 py-0.2 text-[10px] rounded-full m3-subcard text-[var(--m3-on-surface-subtle)] font-mono">${projectsCount}</span>
+  `;
+  projChip.addEventListener('click', () => {
+    state.activeCategoryFilter = 'projects';
+    renderCategoryChips();
+    renderNotebooksGrid();
+    showToast('Filter: Projects & Other', 'info');
+  });
+  container.appendChild(projChip);
+
+  if (window.lucide) lucide.createIcons({ root: container });
+}
+
+function toggleStudyFilter() {
+  if (state.activeCategoryFilter === 'study') {
+    state.activeCategoryFilter = 'all';
+    showToast('Filter: All Notebooks', 'info');
+  } else {
+    state.activeCategoryFilter = 'study';
+    showToast('Filter: Study / Course NLMs (shortcut: U)', 'info');
+  }
+  renderCategoryChips();
+  renderNotebooksGrid();
+}
+
 function createPill({ id, label, count, color, isActive, isPro }) {
   const btn = document.createElement('button');
   const baseClasses = 'm3-chip flex items-center gap-2 px-3.5 py-1.5 text-xs transition whitespace-nowrap cursor-pointer';
@@ -724,69 +863,80 @@ function createPill({ id, label, count, color, isActive, isPro }) {
 }
 
 function getVisibleNotebooks() {
+  let list = [];
   if (state.activeProfileFilter !== 'all') {
-    return state.notebooks.filter(n => {
-      const matchesAccount = n.profileId === state.activeProfileFilter;
-      const matchesSearch = !state.searchQuery || 
-        (n.title && n.title.toLowerCase().includes(state.searchQuery)) ||
-        (n.profileName && n.profileName.toLowerCase().includes(state.searchQuery)) ||
-        (n.profileEmail && n.profileEmail.toLowerCase().includes(state.searchQuery));
-      return matchesAccount && matchesSearch;
+    list = state.notebooks.filter(n => n.profileId === state.activeProfileFilter);
+  } else {
+    // When 'all' is active, consolidate notebooks with the same ID into a single representation
+    const consolidatedMap = new Map();
+    for (const n of state.notebooks) {
+      if (!consolidatedMap.has(n.id)) {
+        consolidatedMap.set(n.id, {
+          ...n,
+          allProfiles: [{
+            profileId: n.profileId,
+            profileName: n.profileName,
+            profileEmail: n.profileEmail,
+            tier: n.tier,
+            color: n.color
+          }]
+        });
+      } else {
+        const existing = consolidatedMap.get(n.id);
+        if (!existing.allProfiles.some(p => p.profileId === n.profileId)) {
+          existing.allProfiles.push({
+            profileId: n.profileId,
+            profileName: n.profileName,
+            profileEmail: n.profileEmail,
+            tier: n.tier,
+            color: n.color
+          });
+        }
+        // If any profile has Pro tier, promote the consolidated tier to 'pro'
+        if (n.tier === 'pro') {
+          existing.tier = 'pro';
+          existing.profileId = n.profileId;
+          existing.profileName = n.profileName;
+          existing.color = n.color;
+        }
+        if (n.updated_at && (!existing.updated_at || n.updated_at > existing.updated_at)) {
+          existing.updated_at = n.updated_at;
+        }
+        if ((n.source_count || 0) > (existing.source_count || 0)) {
+          existing.source_count = n.source_count;
+        }
+      }
+    }
+    list = Array.from(consolidatedMap.values());
+  }
+
+  // Filter by category (Study Courses vs Projects)
+  if (state.activeCategoryFilter === 'study') {
+    list = list.filter(n => isStudyNotebook(n));
+  } else if (state.activeCategoryFilter === 'projects') {
+    list = list.filter(n => !isStudyNotebook(n));
+  }
+
+  // Filter by search query
+  if (state.searchQuery) {
+    const q = state.searchQuery.toLowerCase().trim();
+    list = list.filter(n => {
+      const code = getCourseCode(n);
+      const matchesCode = code && code.toLowerCase().includes(q);
+      const matchesTitle = n.title && n.title.toLowerCase().includes(q);
+      const matchesProfile = (n.profileName && n.profileName.toLowerCase().includes(q)) ||
+                             (n.profileEmail && n.profileEmail.toLowerCase().includes(q)) ||
+                             (n.profileId && n.profileId.toLowerCase().includes(q));
+      const matchesAnyProfile = n.allProfiles && n.allProfiles.some(p =>
+        (p.profileName && p.profileName.toLowerCase().includes(q)) ||
+        (p.profileEmail && p.profileEmail.toLowerCase().includes(q)) ||
+        (p.profileId && p.profileId.toLowerCase().includes(q))
+      );
+      return matchesTitle || matchesCode || matchesProfile || matchesAnyProfile;
     });
   }
 
-  // When 'all' is active, consolidate notebooks with the same ID into a single representation
-  const consolidatedMap = new Map();
-  for (const n of state.notebooks) {
-    if (!consolidatedMap.has(n.id)) {
-      consolidatedMap.set(n.id, {
-        ...n,
-        allProfiles: [{
-          profileId: n.profileId,
-          profileName: n.profileName,
-          profileEmail: n.profileEmail,
-          tier: n.tier,
-          color: n.color
-        }]
-      });
-    } else {
-      const existing = consolidatedMap.get(n.id);
-      if (!existing.allProfiles.some(p => p.profileId === n.profileId)) {
-        existing.allProfiles.push({
-          profileId: n.profileId,
-          profileName: n.profileName,
-          profileEmail: n.profileEmail,
-          tier: n.tier,
-          color: n.color
-        });
-      }
-      // If any profile has Pro tier, promote the consolidated tier to 'pro'
-      if (n.tier === 'pro') {
-        existing.tier = 'pro';
-        existing.profileId = n.profileId;
-        existing.profileName = n.profileName;
-        existing.color = n.color;
-      }
-      if (n.updated_at && (!existing.updated_at || n.updated_at > existing.updated_at)) {
-        existing.updated_at = n.updated_at;
-      }
-      if ((n.source_count || 0) > (existing.source_count || 0)) {
-        existing.source_count = n.source_count;
-      }
-    }
-  }
-
-  const consolidatedList = Array.from(consolidatedMap.values());
-  return consolidatedList.filter(n => {
-    if (!state.searchQuery) return true;
-    const matchesTitle = n.title && n.title.toLowerCase().includes(state.searchQuery);
-    const matchesAnyProfile = n.allProfiles && n.allProfiles.some(p =>
-      (p.profileName && p.profileName.toLowerCase().includes(state.searchQuery)) ||
-      (p.profileEmail && p.profileEmail.toLowerCase().includes(state.searchQuery)) ||
-      (p.profileId && p.profileId.toLowerCase().includes(state.searchQuery))
-    );
-    return matchesTitle || matchesAnyProfile;
-  });
+  return list;
 }
 
 function toggleSelectAllVisible() {
@@ -826,11 +976,18 @@ function renderNotebooksGrid() {
 
   if (visibleCountLabel) visibleCountLabel.textContent = filtered.length;
   if (filterLabel) {
-    if (state.activeProfileFilter === 'all') {
-      filterLabel.textContent = 'All Accounts';
-    } else {
+    let accountName = 'All Accounts';
+    if (state.activeProfileFilter !== 'all') {
       const p = state.profiles.find(x => x.id === state.activeProfileFilter);
-      filterLabel.textContent = p ? p.displayName : state.activeProfileFilter;
+      accountName = p ? p.displayName : state.activeProfileFilter;
+    }
+
+    if (state.activeCategoryFilter === 'study') {
+      filterLabel.textContent = `🎓 Study Courses • ${accountName}`;
+    } else if (state.activeCategoryFilter === 'projects') {
+      filterLabel.textContent = `🔬 Projects • ${accountName}`;
+    } else {
+      filterLabel.textContent = accountName;
     }
   }
 
@@ -851,6 +1008,8 @@ function renderNotebooksGrid() {
     }) : 'Recent';
 
     const isPro = notebook.tier === 'pro';
+    const isStudy = isStudyNotebook(notebook);
+    const courseCode = getCourseCode(notebook);
 
     return `
       <div 
@@ -858,7 +1017,7 @@ function renderNotebooksGrid() {
         style="animation-delay: ${Math.min(idx * 20, 200)}ms;"
       >
         
-        <!-- Top row: Selection Checkbox, Account Tag, Pro Tier Badge -->
+        <!-- Top row: Selection Checkbox, Account Tag, Course Badge, Pro Tier Badge -->
         <div class="flex items-start justify-between gap-2 mb-3">
           <div class="flex items-center gap-2">
             <input
@@ -885,13 +1044,21 @@ function renderNotebooksGrid() {
             `}
           </div>
 
-          ${isPro ? `
-            <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-[var(--google-yellow-container)]/50 text-[var(--google-yellow)] border border-[var(--google-yellow)]/30">
-              <i data-lucide="sparkles" class="w-3 h-3 text-[var(--google-yellow)]"></i> PRO AI
-            </span>
-          ` : `
-            <span class="text-[10px] font-mono text-[var(--m3-on-surface-subtle)]">${escapeHtml(notebook.profileId)}</span>
-          `}
+          <div class="flex items-center gap-1.5 shrink-0">
+            ${isStudy && courseCode ? `
+              <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-[var(--google-blue-container)]/70 text-[var(--google-blue)] border border-[var(--google-blue)]/30 font-mono tracking-tight" title="Academic Course NLM: ${escapeHtml(courseCode)}">
+                <i data-lucide="graduation-cap" class="w-3 h-3 text-[var(--google-blue)]"></i> ${escapeHtml(courseCode)}
+              </span>
+            ` : ''}
+
+            ${isPro ? `
+              <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-[var(--google-yellow-container)]/50 text-[var(--google-yellow)] border border-[var(--google-yellow)]/30">
+                <i data-lucide="sparkles" class="w-3 h-3 text-[var(--google-yellow)]"></i> PRO AI
+              </span>
+            ` : `
+              <span class="text-[10px] font-mono text-[var(--m3-on-surface-subtle)]">${escapeHtml(notebook.profileId)}</span>
+            `}
+          </div>
         </div>
 
         <!-- Notebook Title & Meta -->

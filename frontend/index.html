@@ -209,14 +209,18 @@
         </div>
 
         <!-- Telemetry Numbers -->
-        <div class="grid grid-cols-2 gap-2.5">
-          <div class="p-3 rounded-xl m3-subcard">
-            <p class="text-[10px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider">Notebooks</p>
-            <p id="telemetry-notebooks" class="text-xl font-bold font-mono text-[var(--m3-on-surface)] mt-0.5">0</p>
+        <div class="grid grid-cols-3 gap-2">
+          <div class="p-2.5 rounded-xl m3-subcard">
+            <p class="text-[9px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider">Notebooks</p>
+            <p id="telemetry-notebooks" class="text-lg font-bold font-mono text-[var(--m3-on-surface)] mt-0.5">0</p>
           </div>
-          <div class="p-3 rounded-xl m3-subcard">
-            <p class="text-[10px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider">Accounts</p>
-            <p id="telemetry-profiles" class="text-xl font-bold font-mono text-[var(--google-blue)] mt-0.5">0</p>
+          <div class="p-2.5 rounded-xl m3-subcard">
+            <p class="text-[9px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider">Accounts</p>
+            <p id="telemetry-profiles" class="text-lg font-bold font-mono text-[var(--google-blue)] mt-0.5">0</p>
+          </div>
+          <div class="p-2.5 rounded-xl m3-subcard cursor-pointer hover:border-[var(--google-blue)]/50 transition-colors" id="btn-telemetry-courses" title="Click to filter Study / Course NLMs (U)">
+            <p class="text-[9px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider">Courses</p>
+            <p id="telemetry-courses" class="text-lg font-bold font-mono text-[#81c995] mt-0.5">0</p>
           </div>
         </div>
 
@@ -251,6 +255,7 @@
           <span>Multi-Account Tips</span>
         </h3>
         <ul class="text-[11px] text-[var(--m3-on-surface-subtle)] space-y-1.5">
+          <li>• Press <kbd class="px-1.5 py-0.5 rounded m3-subcard text-[var(--m3-on-surface-variant)] font-mono text-[9px]">U</kbd> to toggle the Study / Course filter.</li>
           <li>• Check multiple notebooks to run cross-account synthesis.</li>
           <li>• Click <strong class="text-[var(--m3-on-surface)]">Query</strong> to chat with any notebook's indexed sources.</li>
           <li>• Press <kbd class="px-1.5 py-0.5 rounded m3-subcard text-[var(--m3-on-surface-variant)] font-mono text-[9px]">0</kbd> to change dark / light mode.</li>
@@ -263,10 +268,16 @@
     <!-- MAIN NOTEBOOK CANVAS -->
     <main class="flex-1 min-w-0 space-y-5">
 
-      <!-- MATERIAL 3 FILTER CHIPS -->
-      <div class="flex items-center justify-between gap-3 flex-wrap">
+      <!-- MATERIAL 3 FILTER CONTROLS -->
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 flex-wrap">
+        <!-- Account Filter Chips -->
         <div class="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none flex-1" id="account-pills-container">
           <!-- Populated with M3 chips: "All Accounts", "Personal", "Work", etc. -->
+        </div>
+
+        <!-- Category / Study Filter Chips -->
+        <div class="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none shrink-0" id="category-pills-container">
+          <!-- Populated with M3 chips: "All Notebooks", "🎓 Study / Courses (6)", "🔬 Projects & Other" -->
         </div>
       </div>
 
@@ -559,6 +570,10 @@
             <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
               <span class="text-xs text-[var(--m3-on-surface)]">Filter: Switch to Profile 1 – 8</span>
               <kbd class="kbd-badge">2 – 9</kbd>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Toggle Study / Course NLMs filter</span>
+              <kbd class="kbd-badge">U</kbd>
             </div>
             <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
               <span class="text-xs text-[var(--m3-on-surface)]">Close active dialog / Clear search / Clear selection</span>

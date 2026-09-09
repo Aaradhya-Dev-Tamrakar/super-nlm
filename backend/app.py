@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.config import FRONTEND_DIR, NLM_EXECUTABLE
 from backend.models import (
     AccountProfile, ProfileCreateRequest, ProfileUpdateRequest,
-    Notebook, QueryRequest, CrossQueryRequest
+    Notebook, QueryRequest, CrossQueryRequest, detect_course_info
 )
 from backend.storage import (
     get_profiles, get_profile, save_profile, delete_profile,
@@ -73,6 +73,11 @@ async def sync_all_notebooks() -> List[Notebook]:
     cached = await get_cached_notebooks()
     result = await fetch_all_notebooks_concurrently(profiles, fallback_cached=cached)
     notebooks = result["notebooks"]
+    for n in notebooks:
+        is_study, course_code, cat = detect_course_info(n.title, n.id)
+        n.is_study = is_study
+        n.course_code = course_code
+        n.category = cat
     for p in profiles:
         await save_profile(p)
     await save_cached_notebooks(notebooks)
@@ -189,9 +194,24 @@ async def trigger_profile_login(profile_id: str, clear: bool = True):
 async def list_notebooks(
     search: Optional[str] = Query(None),
     profile_id: Optional[str] = Query(None),
-    tier: Optional[str] = Query(None)
+    tier: Optional[str] = Query(None),
+    category: Optional[str] = Query(None)
 ):
     notebooks = await get_cached_notebooks()
+
+    # Enrich notebooks with study/course metadata
+    for n in notebooks:
+        is_study, course_code, cat = detect_course_info(n.title, n.id)
+        n.is_study = is_study
+        n.course_code = course_code
+        n.category = cat
+
+    if category and category.lower() != "all":
+        cat_lower = category.lower().strip()
+        if cat_lower in ("study", "courses", "course"):
+            notebooks = [n for n in notebooks if n.is_study]
+        elif cat_lower in ("projects", "project", "other"):
+            notebooks = [n for n in notebooks if not n.is_study]
 
     if profile_id and profile_id != "all":
         notebooks = [n for n in notebooks if n.profileId == profile_id]
@@ -201,7 +221,10 @@ async def list_notebooks(
 
     if search:
         s = search.lower().strip()
-        notebooks = [n for n in notebooks if s in n.title.lower() or s in n.profileName.lower() or s in n.profileEmail.lower()]
+        notebooks = [
+            n for n in notebooks
+            if s in n.title.lower() or s in n.profileName.lower() or s in n.profileEmail.lower() or (n.course_code and s in n.course_code.lower())
+        ]
 
     return notebooks
 
