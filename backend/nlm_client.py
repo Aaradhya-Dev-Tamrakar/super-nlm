@@ -16,16 +16,20 @@ logger = logging.getLogger(__name__)
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
 def _run_subprocess_sync(cmd: List[str], timeout: int) -> Dict[str, Any]:
+    extra_kwargs = {}
+    if sys.platform == "win32":
+        extra_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
     try:
         res = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            creationflags=CREATE_NO_WINDOW,
             timeout=timeout,
             text=True,
             encoding="utf-8",
-            errors="replace"
+            errors="replace",
+            **extra_kwargs
         )
         return {
             "returncode": res.returncode,
@@ -57,11 +61,15 @@ async def run_nlm_cmd(args: List[str], timeout: int = 60) -> Dict[str, Any]:
         if sys.platform == "win32" and isinstance(loop, getattr(asyncio, "_WindowsSelectorEventLoop", ())):
             return await asyncio.to_thread(_run_subprocess_sync, cmd, timeout)
 
+        extra_kwargs = {}
+        if sys.platform == "win32":
+            extra_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            creationflags=CREATE_NO_WINDOW
+            **extra_kwargs
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         out_str = stdout.decode("utf-8", errors="replace").replace("\r\n", "\n").strip()
@@ -190,27 +198,51 @@ async def fetch_all_notebooks_concurrently(
         "profile_counts": profile_counts
     }
 
-async def query_notebook(profile_id: str, notebook_id: str, question: str) -> Dict[str, Any]:
+async def query_notebook(
+    profile_id: str,
+    notebook_id: str,
+    question: str,
+    conversation_id: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Runs a query against a specific notebook under a specific profile.
+    Supports multi-turn context via conversation_id.
     """
-    res = await run_nlm_cmd([
+    args = [
         "query", "notebook", notebook_id, question,
         "--profile", profile_id,
         "--json",
         "--timeout", "120"
-    ], timeout=130)
+    ]
+    if conversation_id:
+        args.extend(["--conversation-id", conversation_id])
+
+    res = await run_nlm_cmd(args, timeout=130)
+
+    clean_stdout = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', res.get("stdout") or "").strip()
+    clean_stderr = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', res.get("stderr") or "").strip()
 
     if not res["success"]:
+        # When nlm query fails, it frequently outputs JSON {"status": "error", "error": "..."} to stdout
+        err_msg = ""
+        if clean_stdout:
+            try:
+                err_data = json.loads(clean_stdout)
+                if isinstance(err_data, dict):
+                    err_msg = err_data.get("error") or err_data.get("message") or ""
+            except Exception:
+                pass
+        if not err_msg:
+            err_msg = clean_stderr or clean_stdout or "Query failed or timed out"
+
         return {
             "success": False,
-            "error": res["stderr"] or "Query failed or timed out",
-            "answer": None
+            "error": err_msg,
+            "answer": None,
+            "conversationId": conversation_id
         }
 
     try:
-        # Strip ANSI escape sequences if any
-        clean_stdout = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', res["stdout"]).strip()
         data = json.loads(clean_stdout)
         # Format can be string or structured dict with 'answer' and 'citations'
         if isinstance(data, dict):
@@ -226,12 +258,14 @@ async def query_notebook(profile_id: str, notebook_id: str, question: str) -> Di
                 return {
                     "success": False,
                     "error": data["error"],
-                    "answer": None
+                    "answer": None,
+                    "conversationId": conversation_id
                 }
             return {
                 "success": True,
                 "answer": answer_text if answer_text is not None else str(data),
                 "citations": data.get("citations", []),
+                "conversationId": data.get("conversation_id") or conversation_id,
                 "raw": data
             }
         else:
@@ -239,16 +273,17 @@ async def query_notebook(profile_id: str, notebook_id: str, question: str) -> Di
                 "success": True,
                 "answer": str(data),
                 "citations": [],
+                "conversationId": conversation_id,
                 "raw": data
             }
     except Exception:
         # Fallback to plain text if stdout is not JSON
-        clean_stdout = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', res["stdout"]).strip()
         return {
             "success": True,
             "answer": clean_stdout,
             "citations": [],
-            "raw": res["stdout"]
+            "conversationId": conversation_id,
+            "raw": res.get("stdout")
         }
 
 def is_rate_limit_or_quota_error(err: str) -> bool:
@@ -298,6 +333,7 @@ async def query_notebook_with_pro_fallback(
     profile_id: str,
     notebook_id: str,
     question: str,
+    conversation_id: Optional[str] = None,
     pro_profile_id: Optional[str] = None,
     pro_email: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -307,7 +343,7 @@ async def query_notebook_with_pro_fallback(
     with the Pro account and re-dispatches the query through the Pro AI engine.
     """
     # 1. First attempt with home profile
-    res = await query_notebook(profile_id, notebook_id, question)
+    res = await query_notebook(profile_id, notebook_id, question, conversation_id=conversation_id)
     if res.get("success"):
         res["handledByProFallback"] = False
         return res
@@ -336,7 +372,7 @@ async def query_notebook_with_pro_fallback(
         await check_or_share_with_pro(notebook_id, profile_id, pro_email)
 
     # 4. Retry query via the Pro AI account
-    pro_res = await query_notebook(pro_profile_id, notebook_id, question)
+    pro_res = await query_notebook(pro_profile_id, notebook_id, question, conversation_id=conversation_id)
     if pro_res.get("success"):
         pro_res["handledByProFallback"] = True
         pro_res["fallbackReason"] = f"Standard account ({profile_id}) reached quota limit. Seamlessly answered by Pro AI."
@@ -347,7 +383,8 @@ async def query_notebook_with_pro_fallback(
         return {
             "success": False,
             "error": f"Initial query failed on '{profile_id}' ({err_message}). Pro AI fallback also failed: {pro_res.get('error')}",
-            "handledByProFallback": True
+            "handledByProFallback": True,
+            "conversationId": conversation_id
         }
 
 async def synthesize_cross_notebook(
@@ -378,7 +415,8 @@ async def synthesize_cross_notebook(
         if res.get("success") and res.get("answer"):
             partial_summaries.append(f"### Source Notebook: {item['title']} (Profile: {item['profileId']})\n{res['answer']}\n")
         else:
-            partial_summaries.append(f"### Source Notebook: {item['title']}\n*Could not retrieve answer or no relevant sources.*")
+            err_detail = res.get("error") or "No answer returned or query failed"
+            partial_summaries.append(f"### Source Notebook: {item['title']} (Profile: {item['profileId']})\n*⚠️ {err_detail}*")
 
     combined_context = "\n\n".join(partial_summaries)
 
@@ -392,19 +430,28 @@ async def synthesize_cross_notebook(
 
 def launch_cli_login(profile_id: str, clear: bool = True):
     """
-    Launches an interactive console window on Windows running 'nlm login --profile <id> [--clear]'
+    Launches an interactive console window running 'nlm login --profile <id> [--clear]'
     so the user can log into their Google account with Chrome.
     """
+    if not re.match(r'^[a-zA-Z0-9_\-]{1,64}$', profile_id):
+        raise ValueError(f"Invalid profile_id: {profile_id}")
+
     flags = ["login", "--profile", profile_id]
     if clear:
         flags.append("--clear")
 
-    cmd = f'"{NLM_EXECUTABLE}" ' + " ".join(flags)
-    # Open new Windows cmd window so the browser/auth prompt is visible to the user
-    subprocess.Popen(
-        f'cmd.exe /k "echo Logging in to Super-NLM profile: {profile_id}... && {cmd} && echo. && echo Profile auth complete! You can close this window now. && pause"',
-        creationflags=subprocess.CREATE_NEW_CONSOLE
-    )
+    cmd_args = [NLM_EXECUTABLE] + flags
+
+    if sys.platform == "win32":
+        quoted_cmd = subprocess.list2cmdline(cmd_args)
+        console_cmd = f'cmd.exe /k "echo Logging in to Super-NLM profile: {profile_id}... && {quoted_cmd} && echo. && echo Profile auth complete! You can close this window now. && pause"'
+        subprocess.Popen(
+            console_cmd,
+            creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+        )
+    else:
+        logger.info(f"Launching login CLI for profile: {profile_id}")
+        subprocess.Popen(cmd_args)
 
 async def delete_cli_profile(profile_id: str) -> bool:
     res = await run_nlm_cmd(["login", "profile", "delete", profile_id], timeout=15)

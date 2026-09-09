@@ -1,5 +1,5 @@
 # Super-NLM Hub 🚀
-> **Multi-Account Unified Dashboard for Google NotebookLM**  
+> **Multi-Account Unified Dashboard for Google Gemini Notebook**  
 > Access, search, chat, and synthesize across $N$ Google accounts simultaneously.
 
 ---
@@ -12,7 +12,7 @@
 - **Global Fast Search (`Ctrl+K`):** Instantly filter notebooks across all accounts by title, owner, or sources.
 - **In-App Quick Chat:** Ask questions directly to any notebook without switching Google accounts or opening browser tabs.
 - **Cross-Account Synthesis:** Select 2 or more notebooks across different accounts and synthesize them using your Pro AI model.
-- **Direct Deep Links:** Jump straight to any notebook in Google's official NotebookLM web interface.
+- **Direct Deep Links:** Jump straight to any notebook in Google's official Gemini Notebook web interface.
 
 ---
 
@@ -57,7 +57,7 @@ You don't have to keep this restricted to your local desk. Choose between two re
 
 If you don't want to keep your laptop powered on, deploy Super-NLM directly to **Google Cloud Run**:
 * **Cost:** $0 (fits entirely within Google Cloud's permanent free tier of 2M requests/mo).
-* **Speed:** Hosted directly on Google's infrastructure for ultra-low latency to NotebookLM.
+* **Speed:** Hosted directly on Google's infrastructure for ultra-low latency to Gemini Notebook.
 * **Deploy in 1 Click:**
   ```powershell
   # Double click deploy_cloud_run.bat or run:

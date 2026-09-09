@@ -12,10 +12,14 @@ CACHE_FILE = DATA_DIR / "notebooks_cache.json"
 # Ensure data directory exists
 DATA_DIR.mkdir(exist_ok=True)
 
-# Locate nlm binary
+import sys
+
+# Locate nlm binary cross-platform
 NLM_EXECUTABLE = shutil.which("nlm")
 if not NLM_EXECUTABLE:
-    fallback = Path(os.environ.get("USERPROFILE", "")) / ".local" / "bin" / "nlm.exe"
+    home_dir = Path.home()
+    binary_name = "nlm.exe" if sys.platform == "win32" else "nlm"
+    fallback = home_dir / ".local" / "bin" / binary_name
     if fallback.exists():
         NLM_EXECUTABLE = str(fallback)
     else:

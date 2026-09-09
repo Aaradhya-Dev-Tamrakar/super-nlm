@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import FRONTEND_DIR, NLM_EXECUTABLE
@@ -46,13 +46,21 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("Shutting down Super-NLM Hub...")
 
-app = FastAPI(title="Super-NLM Hub", lifespan=lifespan)
+app = FastAPI(title="Super-Gemini Notebook", lifespan=lifespan)
+
+import re
+
+def validate_profile_id(pid: str) -> str:
+    cleaned = pid.strip().lower().replace(" ", "-")
+    if not re.match(r'^[a-zA-Z0-9_\-]{1,64}$', cleaned):
+        raise HTTPException(status_code=400, detail=f"Invalid profile ID '{pid}'. Must be 1-64 alphanumeric characters, dashes, or underscores.")
+    return cleaned
 
 # Allow CORS for local development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -82,14 +90,15 @@ async def list_profiles():
 
 @app.post("/api/profiles", response_model=AccountProfile)
 async def create_profile(req: ProfileCreateRequest, launch_login: bool = True):
-    existing = await get_profile(req.id)
+    clean_id = validate_profile_id(req.id)
+    existing = await get_profile(clean_id)
     if existing:
-        raise HTTPException(status_code=400, detail=f"Profile '{req.id}' already exists")
+        raise HTTPException(status_code=400, detail=f"Profile '{clean_id}' already exists")
 
     profile = AccountProfile(
-        id=req.id.strip().lower().replace(" ", "-"),
-        displayName=req.displayName,
-        email=req.email or "",
+        id=clean_id,
+        displayName=req.displayName.strip(),
+        email=req.email.strip() if req.email else "",
         tier=req.tier,
         color=req.color or "#6366f1",
         icon=req.icon or "book-open",
@@ -105,14 +114,15 @@ async def create_profile(req: ProfileCreateRequest, launch_login: bool = True):
 
 @app.put("/api/profiles/{profile_id}", response_model=AccountProfile)
 async def update_profile(profile_id: str, req: ProfileUpdateRequest):
-    profile = await get_profile(profile_id)
+    clean_id = validate_profile_id(profile_id)
+    profile = await get_profile(clean_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
 
     if req.displayName is not None:
-        profile.displayName = req.displayName
+        profile.displayName = req.displayName.strip()
     if req.email is not None:
-        profile.email = req.email
+        profile.email = req.email.strip()
     if req.tier is not None:
         profile.tier = req.tier
     if req.color is not None:
@@ -123,30 +133,49 @@ async def update_profile(profile_id: str, req: ProfileUpdateRequest):
         profile.isDefaultPro = req.isDefaultPro
 
     await save_profile(profile)
+
+    # Synchronize cached notebooks metadata with updated profile
+    try:
+        cached_notebooks = await get_cached_notebooks()
+        updated_any = False
+        for n in cached_notebooks:
+            if n.profileId == clean_id:
+                n.profileName = profile.displayName
+                n.profileEmail = profile.email
+                n.tier = profile.tier
+                n.color = profile.color
+                updated_any = True
+        if updated_any:
+            await save_cached_notebooks(cached_notebooks)
+    except Exception as e:
+        logger.warning(f"Failed to update cached notebook metadata for profile {clean_id}: {e}")
+
     return profile
 
 @app.delete("/api/profiles/{profile_id}")
 async def remove_profile(profile_id: str):
-    profile = await get_profile(profile_id)
+    clean_id = validate_profile_id(profile_id)
+    profile = await get_profile(clean_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    await delete_profile(profile_id)
+    await delete_profile(clean_id)
     try:
-        await delete_cli_profile(profile_id)
+        await delete_cli_profile(clean_id)
     except Exception as e:
         logger.warning(f"Failed to delete CLI profile: {e}")
 
     # Remove cached notebooks belonging to this profile
     notebooks = await get_cached_notebooks()
-    filtered = [n for n in notebooks if n.profileId != profile_id]
+    filtered = [n for n in notebooks if n.profileId != clean_id]
     await save_cached_notebooks(filtered)
 
-    return {"success": True, "message": f"Profile '{profile_id}' removed"}
+    return {"success": True, "message": f"Profile '{clean_id}' removed"}
 
 @app.post("/api/profiles/{profile_id}/login")
 async def trigger_profile_login(profile_id: str, clear: bool = True):
-    profile = await get_profile(profile_id)
+    clean_id = validate_profile_id(profile_id)
+    profile = await get_profile(clean_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
 
@@ -202,6 +231,7 @@ async def ask_notebook(req: QueryRequest):
         profile_id=req.profileId,
         notebook_id=req.notebookId,
         question=req.question,
+        conversation_id=req.conversationId,
         pro_profile_id=pro_profile_id,
         pro_email=pro_email
     )
@@ -230,6 +260,11 @@ async def ask_cross_notebook(req: CrossQueryRequest):
 
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        # Standard HTTP 204 No Content with strictly empty body
+        return Response(status_code=204)
 
     @app.get("/")
     async def serve_index():

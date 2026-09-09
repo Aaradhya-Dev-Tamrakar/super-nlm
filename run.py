@@ -47,7 +47,7 @@ def upgrade_notebooklm_cli():
             uv_bin = fallback
         else:
             uv_bin = "uv"
-    print("📦 Checking for updates to notebooklm-mcp-cli...")
+    print("📦 Checking for updates to Gemini Notebook CLI engine (notebooklm-mcp-cli)...")
     try:
         res = subprocess.run(
             [uv_bin, "tool", "upgrade", "notebooklm-mcp-cli"],
@@ -70,7 +70,7 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=None, help="Port to bind (default: auto-detect from 8000)")
     parser.add_argument("--tunnel", action="store_true", help="Launch a Cloudflare Tunnel for secure remote access anywhere")
     parser.add_argument("--no-browser", action="store_true", help="Don't open browser automatically")
-    parser.add_argument("--no-upgrade", action="store_true", help="Skip checking for notebooklm-mcp-cli updates at launch")
+    parser.add_argument("--no-upgrade", action="store_true", help="Skip checking for Gemini Notebook CLI updates at launch")
     args = parser.parse_args()
 
     if not args.no_upgrade:

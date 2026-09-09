@@ -31,3 +31,8 @@ data/*.json
 data/*.tmp
 !data/.gitkeep
 
+# Executables & Binaries
+tools/
+*.exe
+*.lnk
+

@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Super-NLM Hub | Unified Multi-Account NotebookLM Studio</title>
+  <title>Super-Gemini Notebook | Unified Multi-Account Studio</title>
+  
+  <!-- Google Quad-Color Favicon -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='4' y='4' width='11' height='11' rx='3' fill='%238ab4f8'/%3E%3Crect x='17' y='4' width='11' height='11' rx='3' fill='%23f28b82'/%3E%3Crect x='4' y='17' width='11' height='11' rx='3' fill='%2381c995'/%3E%3Crect x='17' y='17' width='11' height='11' rx='3' fill='%23fdd663'/%3E%3C/svg%3E">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -49,7 +52,7 @@
   <header class="sticky top-0 z-40 google-app-bar backdrop-blur-md">
     <div class="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
       
-      <!-- Brand & Product Title (NotebookLM Style) -->
+      <!-- Brand & Product Title (Gemini Notebook Style) -->
       <div class="flex items-center gap-3">
         <div class="w-9 h-9 rounded-xl m3-subcard flex items-center justify-center shadow-sm">
           <!-- Google 4-Color Quad Accent Dot -->
@@ -63,32 +66,36 @@
         <div>
           <div class="flex items-center gap-2">
             <span class="text-[17px] font-medium tracking-tight flex items-center gap-1.5">
-              NotebookLM
+              Super-Gemini Notebook
               <span class="text-[11px] font-normal text-[var(--google-blue)] px-2 py-0.5 rounded-full bg-[var(--google-blue-container)] border border-[var(--google-blue)]/20 font-mono">Hub v2.0</span>
             </span>
-          </div>
-          <div class="text-[11px] text-[var(--m3-on-surface-subtle)] flex items-center gap-1.5">
-            <span class="relative flex h-1.5 w-1.5">
-              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#81c995] opacity-75"></span>
-              <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#81c995]"></span>
-            </span>
-            <span>Pro AI Engine:</span>
-            <span class="text-[var(--google-yellow)] font-mono text-[11px]" id="pro-email-label">aaradhyadevtmr@gmail.com</span>
           </div>
         </div>
       </div>
 
       <!-- Google Pill Search Bar -->
       <div class="flex-1 max-w-xl relative hidden md:block">
-        <div class="google-search-pill flex items-center px-4 py-2 gap-2.5">
+        <div class="google-search-pill flex items-center px-4 py-2 gap-2.5 cursor-text">
           <i data-lucide="search" class="w-4 h-4 text-[var(--m3-on-surface-subtle)] shrink-0"></i>
           <input
             type="text"
             id="search-input"
-            placeholder="Search notebooks, sources, accounts... (Ctrl+K)"
-            class="w-full bg-transparent text-xs text-[var(--m3-on-surface)] placeholder-[var(--m3-on-surface-subtle)] focus:outline-none font-sans"
+            placeholder="Search notebooks, sources, accounts..."
+            class="flex-1 min-w-0 bg-transparent text-xs text-[var(--m3-on-surface)] placeholder-[var(--m3-on-surface-subtle)] focus:outline-none font-sans"
+            autocomplete="off"
+            spellcheck="false"
           >
-          <kbd class="px-2 py-0.5 text-[9px] font-mono font-medium text-[var(--m3-on-surface-subtle)] bg-[var(--m3-surface-container)] rounded-md border border-[var(--m3-outline-variant)] pointer-events-none">
+          <!-- Clear Button (appears when input has text) -->
+          <button
+            type="button"
+            id="search-clear-btn"
+            class="hidden p-0.5 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] hover:bg-[var(--m3-surface-container-highest)] transition shrink-0 cursor-pointer"
+            title="Clear search (Esc)"
+          >
+            <i data-lucide="x" class="w-3.5 h-3.5"></i>
+          </button>
+          <!-- Shortcut Key Badge -->
+          <kbd id="search-shortcut-badge" class="hidden sm:inline-flex items-center gap-0.5 px-2 py-0.5 text-[10px] font-mono font-medium text-[var(--m3-on-surface-variant)] bg-[var(--m3-surface-container-lowest)] rounded-md border border-[var(--m3-outline-variant)]/70 whitespace-nowrap shrink-0 pointer-events-none select-none shadow-xs">
             Ctrl K
           </kbd>
         </div>
@@ -118,17 +125,28 @@
         <!-- Accounts Manager -->
         <button
           id="btn-manage-accounts"
+          title="Google Accounts Manager (A)"
           class="google-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-xs shadow-sm"
         >
           <i data-lucide="users" class="w-3.5 h-3.5"></i>
           <span>Accounts (<span id="accounts-count">1</span>)</span>
         </button>
 
+        <!-- Keyboard Shortcuts Trigger Button -->
+        <button
+          id="btn-shortcuts-toggle"
+          title="Keyboard Shortcuts (?)"
+          class="google-btn-outlined p-2 flex items-center justify-center text-xs"
+          aria-label="Keyboard Shortcuts"
+        >
+          <i data-lucide="keyboard" class="w-4 h-4"></i>
+        </button>
+
         <!-- Google Theme Switcher (Light / Dark / System) -->
         <div class="relative">
           <button
             id="btn-theme-toggle"
-            title="Switch theme (Light, Dark, System)"
+            title="Switch theme (0 to toggle, or click for menu)"
             class="google-btn-outlined p-2 flex items-center justify-center text-xs"
             aria-haspopup="true"
             aria-expanded="false"
@@ -160,6 +178,14 @@
             </button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Material 3 Indeterminate Linear Progress Bar (Global Network & Sync Indicator) -->
+    <div id="global-progress-bar" class="m3-linear-progress hidden pointer-events-none" aria-hidden="true">
+      <div class="m3-linear-progress-track">
+        <div class="m3-linear-progress-bar m3-linear-progress-bar-primary"></div>
+        <div class="m3-linear-progress-bar m3-linear-progress-bar-secondary"></div>
       </div>
     </div>
   </header>
@@ -227,7 +253,8 @@
         <ul class="text-[11px] text-[var(--m3-on-surface-subtle)] space-y-1.5">
           <li>• Check multiple notebooks to run cross-account synthesis.</li>
           <li>• Click <strong class="text-[var(--m3-on-surface)]">Query</strong> to chat with any notebook's indexed sources.</li>
-          <li>• Use <kbd class="px-1.5 py-0.5 rounded m3-subcard text-[var(--m3-on-surface-variant)] font-mono text-[9px]">Ctrl+K</kbd> to search across accounts.</li>
+          <li>• Press <kbd class="px-1.5 py-0.5 rounded m3-subcard text-[var(--m3-on-surface-variant)] font-mono text-[9px]">0</kbd> to change dark / light mode.</li>
+          <li>• Press <kbd class="px-1.5 py-0.5 rounded m3-subcard text-[var(--m3-on-surface-variant)] font-mono text-[9px]">?</kbd> or <button type="button" id="btn-tips-shortcuts" class="text-[var(--google-blue)] hover:underline inline">view all shortcuts</button>.</li>
         </ul>
       </div>
 
@@ -244,16 +271,19 @@
       </div>
 
       <!-- FLOATING SELECTION SNACKBAR (For Cross-Synthesis) -->
-      <div id="selection-banner" class="hidden items-center justify-between p-3.5 rounded-2xl m3-card border-[var(--google-blue)] text-xs shadow-2xl animate-m3-enter">
+      <div id="selection-banner" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 hidden items-center justify-between px-5 py-3 rounded-full m3-card border border-[var(--google-blue)] text-xs shadow-2xl animate-m3-enter max-w-2xl w-[92%] backdrop-blur-lg bg-[var(--m3-surface-container)]/95">
         <div class="flex items-center gap-3">
-          <span class="flex h-2 w-2 rounded-full bg-[var(--google-blue)]"></span>
+          <span class="relative flex h-2.5 w-2.5">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--google-blue)] opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-[var(--google-blue)]"></span>
+          </span>
           <span id="selection-text" class="text-[var(--m3-on-surface)] font-medium">0 notebooks selected across accounts</span>
         </div>
         <div class="flex items-center gap-2">
-          <button id="btn-clear-selection" class="google-btn-outlined px-3 py-1 text-xs">
-            Clear Selection
+          <button id="btn-clear-selection" class="google-btn-outlined px-3 py-1.5 text-xs">
+            Clear
           </button>
-          <button id="btn-synthesize-selected" class="google-btn-primary px-3.5 py-1 text-xs flex items-center gap-1.5">
+          <button id="btn-synthesize-selected" class="google-btn-primary px-4 py-1.5 text-xs flex items-center gap-1.5 shadow-sm">
             <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
             <span>Synthesize with Pro AI</span>
           </button>
@@ -279,11 +309,170 @@
         </div>
       </div>
 
-      <!-- SKELETON LOADERS (During fetch) -->
+      <!-- SYNC & NETWORK STATUS BANNER -->
+      <div id="sync-status-indicator" class="hidden items-center justify-between px-4 py-3 rounded-2xl m3-subcard border border-[var(--google-blue)]/30 animate-m3-enter">
+        <div class="flex items-center gap-3">
+          <div class="google-quad-dots scale-90">
+            <span class="google-quad-dot"></span>
+            <span class="google-quad-dot"></span>
+            <span class="google-quad-dot"></span>
+            <span class="google-quad-dot"></span>
+          </div>
+          <div>
+            <span class="text-xs font-medium text-[var(--m3-on-surface)]" id="sync-status-text">Synchronizing notebooks across Google accounts...</span>
+            <p class="text-[11px] text-[var(--m3-on-surface-subtle)]" id="sync-status-subtext">Fetching manifests, sources, and active AI sessions</p>
+          </div>
+        </div>
+        <span class="text-[10px] font-mono text-[var(--google-blue)] px-2.5 py-0.5 rounded-full bg-[var(--google-blue-container)]/50 border border-[var(--google-blue)]/30 font-medium">
+          Active Sync
+        </span>
+      </div>
+
+      <!-- SKELETON LOADERS (Dimension-Matched to Real Notebook Cards) -->
       <div id="skeleton-grid" class="hidden grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        <div class="m3-card p-5 h-44 google-skeleton"></div>
-        <div class="m3-card p-5 h-44 google-skeleton"></div>
-        <div class="m3-card p-5 h-44 google-skeleton"></div>
+        <!-- Skeleton Card 1 -->
+        <div class="m3-card skeleton-card p-5 flex flex-col justify-between relative overflow-hidden h-[180px]">
+          <div class="flex items-start justify-between gap-2 mb-3">
+            <div class="flex items-center gap-2">
+              <div class="w-4 h-4 rounded google-skeleton shrink-0"></div>
+              <div class="w-24 h-5 rounded-full google-skeleton"></div>
+            </div>
+            <div class="w-14 h-4 rounded-full google-skeleton"></div>
+          </div>
+          <div class="mb-4 flex-1 space-y-2">
+            <div class="h-4 w-4/5 rounded google-skeleton"></div>
+            <div class="h-4 w-1/2 rounded google-skeleton"></div>
+            <div class="flex items-center gap-3 mt-3 pt-1">
+              <div class="h-3 w-16 rounded google-skeleton"></div>
+              <div class="w-1.5 h-1.5 rounded-full google-skeleton"></div>
+              <div class="h-3 w-20 rounded google-skeleton"></div>
+            </div>
+          </div>
+          <div class="flex items-center justify-between pt-3 border-t border-[var(--m3-outline-variant)]/60 gap-2">
+            <div class="w-20 h-7 rounded-full google-skeleton"></div>
+            <div class="w-7 h-7 rounded-full google-skeleton"></div>
+          </div>
+        </div>
+
+        <!-- Skeleton Card 2 -->
+        <div class="m3-card skeleton-card p-5 flex flex-col justify-between relative overflow-hidden h-[180px]">
+          <div class="flex items-start justify-between gap-2 mb-3">
+            <div class="flex items-center gap-2">
+              <div class="w-4 h-4 rounded google-skeleton shrink-0"></div>
+              <div class="w-28 h-5 rounded-full google-skeleton"></div>
+            </div>
+            <div class="w-12 h-4 rounded-full google-skeleton"></div>
+          </div>
+          <div class="mb-4 flex-1 space-y-2">
+            <div class="h-4 w-3/4 rounded google-skeleton"></div>
+            <div class="h-4 w-3/5 rounded google-skeleton"></div>
+            <div class="flex items-center gap-3 mt-3 pt-1">
+              <div class="h-3 w-14 rounded google-skeleton"></div>
+              <div class="w-1.5 h-1.5 rounded-full google-skeleton"></div>
+              <div class="h-3 w-24 rounded google-skeleton"></div>
+            </div>
+          </div>
+          <div class="flex items-center justify-between pt-3 border-t border-[var(--m3-outline-variant)]/60 gap-2">
+            <div class="w-20 h-7 rounded-full google-skeleton"></div>
+            <div class="w-7 h-7 rounded-full google-skeleton"></div>
+          </div>
+        </div>
+
+        <!-- Skeleton Card 3 -->
+        <div class="m3-card skeleton-card p-5 flex flex-col justify-between relative overflow-hidden h-[180px]">
+          <div class="flex items-start justify-between gap-2 mb-3">
+            <div class="flex items-center gap-2">
+              <div class="w-4 h-4 rounded google-skeleton shrink-0"></div>
+              <div class="w-20 h-5 rounded-full google-skeleton"></div>
+            </div>
+            <div class="w-16 h-4 rounded-full google-skeleton"></div>
+          </div>
+          <div class="mb-4 flex-1 space-y-2">
+            <div class="h-4 w-5/6 rounded google-skeleton"></div>
+            <div class="h-4 w-2/5 rounded google-skeleton"></div>
+            <div class="flex items-center gap-3 mt-3 pt-1">
+              <div class="h-3 w-16 rounded google-skeleton"></div>
+              <div class="w-1.5 h-1.5 rounded-full google-skeleton"></div>
+              <div class="h-3 w-16 rounded google-skeleton"></div>
+            </div>
+          </div>
+          <div class="flex items-center justify-between pt-3 border-t border-[var(--m3-outline-variant)]/60 gap-2">
+            <div class="w-20 h-7 rounded-full google-skeleton"></div>
+            <div class="w-7 h-7 rounded-full google-skeleton"></div>
+          </div>
+        </div>
+
+        <!-- Skeleton Card 4 -->
+        <div class="m3-card skeleton-card p-5 flex flex-col justify-between relative overflow-hidden h-[180px]">
+          <div class="flex items-start justify-between gap-2 mb-3">
+            <div class="flex items-center gap-2">
+              <div class="w-4 h-4 rounded google-skeleton shrink-0"></div>
+              <div class="w-24 h-5 rounded-full google-skeleton"></div>
+            </div>
+            <div class="w-14 h-4 rounded-full google-skeleton"></div>
+          </div>
+          <div class="mb-4 flex-1 space-y-2">
+            <div class="h-4 w-2/3 rounded google-skeleton"></div>
+            <div class="h-4 w-1/2 rounded google-skeleton"></div>
+            <div class="flex items-center gap-3 mt-3 pt-1">
+              <div class="h-3 w-20 rounded google-skeleton"></div>
+              <div class="w-1.5 h-1.5 rounded-full google-skeleton"></div>
+              <div class="h-3 w-16 rounded google-skeleton"></div>
+            </div>
+          </div>
+          <div class="flex items-center justify-between pt-3 border-t border-[var(--m3-outline-variant)]/60 gap-2">
+            <div class="w-20 h-7 rounded-full google-skeleton"></div>
+            <div class="w-7 h-7 rounded-full google-skeleton"></div>
+          </div>
+        </div>
+
+        <!-- Skeleton Card 5 -->
+        <div class="m3-card skeleton-card p-5 flex flex-col justify-between relative overflow-hidden h-[180px]">
+          <div class="flex items-start justify-between gap-2 mb-3">
+            <div class="flex items-center gap-2">
+              <div class="w-4 h-4 rounded google-skeleton shrink-0"></div>
+              <div class="w-22 h-5 rounded-full google-skeleton"></div>
+            </div>
+            <div class="w-12 h-4 rounded-full google-skeleton"></div>
+          </div>
+          <div class="mb-4 flex-1 space-y-2">
+            <div class="h-4 w-4/5 rounded google-skeleton"></div>
+            <div class="h-4 w-3/5 rounded google-skeleton"></div>
+            <div class="flex items-center gap-3 mt-3 pt-1">
+              <div class="h-3 w-16 rounded google-skeleton"></div>
+              <div class="w-1.5 h-1.5 rounded-full google-skeleton"></div>
+              <div class="h-3 w-20 rounded google-skeleton"></div>
+            </div>
+          </div>
+          <div class="flex items-center justify-between pt-3 border-t border-[var(--m3-outline-variant)]/60 gap-2">
+            <div class="w-20 h-7 rounded-full google-skeleton"></div>
+            <div class="w-7 h-7 rounded-full google-skeleton"></div>
+          </div>
+        </div>
+
+        <!-- Skeleton Card 6 -->
+        <div class="m3-card skeleton-card p-5 flex flex-col justify-between relative overflow-hidden h-[180px]">
+          <div class="flex items-start justify-between gap-2 mb-3">
+            <div class="flex items-center gap-2">
+              <div class="w-4 h-4 rounded google-skeleton shrink-0"></div>
+              <div class="w-24 h-5 rounded-full google-skeleton"></div>
+            </div>
+            <div class="w-14 h-4 rounded-full google-skeleton"></div>
+          </div>
+          <div class="mb-4 flex-1 space-y-2">
+            <div class="h-4 w-3/4 rounded google-skeleton"></div>
+            <div class="h-4 w-1/3 rounded google-skeleton"></div>
+            <div class="flex items-center gap-3 mt-3 pt-1">
+              <div class="h-3 w-12 rounded google-skeleton"></div>
+              <div class="w-1.5 h-1.5 rounded-full google-skeleton"></div>
+              <div class="h-3 w-20 rounded google-skeleton"></div>
+            </div>
+          </div>
+          <div class="flex items-center justify-between pt-3 border-t border-[var(--m3-outline-variant)]/60 gap-2">
+            <div class="w-20 h-7 rounded-full google-skeleton"></div>
+            <div class="w-7 h-7 rounded-full google-skeleton"></div>
+          </div>
+        </div>
       </div>
 
       <!-- NOTEBOOKS MATRIX GRID -->
@@ -306,6 +495,124 @@
       </div>
 
     </main>
+  </div>
+
+  <!-- MODAL: KEYBOARD SHORTCUTS (Material 3 Dialog) -->
+  <div id="modal-shortcuts" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div class="m3-dialog max-w-xl w-full max-h-[88vh] flex flex-col overflow-hidden animate-m3-enter">
+      
+      <!-- Modal Header -->
+      <div class="px-6 py-4 border-b border-[var(--m3-outline-variant)] flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="p-2 rounded-full bg-[var(--google-blue-container)] text-[var(--google-blue)]">
+            <i data-lucide="keyboard" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h3 class="text-sm font-medium text-[var(--m3-on-surface)]">Keyboard Shortcuts</h3>
+            <p class="text-xs text-[var(--m3-on-surface-subtle)]">Fast navigation and workflow controls for Super-Gemini Notebook</p>
+          </div>
+        </div>
+        <button id="close-modal-shortcuts" class="p-1.5 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] hover:bg-[var(--m3-surface-container-high)] transition" aria-label="Close shortcuts dialog">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="p-6 overflow-y-auto space-y-5 bg-[var(--m3-surface)]">
+        <!-- Display & Theme -->
+        <div>
+          <h4 class="text-xs font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+            <i data-lucide="sun-moon" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
+            <span>Theme & Display</span>
+          </h4>
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Toggle Dark / Light mode</span>
+              <kbd class="kbd-badge">0</kbd>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Show / Hide shortcuts cheat sheet</span>
+              <kbd class="kbd-badge">?</kbd>
+            </div>
+          </div>
+        </div>
+
+        <!-- Navigation & Search -->
+        <div>
+          <h4 class="text-xs font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+            <i data-lucide="compass" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
+            <span>Navigation & Filters</span>
+          </h4>
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Focus search (notebooks, sources, accounts)</span>
+              <div class="flex items-center gap-1">
+                <kbd class="kbd-badge">/</kbd>
+                <span class="text-[11px] text-[var(--m3-on-surface-subtle)]">or</span>
+                <kbd class="kbd-badge">Ctrl K</kbd>
+              </div>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Filter: All Accounts</span>
+              <kbd class="kbd-badge">1</kbd>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Filter: Switch to Profile 1 – 8</span>
+              <kbd class="kbd-badge">2 – 9</kbd>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Close active dialog / Clear search / Clear selection</span>
+              <kbd class="kbd-badge">Esc</kbd>
+            </div>
+          </div>
+        </div>
+
+        <!-- Actions & Multi-Account -->
+        <div>
+          <h4 class="text-xs font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
+            <i data-lucide="zap" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
+            <span>Actions & Synthesis</span>
+          </h4>
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Sync all notebooks across accounts</span>
+              <div class="flex items-center gap-1">
+                <kbd class="kbd-badge">S</kbd>
+                <span class="text-[11px] text-[var(--m3-on-surface-subtle)]">or</span>
+                <kbd class="kbd-badge">R</kbd>
+              </div>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Open Google Accounts Manager</span>
+              <kbd class="kbd-badge">A</kbd>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Open Cross-Account Synthesis</span>
+              <div class="flex items-center gap-1">
+                <kbd class="kbd-badge">X</kbd>
+                <span class="text-[11px] text-[var(--m3-on-surface-subtle)]">or</span>
+                <kbd class="kbd-badge">C</kbd>
+              </div>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Select / Deselect all visible notebooks</span>
+              <kbd class="kbd-badge">Shift + A</kbd>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Submit chat question / Execute synthesis</span>
+              <kbd class="kbd-badge">Ctrl + Enter</kbd>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="px-6 py-3 border-t border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container)] flex items-center justify-between text-xs text-[var(--m3-on-surface-subtle)]">
+        <span>Single-key shortcuts are paused while typing in inputs.</span>
+        <button id="btn-close-shortcuts-footer" class="google-btn-outlined px-3.5 py-1 text-xs">Done</button>
+      </div>
+
+    </div>
   </div>
 
   <!-- MODAL: MANAGE ACCOUNTS (Material 3 Dialog) -->
@@ -523,14 +830,84 @@
           </button>
         </div>
 
+        <!-- Cross Synthesis Loading State -->
+        <div id="cross-loading-state" class="hidden space-y-4 pt-4 border-t border-[var(--m3-outline-variant)] animate-m3-enter">
+          <div class="p-4 rounded-2xl m3-subcard border border-[var(--google-blue)]/30 space-y-3.5">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2.5">
+                <div class="google-quad-dots">
+                  <span class="google-quad-dot"></span>
+                  <span class="google-quad-dot"></span>
+                  <span class="google-quad-dot"></span>
+                  <span class="google-quad-dot"></span>
+                </div>
+                <span class="text-xs font-medium text-[var(--m3-on-surface)]">Multi-Account Synthesis in Progress</span>
+              </div>
+              <span id="cross-elapsed-timer" class="text-[11px] font-mono text-[var(--google-blue)] bg-[var(--google-blue-container)]/50 px-2 py-0.5 rounded-full font-medium">0.0s</span>
+            </div>
+
+            <!-- Dynamic step status progression -->
+            <div class="space-y-2 pt-1 text-xs">
+              <div id="cross-step-1" class="flex items-center gap-2 text-[var(--google-blue)] font-medium transition-colors">
+                <i data-lucide="circle-dot" class="w-3.5 h-3.5 shrink-0 animate-pulse"></i>
+                <span>Querying source materials across authenticated Google accounts...</span>
+              </div>
+              <div id="cross-step-2" class="flex items-center gap-2 text-[var(--m3-on-surface-subtle)] transition-colors">
+                <i data-lucide="circle" class="w-3.5 h-3.5 shrink-0"></i>
+                <span>Correlating citations and reconciling key findings...</span>
+              </div>
+              <div id="cross-step-3" class="flex items-center gap-2 text-[var(--m3-on-surface-subtle)] transition-colors">
+                <i data-lucide="circle" class="w-3.5 h-3.5 shrink-0"></i>
+                <span>Generating unified cross-notebook intelligence brief...</span>
+              </div>
+            </div>
+
+            <!-- Markdown preview skeleton -->
+            <div class="space-y-2.5 pt-3 border-t border-[var(--m3-outline-variant)]/40">
+              <div class="h-3.5 w-1/3 rounded google-skeleton"></div>
+              <div class="h-2.5 w-full rounded google-skeleton"></div>
+              <div class="h-2.5 w-5/6 rounded google-skeleton"></div>
+              <div class="h-2.5 w-4/6 rounded google-skeleton"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- Synthesis Results Section -->
         <div id="cross-results-container" class="hidden space-y-2.5 pt-4 border-t border-[var(--m3-outline-variant)]">
-          <h4 class="text-xs font-medium text-[var(--m3-on-surface-variant)] uppercase tracking-wider">Synthesized Result</h4>
+          <div class="flex items-center justify-between">
+            <h4 class="text-xs font-medium text-[var(--m3-on-surface-variant)] uppercase tracking-wider">Synthesized Result</h4>
+            <button
+              id="btn-copy-synthesis"
+              type="button"
+              class="google-btn-outlined px-2.5 py-1 text-xs flex items-center gap-1.5 text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-blue)] hover:border-[var(--google-blue)] transition cursor-pointer"
+              title="Copy synthesis to clipboard"
+            >
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+              <span>Copy Synthesis</span>
+            </button>
+          </div>
           <div id="cross-results-body" class="p-4 rounded-2xl m3-subcard text-xs text-[var(--m3-on-surface)] leading-relaxed whitespace-pre-wrap font-sans"></div>
         </div>
       </div>
 
     </div>
+  </div>
+
+  <!-- Floating Background Query Dock Pill -->
+  <div id="floating-query-dock" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 hidden items-center gap-3 px-4 py-2.5 rounded-full bg-[var(--m3-surface-container-high)] border border-[var(--google-blue)]/50 shadow-2xl animate-m3-enter cursor-pointer hover:border-[var(--google-blue)] hover:shadow-blue-500/20 transition-all backdrop-blur-md">
+    <div class="flex items-center gap-2">
+      <div class="google-quad-dots scale-75">
+        <span class="google-quad-dot"></span>
+        <span class="google-quad-dot"></span>
+        <span class="google-quad-dot"></span>
+        <span class="google-quad-dot"></span>
+      </div>
+      <span class="text-xs font-medium text-[var(--m3-on-surface)] max-w-xs sm:max-w-md truncate" id="floating-query-title">Gemini Notebook is synthesizing in background...</span>
+    </div>
+    <span class="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--google-blue)] bg-[var(--google-blue-container)] px-2.5 py-0.5 rounded-full hover:bg-[var(--google-blue)] hover:text-white transition">
+      <span>Open Chat</span>
+      <i data-lucide="arrow-up-right" class="w-3 h-3"></i>
+    </span>
   </div>
 
   <!-- Toast Notifications Container (Google Snackbar Style) -->

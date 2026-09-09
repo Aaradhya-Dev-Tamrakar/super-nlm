@@ -9,10 +9,15 @@ from backend.models import AccountProfile, Notebook
 
 _lock = asyncio.Lock()
 
+import time
+import logging
+
+logger = logging.getLogger(__name__)
+
 def _atomic_write_json(file_path: Path, data: Any):
     """
     Performs atomic file write on Windows Dev Drive (ReFS) using a temp file + os.replace.
-    Prevents Windows file-locking collisions (ERROR_SHARING_VIOLATION).
+    Prevents Windows file-locking collisions (ERROR_SHARING_VIOLATION) with retry backoff.
     """
     dir_path = file_path.parent
     dir_path.mkdir(parents=True, exist_ok=True)
@@ -20,10 +25,23 @@ def _atomic_write_json(file_path: Path, data: Any):
     try:
         with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
-        os.replace(temp_path, file_path)
+
+        # Retry loop for Windows file-locking collisions
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                os.replace(temp_path, file_path)
+                break
+            except PermissionError:
+                if attempt == max_attempts - 1:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
     except Exception:
         if os.path.exists(temp_path):
-            os.remove(temp_path)
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
         raise
 
 def _load_profiles_sync() -> List[AccountProfile]:
@@ -34,8 +52,12 @@ def _load_profiles_sync() -> List[AccountProfile]:
         with open(PROFILES_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             return [AccountProfile(**p) for p in data]
-    except Exception:
-        return [AccountProfile(**p) for p in DEFAULT_SEED_PROFILES]
+    except Exception as e:
+        logger.error(f"Failed to read profiles from {PROFILES_FILE}: {e}")
+        # If file is empty or corrupted, only then fallback to seed
+        if PROFILES_FILE.stat().st_size == 0:
+            return [AccountProfile(**p) for p in DEFAULT_SEED_PROFILES]
+        raise RuntimeError(f"Could not load profiles from {PROFILES_FILE}: {e}")
 
 def _save_profiles_sync(profiles: List[AccountProfile]):
     _atomic_write_json(PROFILES_FILE, [p.model_dump() for p in profiles])

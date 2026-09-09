@@ -57,6 +57,19 @@ def print_qr_code(url: str):
     except Exception:
         pass
 
+import atexit
+
+def _cleanup_tunnel_proc(p: subprocess.Popen):
+    try:
+        if p.poll() is None:
+            p.terminate()
+            p.wait(timeout=2)
+    except Exception:
+        try:
+            p.kill()
+        except Exception:
+            pass
+
 def start_cloudflare_tunnel(local_port: int, on_url_found: Optional[Callable[[str], None]] = None) -> Optional[subprocess.Popen]:
     """
     Starts an ephemeral Cloudflare Quick Tunnel forwarding to http://127.0.0.1:{local_port}.
@@ -73,18 +86,21 @@ def start_cloudflare_tunnel(local_port: int, on_url_found: Optional[Callable[[st
         "--no-autoupdate"
     ]
 
-    # Windows process flag to avoid popping up an extra window
-    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    extra_kwargs = {}
+    if sys.platform == "win32":
+        extra_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
     try:
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,  # Prevent pipe deadlock by discarding unneeded stdout
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
-            creationflags=creationflags
+            **extra_kwargs
         )
+
+        atexit.register(_cleanup_tunnel_proc, proc)
 
         def _monitor_output():
             url_pattern = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")

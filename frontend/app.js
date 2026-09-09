@@ -9,14 +9,18 @@ let state = {
   selectedNotebooks: new Map(), // key: notebookId, value: { notebookId, profileId, title }
   activeChat: null, // { notebookId, profileId, title }
   chatHistories: new Map(), // key: notebookId, value: array of message objects
+  conversationIds: new Map(), // key: notebookId, value: conversationId
+  activeQueries: new Map(), // key: notebookId, value: { notebookId, profileId, title, question, startTime }
   isLoading: false,
 };
 
 // Initialize Application
 document.addEventListener('DOMContentLoaded', async () => {
   initTheme();
+  initGoogleRipple();
   loadAllChatHistories();
   setupEventListeners();
+  renderAccountPills();
   showSkeletons(true);
   await loadProfiles();
   await loadNotebooks();
@@ -78,26 +82,238 @@ function applyTheme(theme, save = true) {
   if (window.lucide) lucide.createIcons();
 }
 
+function toggleThemeMode() {
+  const isCurrentlyDark = document.documentElement.classList.contains('dark');
+  const targetTheme = isCurrentlyDark ? 'light' : 'dark';
+  applyTheme(targetTheme, true);
+  showToast(`Switched to ${targetTheme === 'dark' ? 'Dark' : 'Light'} mode (shortcut: 0)`, 'info');
+}
+
 function setupEventListeners() {
-  // Global search input
+  // Global search input & pill
   const searchInput = document.getElementById('search-input');
+  const searchClearBtn = document.getElementById('search-clear-btn');
+  const searchPill = document.querySelector('.google-search-pill');
+
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
       state.searchQuery = e.target.value.toLowerCase().trim();
+      if (searchClearBtn) {
+        if (e.target.value.length > 0) {
+          searchClearBtn.classList.remove('hidden');
+        } else {
+          searchClearBtn.classList.add('hidden');
+        }
+      }
       renderNotebooksGrid();
     });
   }
 
-  // Ctrl+K keyboard shortcut
+  if (searchClearBtn && searchInput) {
+    searchClearBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      searchInput.value = '';
+      state.searchQuery = '';
+      searchClearBtn.classList.add('hidden');
+      renderNotebooksGrid();
+      searchInput.focus();
+    });
+  }
+
+  if (searchPill && searchInput) {
+    searchPill.addEventListener('click', (e) => {
+      if (e.target !== searchClearBtn && !searchClearBtn?.contains(e.target)) {
+        searchInput.focus();
+      }
+    });
+  }
+
+  // OS-aware shortcut key text (⌘ K on Apple devices, Ctrl K on others)
+  const shortcutBadge = document.getElementById('search-shortcut-badge');
+  if (shortcutBadge && typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent)) {
+    shortcutBadge.textContent = '⌘ K';
+  }
+
+  // Global Keyboard Shortcuts (Keymaps)
   window.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    const activeEl = document.activeElement;
+    const isInputActive = activeEl && (
+      activeEl.tagName === 'INPUT' ||
+      activeEl.tagName === 'TEXTAREA' ||
+      activeEl.tagName === 'SELECT' ||
+      activeEl.isContentEditable
+    );
+
+    // 1. Modifier combinations (Ctrl / Meta)
+    if (e.ctrlKey || e.metaKey) {
+      if (e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        if (searchInput) {
+          searchInput.focus();
+          searchInput.select();
+        }
+        return;
+      }
+      return;
+    }
+
+    // Ignore when Alt is pressed
+    if (e.altKey) return;
+
+    // 2. Escape: Closes open modal / clears search input / clears selection
+    if (e.key === 'Escape') {
+      const openModalIds = ['modal-shortcuts', 'modal-chat', 'modal-accounts', 'modal-cross'];
+      const openModalId = openModalIds.find(id => isModalOpen(id));
+      if (openModalId) {
+        closeModal(openModalId);
+      } else if (searchInput && document.activeElement === searchInput) {
+        searchInput.value = '';
+        state.searchQuery = '';
+        if (searchClearBtn) searchClearBtn.classList.add('hidden');
+        renderNotebooksGrid();
+        searchInput.blur();
+      } else if (state.selectedNotebooks.size > 0) {
+        clearSelection();
+        showToast('Selection cleared', 'info');
+      }
+      return;
+    }
+
+    // 3. Single key shortcuts: paused while typing in form inputs / textareas
+    if (isInputActive) return;
+
+    // Shortcut '0': Toggle Dark / Light mode (works even when modals are open!)
+    if (e.key === '0') {
+      e.preventDefault();
+      toggleThemeMode();
+      return;
+    }
+
+    // Shortcut '?' or 'Shift+/': Toggle Keyboard Shortcuts modal
+    if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+      e.preventDefault();
+      if (isModalOpen('modal-shortcuts')) {
+        closeModal('modal-shortcuts');
+      } else {
+        openModal('modal-shortcuts');
+      }
+      return;
+    }
+
+    // If an interactive modal is open, don't trigger background navigation or actions
+    const anyModalOpen = ['modal-chat', 'modal-accounts', 'modal-cross', 'modal-shortcuts'].some(id => isModalOpen(id));
+    if (anyModalOpen) return;
+
+    // Shortcut '/': Focus search input
+    if (e.key === '/') {
       e.preventDefault();
       if (searchInput) {
         searchInput.focus();
         searchInput.select();
       }
+      return;
+    }
+
+    // Shortcut 's' or 'r': Sync all notebooks
+    if (e.key.toLowerCase() === 's' || e.key.toLowerCase() === 'r') {
+      e.preventDefault();
+      handleSyncAll();
+      return;
+    }
+
+    // Shortcut 'a' (without Shift): Open Google Accounts Manager
+    if (e.key.toLowerCase() === 'a' && !e.shiftKey) {
+      e.preventDefault();
+      openModal('modal-accounts');
+      renderAccountsModalList();
+      return;
+    }
+
+    // Shortcut 'Shift + A': Toggle Select All visible notebooks
+    if (e.key === 'A' && e.shiftKey) {
+      e.preventDefault();
+      toggleSelectAllVisible();
+      return;
+    }
+
+    // Shortcut 'x' or 'c': Cross-Account Synthesis
+    if (e.key.toLowerCase() === 'x' || e.key.toLowerCase() === 'c') {
+      e.preventDefault();
+      openCrossSynthesisModal();
+      return;
+    }
+
+    // Shortcut '1' to '9': Profile / Account filter switching
+    if (e.key >= '1' && e.key <= '9') {
+      e.preventDefault();
+      if (e.key === '1') {
+        state.activeProfileFilter = 'all';
+        renderAccountPills();
+        renderNotebooksGrid();
+        showToast('Filter: All Accounts (shortcut: 1)', 'info');
+      } else {
+        const profileIndex = parseInt(e.key, 10) - 2;
+        if (state.profiles && state.profiles[profileIndex]) {
+          const profile = state.profiles[profileIndex];
+          state.activeProfileFilter = profile.id;
+          renderAccountPills();
+          renderNotebooksGrid();
+          showToast(`Filter: ${profile.displayName || profile.id} (shortcut: ${e.key})`, 'info');
+        } else {
+          showToast(`No account assigned to shortcut ${e.key}`, 'info');
+        }
+      }
+      return;
     }
   });
+
+  // Dismiss modals on backdrop click
+  ['modal-shortcuts', 'modal-chat', 'modal-accounts', 'modal-cross'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('click', (e) => {
+        if (e.target === el) closeModal(id);
+      });
+    }
+  });
+
+  // Copy Synthesis Button
+  const copySynthBtn = document.getElementById('btn-copy-synthesis');
+  if (copySynthBtn) {
+    copySynthBtn.addEventListener('click', () => {
+      const bodyEl = document.getElementById('cross-results-body');
+      if (!bodyEl) return;
+      const text = bodyEl.innerText;
+      if (!text) return;
+      navigator.clipboard.writeText(text);
+      copySynthBtn.innerHTML = '<i data-lucide="check" class="w-3.5 h-3.5 text-[var(--google-green)]"></i> <span class="text-[var(--google-green)] font-medium">Copied!</span>';
+      if (window.lucide) lucide.createIcons();
+      showToast('Synthesis copied to clipboard', 'success');
+      setTimeout(() => {
+        copySynthBtn.innerHTML = '<i data-lucide="copy" class="w-3.5 h-3.5"></i> <span>Copy Synthesis</span>';
+        if (window.lucide) lucide.createIcons();
+      }, 2000);
+    });
+  }
+
+  // Delegated Copy Assistant Response in Chat
+  const chatThread = document.getElementById('chat-thread');
+  if (chatThread) {
+    chatThread.addEventListener('click', (e) => {
+      const copyBtn = e.target.closest('.btn-copy-response');
+      if (!copyBtn) return;
+      const content = copyBtn.getAttribute('data-content');
+      if (!content) return;
+      navigator.clipboard.writeText(content);
+      copyBtn.innerHTML = '<i data-lucide="check" class="w-3 h-3 text-[var(--google-green)]"></i> <span class="text-[var(--google-green)] font-medium">Copied!</span>';
+      if (window.lucide) lucide.createIcons();
+      showToast('Response copied to clipboard', 'success');
+      setTimeout(() => {
+        copyBtn.innerHTML = '<i data-lucide="copy" class="w-3 h-3"></i> <span>Copy</span>';
+        if (window.lucide) lucide.createIcons();
+      }, 2000);
+    });
+  }
 
   // Sync All button
   const syncBtn = document.getElementById('btn-sync');
@@ -127,6 +343,16 @@ function setupEventListeners() {
   const closeAccountsBtn = document.getElementById('close-modal-accounts');
   if (closeAccountsBtn) closeAccountsBtn.addEventListener('click', () => closeModal('modal-accounts'));
 
+  // Keyboard Shortcuts Modal triggers
+  const shortcutsBtn = document.getElementById('btn-shortcuts-toggle');
+  if (shortcutsBtn) shortcutsBtn.addEventListener('click', () => openModal('modal-shortcuts'));
+  const tipsShortcutsBtn = document.getElementById('btn-tips-shortcuts');
+  if (tipsShortcutsBtn) tipsShortcutsBtn.addEventListener('click', () => openModal('modal-shortcuts'));
+  const closeShortcutsBtn = document.getElementById('close-modal-shortcuts');
+  if (closeShortcutsBtn) closeShortcutsBtn.addEventListener('click', () => closeModal('modal-shortcuts'));
+  const closeShortcutsFooterBtn = document.getElementById('btn-close-shortcuts-footer');
+  if (closeShortcutsFooterBtn) closeShortcutsFooterBtn.addEventListener('click', () => closeModal('modal-shortcuts'));
+
   // Chat Modal close & actions
   const closeChatBtn = document.getElementById('close-modal-chat');
   if (closeChatBtn) closeChatBtn.addEventListener('click', () => closeModal('modal-chat'));
@@ -134,6 +360,21 @@ function setupEventListeners() {
   if (clearChatBtn) clearChatBtn.addEventListener('click', handleClearCurrentChat);
   const chatForm = document.getElementById('form-chat');
   if (chatForm) chatForm.addEventListener('submit', handleChatSubmit);
+  const chatInput = document.getElementById('chat-input');
+  if (chatInput) {
+    chatInput.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (chatForm) {
+          if (typeof chatForm.requestSubmit === 'function') {
+            chatForm.requestSubmit();
+          } else {
+            handleChatSubmit(new Event('submit'));
+          }
+        }
+      }
+    });
+  }
 
   // Cross Synthesis Modal
   const openCrossBtn = document.getElementById('btn-open-cross-modal');
@@ -146,6 +387,15 @@ function setupEventListeners() {
   if (clearSelectionBtn) clearSelectionBtn.addEventListener('click', clearSelection);
   const runCrossBtn = document.getElementById('btn-run-cross-synthesis');
   if (runCrossBtn) runCrossBtn.addEventListener('click', handleRunCrossSynthesis);
+  const crossPromptInput = document.getElementById('cross-prompt-input');
+  if (crossPromptInput) {
+    crossPromptInput.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        handleRunCrossSynthesis();
+      }
+    });
+  }
 
   // Add Account Form
   const addAccountForm = document.getElementById('form-add-account');
@@ -205,6 +455,43 @@ function setupEventListeners() {
   });
 }
 
+// ----------------- GLOBAL NETWORK & PROGRESS CONTROLLER -----------------
+let activeLoadingOperations = 0;
+
+function setGlobalLoading(isLoading, label = '') {
+  if (isLoading) {
+    activeLoadingOperations++;
+  } else {
+    activeLoadingOperations = Math.max(0, activeLoadingOperations - 1);
+  }
+
+  const progressBar = document.getElementById('global-progress-bar');
+  if (progressBar) {
+    if (activeLoadingOperations > 0) {
+      progressBar.classList.remove('hidden');
+    } else {
+      progressBar.classList.add('hidden');
+    }
+  }
+}
+
+function setSyncStatus(isSyncing, message = '', submessage = '') {
+  const indicator = document.getElementById('sync-status-indicator');
+  const textEl = document.getElementById('sync-status-text');
+  const subtextEl = document.getElementById('sync-status-subtext');
+  if (!indicator) return;
+
+  if (isSyncing) {
+    if (textEl && message) textEl.textContent = message;
+    if (subtextEl && submessage) subtextEl.textContent = submessage;
+    indicator.classList.remove('hidden');
+    indicator.classList.add('flex');
+  } else {
+    indicator.classList.add('hidden');
+    indicator.classList.remove('flex');
+  }
+}
+
 function showSkeletons(show) {
   const skeletonGrid = document.getElementById('skeleton-grid');
   const notebooksGrid = document.getElementById('notebooks-grid');
@@ -223,6 +510,7 @@ function showSkeletons(show) {
 // ----------------- API CALLS -----------------
 
 async function loadProfiles() {
+  setGlobalLoading(true);
   try {
     const res = await fetch('/api/profiles');
     if (res.ok) {
@@ -247,10 +535,13 @@ async function loadProfiles() {
     }
   } catch (err) {
     console.error('Failed to load profiles:', err);
+  } finally {
+    setGlobalLoading(false);
   }
 }
 
 async function loadNotebooks() {
+  setGlobalLoading(true);
   try {
     const res = await fetch('/api/notebooks');
     if (res.ok) {
@@ -264,14 +555,21 @@ async function loadNotebooks() {
     }
   } catch (err) {
     console.error('Failed to load notebooks:', err);
+  } finally {
+    setGlobalLoading(false);
   }
 }
 
 async function handleSyncAll() {
   const syncBtn = document.getElementById('btn-sync');
   const syncIcon = document.getElementById('sync-icon');
-  if (syncBtn) syncBtn.disabled = true;
-  if (syncIcon) syncIcon.classList.add('animate-spin');
+  if (syncBtn) {
+    syncBtn.disabled = true;
+    syncBtn.innerHTML = '<i data-lucide="refresh-cw" id="sync-icon" class="w-3.5 h-3.5 animate-spin"></i> <span class="hidden sm:inline">Syncing...</span>';
+    if (window.lucide) lucide.createIcons({ root: syncBtn });
+  }
+  setGlobalLoading(true, 'Syncing notebooks across accounts...');
+  setSyncStatus(true, 'Synchronizing notebooks across Google accounts...', 'Fetching manifests, source metadata, and authentication sessions');
   showSkeletons(true);
 
   try {
@@ -298,8 +596,13 @@ async function handleSyncAll() {
     showToast('Sync error: ' + err.message, 'error');
   } finally {
     showSkeletons(false);
-    if (syncBtn) syncBtn.disabled = false;
-    if (syncIcon) syncIcon.classList.remove('animate-spin');
+    setSyncStatus(false);
+    setGlobalLoading(false);
+    if (syncBtn) {
+      syncBtn.disabled = false;
+      syncBtn.innerHTML = '<i data-lucide="refresh-cw" id="sync-icon" class="w-3.5 h-3.5"></i> <span class="hidden sm:inline">Sync All</span>';
+      if (window.lucide) lucide.createIcons({ root: syncBtn });
+    }
   }
 }
 
@@ -308,6 +611,16 @@ async function handleSyncAll() {
 function renderAccountPills() {
   const container = document.getElementById('account-pills-container');
   if (!container) return;
+
+  if (state.profiles.length === 0) {
+    container.innerHTML = `
+      <div class="h-7 w-28 rounded-full google-skeleton shrink-0"></div>
+      <div class="h-7 w-24 rounded-full google-skeleton shrink-0"></div>
+      <div class="h-7 w-20 rounded-full google-skeleton shrink-0"></div>
+    `;
+    return;
+  }
+
   container.innerHTML = '';
 
   // "All Accounts" pill
@@ -348,7 +661,7 @@ function renderAccountPills() {
   // Add Account shortcut button
   const addBtn = document.createElement('button');
   addBtn.className = 'google-btn-outlined flex items-center gap-1.5 px-3 py-1.5 text-xs transition whitespace-nowrap';
-  addBtn.innerHTML = '<i data-lucide="plus" class="w-3.5 h-3.5 text-[#8ab4f8]"></i> <span>Add Account</span>';
+  addBtn.innerHTML = '<i data-lucide="plus" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i> <span>Add Account</span>';
   addBtn.addEventListener('click', () => {
     openModal('modal-accounts');
     renderAccountsModalList();
@@ -384,6 +697,41 @@ function createPill({ id, label, count, color, isActive, isPro }) {
   return btn;
 }
 
+function getVisibleNotebooks() {
+  return state.notebooks.filter(n => {
+    const matchesAccount = state.activeProfileFilter === 'all' || n.profileId === state.activeProfileFilter;
+    const matchesSearch = !state.searchQuery || 
+      (n.title && n.title.toLowerCase().includes(state.searchQuery)) ||
+      (n.profileName && n.profileName.toLowerCase().includes(state.searchQuery)) ||
+      (n.profileEmail && n.profileEmail.toLowerCase().includes(state.searchQuery));
+    return matchesAccount && matchesSearch;
+  });
+}
+
+function toggleSelectAllVisible() {
+  const visible = getVisibleNotebooks();
+  if (!visible.length) {
+    showToast('No notebooks visible to select', 'info');
+    return;
+  }
+  const allSelected = visible.every(n => state.selectedNotebooks.has(n.id));
+  if (allSelected) {
+    visible.forEach(n => state.selectedNotebooks.delete(n.id));
+    showToast(`Deselected ${visible.length} notebook${visible.length > 1 ? 's' : ''}`, 'info');
+  } else {
+    visible.forEach(n => {
+      state.selectedNotebooks.set(n.id, {
+        notebookId: n.id,
+        profileId: n.profileId,
+        title: n.title || 'Untitled Notebook'
+      });
+    });
+    showToast(`Selected ${visible.length} notebook${visible.length > 1 ? 's' : ''}`, 'info');
+  }
+  updateSelectionBanner();
+  renderNotebooksGrid();
+}
+
 function renderNotebooksGrid() {
   const grid = document.getElementById('notebooks-grid');
   const emptyState = document.getElementById('empty-state');
@@ -393,14 +741,7 @@ function renderNotebooksGrid() {
   if (!grid || !emptyState) return;
 
   // Filter notebooks
-  let filtered = state.notebooks.filter(n => {
-    const matchesAccount = state.activeProfileFilter === 'all' || n.profileId === state.activeProfileFilter;
-    const matchesSearch = !state.searchQuery || 
-      (n.title && n.title.toLowerCase().includes(state.searchQuery)) ||
-      (n.profileName && n.profileName.toLowerCase().includes(state.searchQuery)) ||
-      (n.profileEmail && n.profileEmail.toLowerCase().includes(state.searchQuery));
-    return matchesAccount && matchesSearch;
-  });
+  let filtered = getVisibleNotebooks();
 
   if (visibleCountLabel) visibleCountLabel.textContent = filtered.length;
   if (filterLabel) {
@@ -465,7 +806,7 @@ function renderNotebooksGrid() {
         <!-- Notebook Title & Meta -->
         <div class="mb-4 flex-1">
           <h3 class="text-[15px] font-medium text-[var(--m3-on-surface)] group-hover:text-[var(--google-blue)] transition-colors line-clamp-2 leading-snug tracking-normal">
-            ${escapeHtml(notebook.title)}
+            ${highlightMatch(notebook.title, state.searchQuery)}
           </h3>
           <div class="flex items-center gap-3 mt-2 text-xs text-[var(--m3-on-surface-subtle)]">
             <span class="flex items-center gap-1.5">
@@ -484,19 +825,32 @@ function renderNotebooksGrid() {
         <div class="flex items-center justify-between pt-3 border-t border-[var(--m3-outline-variant)] gap-2">
           <!-- Query Notebook Button -->
           <button
-            onclick="openChatModal('${notebook.id}', '${notebook.profileId}', '${escapeHtml(notebook.title)}')"
-            class="google-btn-tonal flex items-center gap-1.5 px-3.5 py-1.5 text-xs shadow-sm"
+            type="button"
+            data-id="${notebook.id}"
+            data-profile="${notebook.profileId}"
+            data-title="${escapeHtml(notebook.title)}"
+            class="btn-query-notebook google-btn-tonal flex items-center gap-1.5 px-3.5 py-1.5 text-xs shadow-sm cursor-pointer ${state.activeQueries.has(notebook.id) ? 'border-[var(--google-blue)]/50 bg-[var(--google-blue-container)]/30' : ''}"
           >
-            <i data-lucide="message-square" class="w-3.5 h-3.5"></i>
-            <span>Query</span>
+            ${state.activeQueries.has(notebook.id) ? `
+              <div class="google-quad-dots scale-75 pointer-events-none">
+                <span class="google-quad-dot"></span>
+                <span class="google-quad-dot"></span>
+                <span class="google-quad-dot"></span>
+                <span class="google-quad-dot"></span>
+              </div>
+              <span class="pointer-events-none text-[var(--google-blue)] font-medium">Synthesizing...</span>
+            ` : `
+              <i data-lucide="message-square" class="w-3.5 h-3.5 pointer-events-none"></i>
+              <span class="pointer-events-none">Query</span>
+            `}
           </button>
 
-          <!-- Deep Link to NotebookLM Web -->
+          <!-- Deep Link to Gemini Notebook Web -->
           <a
             href="https://notebooklm.google.com/notebook/${notebook.id}"
             target="_blank"
             rel="noopener noreferrer"
-            title="Open in official NotebookLM web interface"
+            title="Open in official Gemini Notebook web interface"
             class="google-btn-outlined flex items-center gap-1.5 text-xs text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] py-1 px-2.5"
           >
             <span>Open Web</span>
@@ -508,18 +862,51 @@ function renderNotebooksGrid() {
     `;
   }).join('');
 
+  // Wire up Query button listeners safely
+  grid.querySelectorAll('.btn-query-notebook').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const target = e.currentTarget;
+      const id = target.getAttribute('data-id');
+      const profile = target.getAttribute('data-profile');
+      const title = target.getAttribute('data-title');
+      openChatModal(id, profile, title);
+    });
+  });
+
   // Wire up checkbox listeners
   grid.querySelectorAll('.notebook-select-checkbox').forEach(cb => {
     cb.addEventListener('change', (e) => {
       const id = e.target.getAttribute('data-id');
       const profile = e.target.getAttribute('data-profile');
       const title = e.target.getAttribute('data-title');
+      const card = e.target.closest('.m3-card');
       if (e.target.checked) {
         state.selectedNotebooks.set(id, { notebookId: id, profileId: profile, title: title });
+        if (card) card.classList.add('selected');
       } else {
         state.selectedNotebooks.delete(id);
+        if (card) card.classList.remove('selected');
       }
       updateSelectionBanner();
+    });
+  });
+
+  // Card click to toggle selection & double-click to query (Google Drive / Photos fluid pattern)
+  grid.querySelectorAll('.m3-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('button, a, input, label')) return;
+      const cb = card.querySelector('.notebook-select-checkbox');
+      if (cb) {
+        cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event('change'));
+      }
+    });
+
+    card.addEventListener('dblclick', (e) => {
+      if (e.target.closest('button, a, input, label')) return;
+      const qBtn = card.querySelector('.btn-query-notebook');
+      if (qBtn) qBtn.click();
     });
   });
 
@@ -553,6 +940,32 @@ function renderAccountsModalList() {
   const container = document.getElementById('accounts-list');
   if (!container) return;
   
+  if (state.profiles.length === 0) {
+    container.innerHTML = `
+      <div class="p-4 rounded-2xl m3-subcard space-y-2.5">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-4 h-4 rounded-full google-skeleton shrink-0"></div>
+            <div class="h-3.5 w-32 rounded google-skeleton"></div>
+          </div>
+          <div class="h-6 w-16 rounded-full google-skeleton"></div>
+        </div>
+        <div class="h-2.5 w-48 rounded google-skeleton ml-7"></div>
+      </div>
+      <div class="p-4 rounded-2xl m3-subcard space-y-2.5">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-4 h-4 rounded-full google-skeleton shrink-0"></div>
+            <div class="h-3.5 w-28 rounded google-skeleton"></div>
+          </div>
+          <div class="h-6 w-16 rounded-full google-skeleton"></div>
+        </div>
+        <div class="h-2.5 w-40 rounded google-skeleton ml-7"></div>
+      </div>
+    `;
+    return;
+  }
+
   container.innerHTML = state.profiles.map(p => {
     const isPro = p.isDefaultPro;
     return `
@@ -576,20 +989,24 @@ function renderAccountsModalList() {
         <div class="flex items-center gap-2">
           <!-- Re-login button -->
           <button
-            onclick="handleTriggerLogin('${p.id}')"
+            type="button"
+            data-action="login"
+            data-profile-id="${p.id}"
             title="Authenticate with Google Chrome"
-            class="google-btn-outlined px-3 py-1 text-xs font-medium"
+            class="btn-account-login google-btn-outlined px-3 py-1 text-xs font-medium cursor-pointer"
           >
-            <i data-lucide="log-in" class="w-3.5 h-3.5 inline text-[var(--m3-on-surface-subtle)]"></i>
-            <span>Login</span>
+            <i data-lucide="log-in" class="w-3.5 h-3.5 inline text-[var(--m3-on-surface-subtle)] pointer-events-none"></i>
+            <span class="pointer-events-none">Login</span>
           </button>
 
           <!-- Toggle Pro button -->
           ${!isPro ? `
             <button
-              onclick="handleSetPro('${p.id}')"
+              type="button"
+              data-action="set-pro"
+              data-profile-id="${p.id}"
               title="Set this account as the primary Pro AI synthesis engine"
-              class="google-btn-tonal px-3 py-1 text-xs text-[var(--google-yellow)] bg-[var(--google-yellow-container)]/40 hover:bg-[var(--google-yellow-container)]/70 border border-[var(--google-yellow)]/30"
+              class="btn-account-set-pro google-btn-tonal px-3 py-1 text-xs text-[var(--google-yellow)] bg-[var(--google-yellow-container)]/40 hover:bg-[var(--google-yellow-container)]/70 border border-[var(--google-yellow)]/30 cursor-pointer"
             >
               Make Pro
             </button>
@@ -597,16 +1014,30 @@ function renderAccountsModalList() {
 
           <!-- Delete account button -->
           <button
-            onclick="handleDeleteAccount('${p.id}')"
+            type="button"
+            data-action="delete"
+            data-profile-id="${p.id}"
             title="Delete account profile"
-            class="p-2 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-red)] hover:bg-[var(--google-red-container)]/30 transition"
+            class="btn-account-delete p-2 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-red)] hover:bg-[var(--google-red-container)]/30 transition cursor-pointer"
           >
-            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
           </button>
         </div>
       </div>
     `;
   }).join('');
+
+  // Attach event listeners safely
+  container.querySelectorAll('.btn-account-login').forEach(btn => {
+    btn.addEventListener('click', () => handleTriggerLogin(btn.getAttribute('data-profile-id')));
+  });
+  container.querySelectorAll('.btn-account-set-pro').forEach(btn => {
+    btn.addEventListener('click', () => handleSetPro(btn.getAttribute('data-profile-id')));
+  });
+  container.querySelectorAll('.btn-account-delete').forEach(btn => {
+    btn.addEventListener('click', () => handleDeleteAccount(btn.getAttribute('data-profile-id')));
+  });
+
   if (window.lucide) lucide.createIcons();
 }
 
@@ -617,6 +1048,15 @@ async function handleAddAccountSubmit(e) {
   const tier = document.getElementById('select-account-tier').value;
   const color = document.getElementById('input-account-color').value;
   const launchLogin = document.getElementById('check-launch-login').checked;
+
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  const originalSubmitHtml = submitBtn ? submitBtn.innerHTML : '';
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i><span>Connecting Account...</span>';
+    if (window.lucide) lucide.createIcons({ root: submitBtn });
+  }
+  setGlobalLoading(true);
 
   try {
     const res = await fetch(`/api/profiles?launch_login=${launchLogin}`, {
@@ -642,10 +1082,26 @@ async function handleAddAccountSubmit(e) {
     }
   } catch (err) {
     showToast('Error: ' + err.message, 'error');
+  } finally {
+    setGlobalLoading(false);
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = originalSubmitHtml;
+      if (window.lucide) lucide.createIcons({ root: submitBtn });
+    }
   }
 }
 
 async function handleTriggerLogin(profileId) {
+  const btn = document.querySelector(`.btn-account-login[data-profile-id="${profileId}"]`);
+  const originalHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin pointer-events-none"></i><span class="pointer-events-none">Launching...</span>';
+    if (window.lucide) lucide.createIcons({ root: btn });
+  }
+  setGlobalLoading(true);
+
   try {
     const res = await fetch(`/api/profiles/${profileId}/login`, { method: 'POST' });
     if (res.ok) {
@@ -653,10 +1109,26 @@ async function handleTriggerLogin(profileId) {
     }
   } catch (err) {
     showToast('Failed to launch login: ' + err.message, 'error');
+  } finally {
+    setGlobalLoading(false);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      if (window.lucide) lucide.createIcons({ root: btn });
+    }
   }
 }
 
 async function handleSetPro(profileId) {
+  const btn = document.querySelector(`.btn-account-set-pro[data-profile-id="${profileId}"]`);
+  const originalHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin pointer-events-none"></i><span class="pointer-events-none">Setting Pro...</span>';
+    if (window.lucide) lucide.createIcons({ root: btn });
+  }
+  setGlobalLoading(true);
+
   try {
     const res = await fetch(`/api/profiles/${profileId}`, {
       method: 'PUT',
@@ -672,6 +1144,13 @@ async function handleSetPro(profileId) {
     }
   } catch (err) {
     showToast('Error: ' + err.message, 'error');
+  } finally {
+    setGlobalLoading(false);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      if (window.lucide) lucide.createIcons({ root: btn });
+    }
   }
 }
 
@@ -801,13 +1280,199 @@ function renderChatMessageBubble(msg) {
           ${fallbackBadge}
           <div class="nlm-markdown">${formattedAnswer}</div>
           ${citationsHtml}
+
+          <div class="flex items-center justify-between mt-3 pt-2.5 border-t border-[var(--m3-outline-variant)]/60 text-[11px] text-[var(--m3-on-surface-subtle)]">
+            <span class="flex items-center gap-1.5 font-sans">
+              <span class="w-1.5 h-1.5 rounded-full bg-[var(--google-green)]"></span>
+              <span>Gemini Notebook Verified</span>
+            </span>
+            <button
+              type="button"
+              class="btn-copy-response google-btn-outlined px-2.5 py-1 text-[11px] flex items-center gap-1 text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-blue)] hover:border-[var(--google-blue)] transition cursor-pointer"
+              title="Copy response to clipboard"
+              data-content="${escapeHtml(msg.content)}"
+            >
+              <i data-lucide="copy" class="w-3 h-3"></i>
+              <span>Copy</span>
+            </button>
+          </div>
         </div>
       </div>
     `;
   }
 }
 
-// ----------------- CHAT MODAL -----------------
+// ----------------- CHAT MODAL & BACKGROUND QUERY ENGINE -----------------
+
+const activeThinkingTimers = new Map(); // key: notebookId, value: { intervalId, startTime }
+
+function startThinkingTimer(notebookId, queryStartTime = Date.now()) {
+  stopThinkingTimer(notebookId);
+
+  const update = () => {
+    const elapsedSec = ((Date.now() - queryStartTime) / 1000).toFixed(1);
+    const timerEl = document.getElementById(`loader-timer-${notebookId}`);
+    if (timerEl) {
+      timerEl.textContent = `${elapsedSec}s`;
+    }
+
+    const phaseEl = document.getElementById(`loader-phase-text-${notebookId}`);
+    if (phaseEl) {
+      const sec = parseFloat(elapsedSec);
+      if (sec < 2.5) {
+        phaseEl.textContent = 'Connecting to notebook & indexing sources...';
+      } else if (sec < 5.5) {
+        phaseEl.textContent = 'Searching source passages & extracting citations...';
+      } else {
+        phaseEl.textContent = 'Synthesizing answer with Gemini...';
+      }
+    }
+  };
+
+  update();
+  const intervalId = setInterval(update, 150);
+  activeThinkingTimers.set(notebookId, { intervalId, startTime: queryStartTime });
+}
+
+function stopThinkingTimer(notebookId) {
+  if (activeThinkingTimers.has(notebookId)) {
+    const { intervalId } = activeThinkingTimers.get(notebookId);
+    clearInterval(intervalId);
+    activeThinkingTimers.delete(notebookId);
+  }
+}
+
+function renderLoaderBubble(notebookId) {
+  return `
+    <div id="loader-${notebookId}" class="flex items-start gap-2.5 animate-m3-enter chat-loader-bubble">
+      <div class="w-8 h-8 rounded-full bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] flex items-center justify-center text-[var(--google-blue)] shadow-sm shrink-0">
+        <i data-lucide="sparkles" class="w-3.5 h-3.5 animate-pulse"></i>
+      </div>
+      <div class="flex-1 p-4 rounded-2xl m3-subcard space-y-3">
+        <div class="flex items-center justify-between text-xs text-[var(--m3-on-surface-subtle)] font-medium">
+          <div class="flex items-center gap-2.5">
+            <div class="google-quad-dots">
+              <span class="google-quad-dot"></span>
+              <span class="google-quad-dot"></span>
+              <span class="google-quad-dot"></span>
+              <span class="google-quad-dot"></span>
+            </div>
+            <span id="loader-phase-text-${notebookId}" class="transition-all duration-300 font-sans">
+              Gemini Notebook is synthesizing...
+            </span>
+          </div>
+          <span id="loader-timer-${notebookId}" class="text-[11px] font-mono text-[var(--google-blue)] bg-[var(--google-blue-container)]/50 px-2 py-0.5 rounded-full font-medium">
+            0.0s
+          </span>
+        </div>
+        
+        <div class="space-y-2 pt-1">
+          <div class="h-2.5 w-[92%] rounded-full google-skeleton"></div>
+          <div class="h-2.5 w-[84%] rounded-full google-skeleton"></div>
+          <div class="h-2.5 w-[60%] rounded-full google-skeleton"></div>
+        </div>
+
+        <div class="flex items-center gap-2 pt-2 border-t border-[var(--m3-outline-variant)]/40">
+          <div class="h-4 w-24 rounded-full google-skeleton"></div>
+          <div class="h-4 w-28 rounded-full google-skeleton"></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function appendChatMessageToThread(msg) {
+  const thread = document.getElementById('chat-thread');
+  if (!thread) return;
+  const temp = document.createElement('div');
+  temp.innerHTML = renderChatMessageBubble(msg).trim();
+  const bubble = temp.firstElementChild;
+  if (bubble) {
+    thread.appendChild(bubble);
+    if (window.lucide) lucide.createIcons({ root: bubble });
+    thread.scrollTop = thread.scrollHeight;
+  }
+}
+
+function getConversationIdForNotebook(notebookId) {
+  if (state.conversationIds.has(notebookId)) {
+    return state.conversationIds.get(notebookId);
+  }
+  const history = state.chatHistories.get(notebookId) || [];
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].conversationId) {
+      state.conversationIds.set(notebookId, history[i].conversationId);
+      return history[i].conversationId;
+    }
+  }
+  return null;
+}
+
+function updateBackgroundQueryStatus() {
+  const dock = document.getElementById('floating-query-dock');
+  const titleEl = document.getElementById('floating-query-title');
+  const chatModalOpen = isModalOpen('modal-chat');
+
+  if (state.activeQueries.size === 0) {
+    if (dock) {
+      dock.classList.add('hidden');
+      dock.classList.remove('flex');
+    }
+    updateAllNotebookCardButtons();
+    return;
+  }
+
+  // Active queries are currently synthesizing!
+  const firstActive = state.activeQueries.values().next().value;
+  // If modal-chat is open and focused on the only active notebook, hide floating dock to prevent visual duplication
+  if (chatModalOpen && state.activeChat && state.activeQueries.has(state.activeChat.notebookId) && state.activeQueries.size === 1) {
+    if (dock) {
+      dock.classList.add('hidden');
+      dock.classList.remove('flex');
+    }
+  } else if (dock && titleEl && firstActive) {
+    const count = state.activeQueries.size;
+    if (count === 1) {
+      titleEl.textContent = `Synthesizing answer for "${firstActive.title}"...`;
+    } else {
+      titleEl.textContent = `Synthesizing ${count} answers in background...`;
+    }
+    dock.classList.remove('hidden');
+    dock.classList.add('flex');
+    dock.onclick = () => {
+      openChatModal(firstActive.notebookId, firstActive.profileId, firstActive.title);
+    };
+    if (window.lucide) lucide.createIcons({ root: dock });
+  }
+
+  updateAllNotebookCardButtons();
+}
+
+function updateAllNotebookCardButtons() {
+  document.querySelectorAll('.btn-query-notebook').forEach(btn => {
+    const id = btn.getAttribute('data-id');
+    const isSynthesizing = state.activeQueries.has(id);
+    if (isSynthesizing) {
+      btn.innerHTML = `
+        <div class="google-quad-dots scale-75 pointer-events-none">
+          <span class="google-quad-dot"></span>
+          <span class="google-quad-dot"></span>
+          <span class="google-quad-dot"></span>
+          <span class="google-quad-dot"></span>
+        </div>
+        <span class="pointer-events-none text-[var(--google-blue)] font-medium">Synthesizing...</span>
+      `;
+      btn.classList.add('border-[var(--google-blue)]/50', 'bg-[var(--google-blue-container)]/30');
+    } else {
+      btn.innerHTML = `
+        <i data-lucide="message-square" class="w-3.5 h-3.5 pointer-events-none"></i>
+        <span class="pointer-events-none">Query</span>
+      `;
+      btn.classList.remove('border-[var(--google-blue)]/50', 'bg-[var(--google-blue-container)]/30');
+    }
+  });
+  if (window.lucide) lucide.createIcons();
+}
 
 window.openChatModal = function(notebookId, profileId, title) {
   state.activeChat = { notebookId, profileId, title };
@@ -815,6 +1480,8 @@ window.openChatModal = function(notebookId, profileId, title) {
   document.getElementById('chat-modal-subtitle').textContent = `Account: ${profileId}`;
   
   const thread = document.getElementById('chat-thread');
+  const chatInput = document.getElementById('chat-input');
+  const sendBtn = document.getElementById('btn-chat-send');
   
   // Introductory system card
   const introCard = `
@@ -826,18 +1493,46 @@ window.openChatModal = function(notebookId, profileId, title) {
 
   // Restore existing history if present
   const history = state.chatHistories.get(notebookId) || [];
+  let contentHtml = introCard;
   if (history.length > 0) {
-    const renderedMessages = history.map(msg => renderChatMessageBubble(msg)).join('');
-    thread.innerHTML = introCard + renderedMessages;
+    contentHtml += history.map(msg => renderChatMessageBubble(msg)).join('');
+  }
+
+  // If this notebook is currently synthesizing in background, restore/show synthesizing skeleton loader!
+  const isQueryActive = state.activeQueries.has(notebookId);
+  if (isQueryActive) {
+    contentHtml += renderLoaderBubble(notebookId);
+    const activeQuery = state.activeQueries.get(notebookId);
+    startThinkingTimer(notebookId, activeQuery ? activeQuery.startTime : Date.now());
+  }
+
+  thread.innerHTML = contentHtml;
+
+  if (isQueryActive) {
+    if (chatInput) {
+      chatInput.disabled = true;
+      chatInput.placeholder = "Gemini Notebook is thinking & synthesizing...";
+    }
+    if (sendBtn) {
+      sendBtn.disabled = true;
+      sendBtn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i><span>Synthesizing</span>';
+    }
   } else {
-    thread.innerHTML = introCard;
+    if (chatInput) {
+      chatInput.disabled = false;
+      chatInput.placeholder = "Ask a question about this notebook's sources...";
+    }
+    if (sendBtn) {
+      sendBtn.disabled = false;
+      sendBtn.innerHTML = '<span>Ask</span><i data-lucide="send" class="w-3.5 h-3.5"></i>';
+    }
   }
 
   openModal('modal-chat');
+  updateBackgroundQueryStatus();
   if (window.lucide) lucide.createIcons();
   thread.scrollTop = thread.scrollHeight;
-  const chatInput = document.getElementById('chat-input');
-  if (chatInput) chatInput.focus();
+  if (chatInput && !isQueryActive) chatInput.focus();
 };
 
 function handleClearCurrentChat() {
@@ -846,7 +1541,14 @@ function handleClearCurrentChat() {
   const title = state.activeChat.title;
   const profileId = state.activeChat.profileId;
 
+  if (state.activeQueries.has(notebookId)) {
+    showToast('Cannot clear chat while an answer is actively being synthesized.', 'info');
+    return;
+  }
+
+  stopThinkingTimer(notebookId);
   clearNotebookChatHistory(notebookId);
+  state.conversationIds.delete(notebookId);
 
   const thread = document.getElementById('chat-thread');
   thread.innerHTML = `
@@ -863,12 +1565,21 @@ async function handleChatSubmit(e) {
   e.preventDefault();
   if (!state.activeChat) return;
 
+  const notebookId = state.activeChat.notebookId;
+  const profileId = state.activeChat.profileId;
+  const title = state.activeChat.title;
+
+  if (state.activeQueries.has(notebookId)) {
+    showToast('Please wait, an answer is already being synthesized for this notebook.', 'info');
+    return;
+  }
+
   const input = document.getElementById('chat-input');
-  const question = input.value.trim();
+  const question = input ? input.value.trim() : '';
   if (!question) return;
 
   const thread = document.getElementById('chat-thread');
-  const notebookId = state.activeChat.notebookId;
+  const sendBtn = document.getElementById('btn-chat-send');
 
   // Retrieve or initialize history for this notebook
   let history = state.chatHistories.get(notebookId);
@@ -877,7 +1588,7 @@ async function handleChatSubmit(e) {
     state.chatHistories.set(notebookId, history);
   }
 
-  // Push and render user prompt
+  // Push user message
   const userMsg = {
     role: 'user',
     content: question,
@@ -886,51 +1597,82 @@ async function handleChatSubmit(e) {
   history.push(userMsg);
   saveNotebookChatHistory(notebookId);
 
-  thread.innerHTML += renderChatMessageBubble(userMsg);
+  // Append user message to thread
+  appendChatMessageToThread(userMsg);
 
-  // Append Google skeleton bubble
-  const loaderId = 'loader-' + Date.now();
-  thread.innerHTML += `
-    <div id="${loaderId}" class="flex items-start gap-2.5 animate-m3-enter">
-      <div class="w-8 h-8 rounded-full bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] flex items-center justify-center text-[var(--google-blue)] shadow-sm shrink-0">
-        <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
-      </div>
-      <div class="flex-1 p-4 rounded-2xl m3-subcard space-y-2">
-        <div class="flex items-center gap-2 text-xs text-[var(--m3-on-surface-subtle)]">
-          <span class="w-2 h-2 rounded-full bg-[var(--google-blue)] animate-ping"></span>
-          <span>Google AI is synthesizing sources...</span>
-        </div>
-        <div class="h-3 w-3/4 rounded-full google-skeleton"></div>
-        <div class="h-3 w-1/2 rounded-full google-skeleton"></div>
-      </div>
-    </div>
-  `;
-  if (window.lucide) lucide.createIcons();
-  thread.scrollTop = thread.scrollHeight;
-  input.value = '';
+  // Append Google skeleton loader bubble
+  const loaderEl = document.createElement('div');
+  loaderEl.innerHTML = renderLoaderBubble(notebookId).trim();
+  const loaderNode = loaderEl.firstElementChild;
+  if (loaderNode && thread) {
+    thread.appendChild(loaderNode);
+    if (window.lucide) lucide.createIcons({ root: loaderNode });
+    thread.scrollTop = thread.scrollHeight;
+  }
+
+  // Register active background query & start live thinking timer
+  const queryStartTime = Date.now();
+  state.activeQueries.set(notebookId, {
+    notebookId,
+    profileId,
+    title,
+    question,
+    startTime: queryStartTime
+  });
+  startThinkingTimer(notebookId, queryStartTime);
+  setGlobalLoading(true);
+
+  // Lock input and button in modal
+  if (input) {
+    input.value = '';
+    input.disabled = true;
+    input.placeholder = "Gemini Notebook is thinking & synthesizing...";
+  }
+  if (sendBtn) {
+    sendBtn.disabled = true;
+    sendBtn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i><span>Synthesizing</span>';
+    if (window.lucide) lucide.createIcons({ root: sendBtn });
+  }
+
+  updateBackgroundQueryStatus();
+
+  // Multi-turn conversation ID
+  const conversationId = getConversationIdForNotebook(notebookId);
 
   try {
     const res = await fetch('/api/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        notebookId: state.activeChat.notebookId,
-        profileId: state.activeChat.profileId,
-        question: question
+        notebookId: notebookId,
+        profileId: profileId,
+        question: question,
+        conversationId: conversationId || null
       })
     });
 
-    const loader = document.getElementById(loaderId);
-    if (loader) loader.remove();
+    state.activeQueries.delete(notebookId);
+    updateBackgroundQueryStatus();
 
     if (res.ok) {
       const data = await res.json();
+
+      if (!data.success) {
+        const errMsg = data.error || 'Query failed or timed out. Please check your login credentials.';
+        handleQueryFailure(notebookId, profileId, title, errMsg);
+        return;
+      }
+
+      if (data.conversationId) {
+        state.conversationIds.set(notebookId, data.conversationId);
+      }
+
       const answer = data.answer || 'No response returned.';
-      
       const assistantMsg = {
         role: 'assistant',
         content: answer,
         citations: data.citations || [],
+        conversationId: data.conversationId || conversationId,
         handledByProFallback: !!data.handledByProFallback,
         fallbackReason: data.fallbackReason || '',
         timestamp: Date.now()
@@ -938,29 +1680,92 @@ async function handleChatSubmit(e) {
       history.push(assistantMsg);
       saveNotebookChatHistory(notebookId);
 
-      thread.innerHTML += renderChatMessageBubble(assistantMsg);
+      handleQuerySuccess(notebookId, profileId, title, assistantMsg);
     } else {
-      const err = await res.json();
-      thread.innerHTML += `
-        <div class="p-3.5 rounded-2xl bg-[var(--google-red-container)]/30 border border-[var(--google-red)]/30 text-[var(--google-red)] text-xs animate-m3-enter flex items-center gap-2">
-          <i data-lucide="alert-circle" class="w-4 h-4 shrink-0"></i>
-          <span>Query failed: ${escapeHtml(err.detail || 'Error running query')}</span>
-        </div>
-      `;
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      handleQueryFailure(notebookId, profileId, title, err.detail || 'Error running query');
     }
   } catch (err) {
-    const loader = document.getElementById(loaderId);
-    if (loader) loader.remove();
-    thread.innerHTML += `
-      <div class="p-3.5 rounded-2xl bg-[var(--google-red-container)]/30 border border-[var(--google-red)]/30 text-[var(--google-red)] text-xs animate-m3-enter flex items-center gap-2">
-        <i data-lucide="wifi-off" class="w-4 h-4 shrink-0"></i>
-        <span>Network Error: ${escapeHtml(err.message)}</span>
-      </div>
-    `;
+    state.activeQueries.delete(notebookId);
+    updateBackgroundQueryStatus();
+    handleQueryFailure(notebookId, profileId, title, `Network error: ${err.message}`);
   }
+}
 
-  if (window.lucide) lucide.createIcons();
-  thread.scrollTop = thread.scrollHeight;
+function handleQuerySuccess(notebookId, profileId, title, assistantMsg) {
+  stopThinkingTimer(notebookId);
+  setGlobalLoading(false);
+
+  const isCurrentlyOpenForThisNotebook =
+    isModalOpen('modal-chat') &&
+    state.activeChat &&
+    state.activeChat.notebookId === notebookId;
+
+  if (isCurrentlyOpenForThisNotebook) {
+    const loader = document.getElementById(`loader-${notebookId}`);
+    if (loader) loader.remove();
+
+    appendChatMessageToThread(assistantMsg);
+    resetChatInputState();
+  } else {
+    showToast(`Answer ready for "${title}"`, 'success', {
+      label: 'View Answer',
+      onClick: () => openChatModal(notebookId, profileId, title)
+    });
+  }
+}
+
+function handleQueryFailure(notebookId, profileId, title, errorMsg) {
+  stopThinkingTimer(notebookId);
+  setGlobalLoading(false);
+
+  const isCurrentlyOpenForThisNotebook =
+    isModalOpen('modal-chat') &&
+    state.activeChat &&
+    state.activeChat.notebookId === notebookId;
+    isModalOpen('modal-chat') &&
+    state.activeChat &&
+    state.activeChat.notebookId === notebookId;
+
+  if (isCurrentlyOpenForThisNotebook) {
+    const loader = document.getElementById(`loader-${notebookId}`);
+    if (loader) loader.remove();
+
+    const thread = document.getElementById('chat-thread');
+    if (thread) {
+      const errEl = document.createElement('div');
+      errEl.className = 'p-3.5 rounded-2xl bg-[var(--google-red-container)]/30 border border-[var(--google-red)]/30 text-[var(--google-red)] text-xs animate-m3-enter flex items-center gap-2';
+      errEl.innerHTML = `
+        <i data-lucide="alert-circle" class="w-4 h-4 shrink-0"></i>
+        <span>Query failed: ${escapeHtml(errorMsg)}</span>
+      `;
+      thread.appendChild(errEl);
+      if (window.lucide) lucide.createIcons({ root: errEl });
+      thread.scrollTop = thread.scrollHeight;
+    }
+
+    resetChatInputState();
+  } else {
+    showToast(`Query failed for "${title}": ${errorMsg}`, 'error', {
+      label: 'Open Chat',
+      onClick: () => openChatModal(notebookId, profileId, title)
+    });
+  }
+}
+
+function resetChatInputState() {
+  const input = document.getElementById('chat-input');
+  const sendBtn = document.getElementById('btn-chat-send');
+  if (input) {
+    input.disabled = false;
+    input.placeholder = "Ask a question about this notebook's sources...";
+    input.focus();
+  }
+  if (sendBtn) {
+    sendBtn.disabled = false;
+    sendBtn.innerHTML = '<span>Ask</span><i data-lucide="send" class="w-3.5 h-3.5"></i>';
+    if (window.lucide) lucide.createIcons({ root: sendBtn });
+  }
 }
 
 // ----------------- CROSS-ACCOUNT SYNTHESIS -----------------
@@ -982,6 +1787,8 @@ function openCrossSynthesisModal() {
     </span>
   `).join('');
 
+  const loadingState = document.getElementById('cross-loading-state');
+  if (loadingState) loadingState.classList.add('hidden');
   document.getElementById('cross-results-container').classList.add('hidden');
   document.getElementById('cross-results-body').textContent = '';
   openModal('modal-cross');
@@ -998,10 +1805,59 @@ async function handleRunCrossSynthesis() {
   const btn = document.getElementById('btn-run-cross-synthesis');
   btn.disabled = true;
   btn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> <span>Synthesizing across accounts...</span>';
-  if (window.lucide) lucide.createIcons();
+  if (window.lucide) lucide.createIcons({ root: btn });
 
+  const loadingState = document.getElementById('cross-loading-state');
   const resultsContainer = document.getElementById('cross-results-container');
   const resultsBody = document.getElementById('cross-results-body');
+  const timerEl = document.getElementById('cross-elapsed-timer');
+
+  const step1 = document.getElementById('cross-step-1');
+  const step2 = document.getElementById('cross-step-2');
+  const step3 = document.getElementById('cross-step-3');
+
+  // Reset steps
+  if (step1) {
+    step1.className = 'flex items-center gap-2 text-[var(--google-blue)] font-medium transition-colors';
+    step1.innerHTML = '<i data-lucide="circle-dot" class="w-3.5 h-3.5 shrink-0 animate-pulse"></i><span>Querying source materials across authenticated Google accounts...</span>';
+  }
+  if (step2) {
+    step2.className = 'flex items-center gap-2 text-[var(--m3-on-surface-subtle)] transition-colors';
+    step2.innerHTML = '<i data-lucide="circle" class="w-3.5 h-3.5 shrink-0"></i><span>Correlating citations and reconciling key findings...</span>';
+  }
+  if (step3) {
+    step3.className = 'flex items-center gap-2 text-[var(--m3-on-surface-subtle)] transition-colors';
+    step3.innerHTML = '<i data-lucide="circle" class="w-3.5 h-3.5 shrink-0"></i><span>Generating unified cross-notebook intelligence brief...</span>';
+  }
+
+  if (resultsContainer) resultsContainer.classList.add('hidden');
+  if (loadingState) loadingState.classList.remove('hidden');
+  if (window.lucide) lucide.createIcons({ root: loadingState });
+
+  setGlobalLoading(true);
+
+  const startTime = Date.now();
+  const timerInterval = setInterval(() => {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    if (timerEl) timerEl.textContent = `${elapsed}s`;
+
+    const sec = parseFloat(elapsed);
+    if (sec >= 2.5 && step1 && step2 && !step1.classList.contains('text-[var(--google-green)]')) {
+      step1.className = 'flex items-center gap-2 text-[var(--google-green)] transition-colors';
+      step1.innerHTML = '<i data-lucide="check-circle-2" class="w-3.5 h-3.5 shrink-0 text-[var(--google-green)]"></i><span>Querying source materials across authenticated Google accounts...</span>';
+      step2.className = 'flex items-center gap-2 text-[var(--google-blue)] font-medium transition-colors';
+      step2.innerHTML = '<i data-lucide="circle-dot" class="w-3.5 h-3.5 shrink-0 animate-pulse"></i><span>Correlating citations and reconciling key findings...</span>';
+      if (window.lucide) lucide.createIcons({ root: loadingState });
+    }
+
+    if (sec >= 6.0 && step2 && step3 && !step2.classList.contains('text-[var(--google-green)]')) {
+      step2.className = 'flex items-center gap-2 text-[var(--google-green)] transition-colors';
+      step2.innerHTML = '<i data-lucide="check-circle-2" class="w-3.5 h-3.5 shrink-0 text-[var(--google-green)]"></i><span>Correlating citations and reconciling key findings...</span>';
+      step3.className = 'flex items-center gap-2 text-[var(--google-blue)] font-medium transition-colors';
+      step3.innerHTML = '<i data-lucide="circle-dot" class="w-3.5 h-3.5 shrink-0 animate-pulse"></i><span>Generating unified cross-notebook intelligence brief...</span>';
+      if (window.lucide) lucide.createIcons({ root: loadingState });
+    }
+  }, 150);
 
   try {
     const res = await fetch('/api/cross-query', {
@@ -1016,36 +1872,109 @@ async function handleRunCrossSynthesis() {
     if (res.ok) {
       const data = await res.json();
       const markdownContext = data.combinedContext || 'No synthesis produced.';
-      resultsBody.innerHTML = `<div class="nlm-markdown">${renderMarkdown(markdownContext)}</div>`;
-      resultsContainer.classList.remove('hidden');
+      if (resultsBody) resultsBody.innerHTML = `<div class="nlm-markdown">${renderMarkdown(markdownContext)}</div>`;
+      if (loadingState) loadingState.classList.add('hidden');
+      if (resultsContainer) resultsContainer.classList.remove('hidden');
       showToast('Cross-account synthesis completed successfully.', 'success');
     } else {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      if (loadingState) loadingState.classList.add('hidden');
       showToast('Synthesis error: ' + (err.detail || 'Failed to synthesize'), 'error');
     }
   } catch (err) {
+    if (loadingState) loadingState.classList.add('hidden');
     showToast('Error: ' + err.message, 'error');
   } finally {
+    clearInterval(timerInterval);
+    setGlobalLoading(false);
     btn.disabled = false;
     btn.innerHTML = '<i data-lucide="sparkles" class="w-3.5 h-3.5"></i> <span>Execute Multi-Account Synthesis</span>';
-    if (window.lucide) lucide.createIcons();
+    if (window.lucide) lucide.createIcons({ root: btn });
   }
 }
 
-// ----------------- HELPERS -----------------
+// ----------------- HELPERS & GOOGLE UX FLUIDITY ENGINE -----------------
+
+function initGoogleRipple() {
+  document.addEventListener('pointerdown', (e) => {
+    // Skip inputs, textareas, or explicit opt-outs
+    if (e.target.closest('input, textarea, select, .no-ripple')) return;
+
+    const host = e.target.closest(
+      '.m3-card, .m3-chip, .google-btn-primary, .google-btn-tonal, .google-btn-outlined, .m3-menu-item, button, .google-search-pill'
+    );
+    if (!host) return;
+
+    host.classList.add('google-ripple-host');
+
+    const rect = host.getBoundingClientRect();
+    const ripple = document.createElement('span');
+    const size = Math.max(rect.width, rect.height) * 2;
+    const radius = size / 2;
+
+    ripple.style.width = `${size}px`;
+    ripple.style.height = `${size}px`;
+    ripple.style.left = `${e.clientX - rect.left - radius}px`;
+    ripple.style.top = `${e.clientY - rect.top - radius}px`;
+    ripple.className = 'google-ripple-effect';
+
+    const prev = host.querySelector('.google-ripple-effect');
+    if (prev) prev.remove();
+
+    host.appendChild(ripple);
+
+    const removeRipple = () => {
+      ripple.style.opacity = '0';
+      ripple.style.transition = 'opacity 0.3s cubic-bezier(0.2, 0, 0, 1)';
+      setTimeout(() => {
+        if (ripple.parentNode) ripple.remove();
+      }, 300);
+      window.removeEventListener('pointerup', removeRipple);
+      window.removeEventListener('pointercancel', removeRipple);
+    };
+
+    window.addEventListener('pointerup', removeRipple, { once: true });
+    window.addEventListener('pointercancel', removeRipple, { once: true });
+    setTimeout(() => {
+      if (ripple.parentNode) ripple.remove();
+    }, 600);
+  });
+}
+
+function isModalOpen(id) {
+  const modal = document.getElementById(id);
+  return !!(modal && !modal.classList.contains('hidden'));
+}
 
 function openModal(id) {
   const modal = document.getElementById(id);
   if (!modal) return;
   modal.classList.remove('hidden');
   modal.classList.add('flex');
+  const dialog = modal.querySelector('.m3-dialog');
+  if (dialog) {
+    requestAnimationFrame(() => {
+      dialog.classList.add('modal-open');
+    });
+  }
 }
 
 function closeModal(id) {
   const modal = document.getElementById(id);
   if (!modal) return;
-  modal.classList.add('hidden');
-  modal.classList.remove('flex');
+  const dialog = modal.querySelector('.m3-dialog');
+  if (dialog) {
+    dialog.classList.remove('modal-open');
+    setTimeout(() => {
+      modal.classList.add('hidden');
+      modal.classList.remove('flex');
+      if (id === 'modal-chat') updateBackgroundQueryStatus();
+    }, 240);
+  } else {
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+    if (id === 'modal-chat') updateBackgroundQueryStatus();
+  }
 }
 
 function escapeHtml(str) {
@@ -1057,7 +1986,16 @@ function escapeHtml(str) {
             .replace(/'/g, '&#039;');
 }
 
-function showToast(message, type = 'info') {
+function highlightMatch(text, query) {
+  if (!text) return '';
+  if (!query) return escapeHtml(text);
+  const escaped = escapeHtml(text);
+  const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(${escapedQuery})`, 'gi');
+  return escaped.replace(regex, '<mark class="bg-[var(--google-blue-container)] text-[var(--google-blue-on-container)] rounded px-1 font-medium">$1</mark>');
+}
+
+function showToast(message, type = 'info', action = null) {
   const container = document.getElementById('toast-container');
   if (!container) return;
 
@@ -1067,26 +2005,45 @@ function showToast(message, type = 'info') {
            : 'bg-[var(--m3-surface-container-high)] border-[var(--m3-outline-variant)] text-[var(--m3-on-surface)]';
   const icon = type === 'error' ? 'alert-circle' : type === 'success' ? 'check-circle' : 'info';
 
-  toast.className = `pointer-events-auto flex items-center gap-2.5 px-4 py-2.5 rounded-full border text-xs font-medium shadow-2xl transition-all duration-200 transform translate-y-2 opacity-0 ${bg}`;
+  toast.className = `pointer-events-auto flex items-center gap-2.5 px-4 py-2.5 rounded-full border text-xs font-medium shadow-2xl transition-all duration-300 transform translate-y-3 scale-95 opacity-0 ${bg}`;
+  
+  let actionHtml = '';
+  if (action && action.label) {
+    actionHtml = `<button type="button" class="toast-action-btn ml-2 px-2.5 py-1 rounded-full bg-[var(--google-blue)] text-white font-medium text-[11px] hover:opacity-90 shadow-sm transition cursor-pointer shrink-0">${escapeHtml(action.label)}</button>`;
+  }
+
   toast.innerHTML = `
     <i data-lucide="${icon}" class="w-3.5 h-3.5 shrink-0"></i>
-    <span>${escapeHtml(message)}</span>
+    <span class="flex-1">${escapeHtml(message)}</span>
+    ${actionHtml}
   `;
+
+  if (action && action.onClick) {
+    const actBtn = toast.querySelector('.toast-action-btn');
+    if (actBtn) {
+      actBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        action.onClick();
+        toast.remove();
+      });
+    }
+  }
 
   container.appendChild(toast);
   if (window.lucide) {
-    lucide.createIcons({
-      root: toast
-    });
+    lucide.createIcons({ root: toast });
   }
 
   requestAnimationFrame(() => {
-    toast.classList.remove('translate-y-2', 'opacity-0');
+    toast.classList.remove('translate-y-3', 'scale-95', 'opacity-0');
+    toast.classList.add('translate-y-0', 'scale-100', 'opacity-100');
   });
 
+  const duration = action ? 7000 : 4000;
   setTimeout(() => {
-    toast.classList.add('opacity-0', 'translate-y-2');
-    setTimeout(() => toast.remove(), 250);
-  }, 4000);
+    toast.classList.remove('translate-y-0', 'scale-100', 'opacity-100');
+    toast.classList.add('opacity-0', 'translate-y-3', 'scale-95');
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
 }
 

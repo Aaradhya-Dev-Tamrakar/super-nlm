@@ -13,7 +13,7 @@ class AccountProfile(BaseModel):
     notebookCount: int = Field(default=0, description="Total notebooks found in this account")
 
 class ProfileCreateRequest(BaseModel):
-    id: str
+    id: str = Field(..., min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_\-\s]+$', description="Alphanumeric slug or name")
     displayName: str
     email: Optional[str] = ""
     tier: Literal["pro", "standard"] = "standard"

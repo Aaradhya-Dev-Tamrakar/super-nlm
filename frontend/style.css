@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Super-NLM Hub | Google Material Design 3 & NotebookLM Theme
+   Super-NLM Hub | Google Material Design 3 & Gemini Notebook Theme
    Comprehensive Google Light / Dark / System Color Systems
    ========================================================================== */
 
@@ -53,9 +53,11 @@
   --m3-shadow-card-hover: 0 1px 3px 0 rgba(60, 64, 67, 0.2), 0 4px 8px 3px rgba(60, 64, 67, 0.1);
   --m3-dialog-shadow: 0 16px 40px rgba(0, 0, 0, 0.16);
 
-  /* Physics Timing */
+  /* Physics Timing (Material 3 Motion Tokens) */
   --ease-m3: cubic-bezier(0.2, 0.0, 0.0, 1.0);
-  --ease-m3-expressive: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-m3-expressive: cubic-bezier(0.05, 0.7, 0.1, 1.0);
+  --ease-m3-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1.0);
+  --ease-m3-accelerate: cubic-bezier(0.3, 0.0, 0.8, 0.15);
 }
 
 /* -------------------------------------------------------------
@@ -296,13 +298,59 @@ html.dark .google-btn-tonal:hover {
   border: 1px solid var(--m3-outline-variant);
   border-radius: 28px;
   box-shadow: var(--m3-dialog-shadow);
+  transform: scale(0.94);
+  opacity: 0;
+  transition: transform 0.28s var(--ease-m3-decelerate), opacity 0.22s var(--ease-m3);
+}
+
+.m3-dialog.modal-open {
+  transform: scale(1);
+  opacity: 1;
+}
+
+/* ==========================================================================
+   Google Material 3 Radial Ink Ripple System
+   ========================================================================== */
+.google-ripple-host {
+  position: relative;
+  overflow: hidden;
+  -webkit-mask-image: -webkit-radial-gradient(white, black); /* Safari clipping */
+}
+
+.google-ripple-effect {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  transform: scale(0);
+  background-color: currentColor;
+  opacity: 0.16;
+  animation: google-ripple-anim 0.55s var(--ease-m3-decelerate) forwards;
+}
+
+@keyframes google-ripple-anim {
+  to {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+/* Tactile Micro-Interactions */
+.m3-card:active {
+  transform: translateY(-1px) scale(0.992) !important;
+}
+
+.m3-chip:active,
+.google-btn-primary:active,
+.google-btn-tonal:active,
+.google-btn-outlined:active {
+  transform: scale(0.965) !important;
 }
 
 /* Animation Timelines */
 @keyframes m3-enter {
   0% {
     opacity: 0;
-    transform: scale(0.97) translateY(4px);
+    transform: scale(0.95) translateY(8px);
   }
   100% {
     opacity: 1;
@@ -311,23 +359,131 @@ html.dark .google-btn-tonal:hover {
 }
 
 .animate-m3-enter {
-  animation: m3-enter 0.2s var(--ease-m3-expressive) forwards;
+  animation: m3-enter 0.25s var(--ease-m3-decelerate) forwards;
 }
 
-/* Stagger card entry */
+/* Stagger card entry with fluid scale and translate */
 @keyframes m3-card-fade {
   from {
     opacity: 0;
-    transform: translateY(8px);
+    transform: translateY(12px) scale(0.975);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
 .animate-m3-stagger {
-  animation: m3-card-fade 0.25s var(--ease-m3-expressive) backwards;
+  animation: m3-card-fade 0.3s var(--ease-m3-decelerate) backwards;
+  will-change: transform, opacity;
+}
+
+/* Google Quad-Color Loading Wave (Gemini / Gemini Notebook Style) */
+.google-quad-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.google-quad-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  animation: google-quad-bounce 1.3s infinite ease-in-out both;
+}
+
+.google-quad-dot:nth-child(1) { background-color: var(--google-blue); animation-delay: -0.36s; }
+.google-quad-dot:nth-child(2) { background-color: var(--google-red); animation-delay: -0.24s; }
+.google-quad-dot:nth-child(3) { background-color: var(--google-yellow); animation-delay: -0.12s; }
+.google-quad-dot:nth-child(4) { background-color: var(--google-green); animation-delay: 0s; }
+
+@keyframes google-quad-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.65) translateY(0);
+    opacity: 0.55;
+  }
+  40% {
+    transform: scale(1.2) translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* ==========================================================================
+   Google Material 3 Indeterminate Linear Progress Bar
+   ========================================================================== */
+.m3-linear-progress {
+  height: 3px;
+  width: 100%;
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  overflow: hidden;
+  background-color: transparent;
+  z-index: 50;
+  transition: opacity 0.25s var(--ease-m3);
+}
+
+.m3-linear-progress-track {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(138, 180, 248, 0.15);
+  overflow: hidden;
+}
+
+.m3-linear-progress-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    var(--google-blue) 0%,
+    var(--google-red) 33%,
+    var(--google-yellow) 66%,
+    var(--google-green) 100%
+  );
+  border-radius: 9999px;
+  will-change: left, right;
+}
+
+.m3-linear-progress-bar-primary {
+  animation: m3-linear-progress-indeterminate-1 2s cubic-bezier(0.65, 0.815, 0.735, 0.395) infinite;
+}
+
+.m3-linear-progress-bar-secondary {
+  animation: m3-linear-progress-indeterminate-2 2s cubic-bezier(0.165, 0.84, 0.44, 1) 1.15s infinite;
+}
+
+@keyframes m3-linear-progress-indeterminate-1 {
+  0% {
+    left: -35%;
+    right: 100%;
+  }
+  60% {
+    left: 100%;
+    right: -90%;
+  }
+  100% {
+    left: 100%;
+    right: -90%;
+  }
+}
+
+@keyframes m3-linear-progress-indeterminate-2 {
+  0% {
+    left: -200%;
+    right: 100%;
+  }
+  60% {
+    left: 107%;
+    right: -8%;
+  }
+  100% {
+    left: 107%;
+    right: -8%;
+  }
 }
 
 /* Dimension-matched Skeleton Shimmer */
@@ -343,12 +499,48 @@ html.dark .google-btn-tonal:hover {
 .google-skeleton {
   background: linear-gradient(
     90deg,
-    rgba(128, 128, 128, 0.08) 0%,
-    rgba(128, 128, 128, 0.18) 50%,
-    rgba(128, 128, 128, 0.08) 100%
+    rgba(60, 64, 67, 0.08) 0%,
+    rgba(60, 64, 67, 0.18) 50%,
+    rgba(60, 64, 67, 0.08) 100%
   );
   background-size: 200% 100%;
-  animation: google-shimmer 1.6s infinite linear;
+  animation: google-shimmer 1.8s infinite var(--ease-m3);
+}
+
+html.dark .google-skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  background-size: 200% 100%;
+  animation: google-shimmer 1.8s infinite var(--ease-m3);
+}
+
+/* Staggered Shimmer Waves across Skeleton Cards */
+.skeleton-card:nth-child(1) .google-skeleton { animation-delay: 0ms; }
+.skeleton-card:nth-child(2) .google-skeleton { animation-delay: 90ms; }
+.skeleton-card:nth-child(3) .google-skeleton { animation-delay: 180ms; }
+.skeleton-card:nth-child(4) .google-skeleton { animation-delay: 270ms; }
+.skeleton-card:nth-child(5) .google-skeleton { animation-delay: 360ms; }
+.skeleton-card:nth-child(6) .google-skeleton { animation-delay: 450ms; }
+
+/* Pulsing Thinking Bubble for Active AI Synthesizing */
+@keyframes chat-bubble-pulse {
+  0%, 100% {
+    border-color: rgba(138, 180, 248, 0.25);
+    box-shadow: 0 0 0 0 rgba(138, 180, 248, 0);
+  }
+  50% {
+    border-color: rgba(138, 180, 248, 0.65);
+    box-shadow: 0 0 20px -4px rgba(138, 180, 248, 0.25);
+  }
+}
+
+.chat-loader-bubble .m3-subcard {
+  border: 1px solid rgba(138, 180, 248, 0.35);
+  animation: chat-bubble-pulse 2.2s infinite ease-in-out;
 }
 
 /* Monospace font */
@@ -587,4 +779,31 @@ html.dark .m3-menu-item.active {
   height: 0.6875rem;
   color: var(--google-blue);
   flex-shrink: 0;
+}
+
+/* Keyboard Shortcut Badges */
+.kbd-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding: 0 0.45rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--m3-on-surface);
+  background-color: var(--m3-surface-container-high);
+  border: 1px solid var(--m3-outline-variant);
+  border-bottom: 2px solid var(--m3-outline);
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  user-select: none;
+  transition: all 0.15s ease;
+}
+
+.kbd-badge:hover {
+  border-color: var(--google-blue);
+  color: var(--google-blue);
 }
