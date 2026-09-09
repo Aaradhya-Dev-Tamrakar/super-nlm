@@ -24,8 +24,11 @@ Super-NLM includes a built-in MCP server (`super-nlm-mcp`) designed specifically
 ### Key Capabilities
 
 - **Round-Robin Rotation:** A global monotonic counter alternates queries across all authenticated Google accounts (`default`, `secondary`, etc.) so quota load is balanced evenly.
-- **Automatic Quota Cooldown (120s):** If an account encounters a rate limit (HTTP 429 / `RESOURCE_EXHAUSTED`), it is automatically placed in a 120-second cooldown window and the query is transparently retried on the next available account.
-- **Smart Recovery Fallback:** If all accounts are cooling down, the engine picks the account closest to recovery rather than failing immediately.
+- **Two-Tiered Intelligent Quota Cooldown:**
+  - **Burst Concurrency (HTTP 429 / RPM):** When rapid parallel queries trigger a temporary throttle, the account enters a **120s cooldown** while Google's per-minute token bucket refills.
+  - **Daily Quota Ceiling (RPD):** When a free/standard account hits its daily query limit (*"reached your daily limit"*), it is placed in a **cooldown until 00:00 UTC midnight** (~12-24h). Parallel agents won't waste any time pinging an account whose daily quota is depleted.
+- **Seamless Retry Fallback:** When any account triggers either type of cooldown, the pending query is instantly retried on the next available account without failing the agent's task.
+- **Smart Recovery Prioritization:** If all accounts happen to be in cooldown, the engine prioritizes short-burst accounts over daily-exhausted accounts, picking the one nearest recovery.
 - **Lazy Auto-Sharing Cache:** If an account needs to query a notebook owned by another account, Super-NLM invites the query account as an editor behind the scenes and caches the permission in-memory.
 - **Zero-Quota Catalog Exploration:** Notebook and profile listings are served directly from the local cache without consuming any Google API quota.
 

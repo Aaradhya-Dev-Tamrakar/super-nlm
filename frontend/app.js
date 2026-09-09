@@ -283,7 +283,8 @@ function setupEventListeners() {
     copySynthBtn.addEventListener('click', () => {
       const bodyEl = document.getElementById('cross-results-body');
       if (!bodyEl) return;
-      const text = bodyEl.innerText;
+      const rawMd = bodyEl.getAttribute('data-raw-markdown');
+      const text = rawMd || bodyEl.innerText;
       if (!text) return;
       navigator.clipboard.writeText(text);
       copySynthBtn.innerHTML = '<i data-lucide="check" class="w-3.5 h-3.5 text-[var(--google-green)]"></i> <span class="text-[var(--google-green)] font-medium">Copied!</span>';
@@ -1981,10 +1982,59 @@ async function handleRunCrossSynthesis() {
 
     if (res.ok) {
       const data = await res.json();
-      const markdownContext = data.combinedContext || 'No synthesis produced.';
-      if (resultsBody) resultsBody.innerHTML = `<div class="nlm-markdown">${renderMarkdown(markdownContext)}</div>`;
+      
+      let renderedHtml = '';
+      if (data.isSynthesized && data.synthesizedBrief) {
+        renderedHtml = `
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-[var(--m3-outline-variant)]">
+            <div class="flex items-center gap-2">
+              <span class="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[var(--google-blue-container)] text-[var(--google-blue)] flex items-center gap-1.5 shadow-sm">
+                <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+                Pro AI Unified Synthesis
+              </span>
+              <span class="text-[10px] font-mono text-[var(--m3-on-surface-subtle)] bg-[var(--m3-surface-container-high)] px-2 py-0.5 rounded-md border border-[var(--m3-outline-variant)]">
+                ${data.synthesisModel || 'gemini-2.5-flash'}
+              </span>
+            </div>
+            <span class="text-[11px] text-[var(--google-green)] flex items-center gap-1 font-medium">
+              <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> Reconciled across ${data.notebookResults?.length || 0} notebook(s)
+            </span>
+          </div>
+          <div class="nlm-markdown text-xs leading-relaxed space-y-3 font-sans text-[var(--m3-on-surface)]">
+            ${renderMarkdown(data.synthesizedBrief)}
+          </div>
+          <details class="mt-6 pt-3.5 border-t border-[var(--m3-outline-variant)]/60 group">
+            <summary class="text-[11px] font-medium text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-blue)] cursor-pointer select-none flex items-center gap-2 transition py-1">
+              <i data-lucide="chevron-right" class="w-3.5 h-3.5 transition-transform group-open:rotate-90"></i>
+              <span>Inspect Raw Source Extracts (${data.notebookResults?.length || 0} Notebooks)</span>
+            </summary>
+            <div class="mt-3 p-4 rounded-xl bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] text-xs nlm-markdown space-y-3">
+              ${renderMarkdown(data.combinedContext || 'No raw context available.')}
+            </div>
+          </details>
+        `;
+      } else {
+        const fallbackNotice = data.synthesisError 
+          ? `<div class="p-3 rounded-xl bg-[var(--google-yellow-container)]/30 border border-[var(--google-yellow)]/40 text-xs text-[var(--m3-on-surface)] mb-3 flex items-center gap-2">
+               <i data-lucide="alert-circle" class="w-4 h-4 text-[var(--google-yellow)] shrink-0"></i>
+               <span>Stage 2 LLM synthesis was skipped or unavailable (${data.synthesisError}). Displaying raw parallel extractions below.</span>
+             </div>`
+          : '';
+        renderedHtml = `
+          ${fallbackNotice}
+          <div class="nlm-markdown text-xs leading-relaxed font-sans text-[var(--m3-on-surface)]">
+            ${renderMarkdown(data.combinedContext || 'No synthesis produced.')}
+          </div>
+        `;
+      }
+
+      if (resultsBody) {
+        resultsBody.innerHTML = renderedHtml;
+        resultsBody.setAttribute('data-raw-markdown', data.synthesizedBrief || data.combinedContext || '');
+      }
       if (loadingState) loadingState.classList.add('hidden');
       if (resultsContainer) resultsContainer.classList.remove('hidden');
+      if (window.lucide) lucide.createIcons({ root: resultsBody });
       showToast('Cross-account synthesis completed successfully.', 'success');
     } else {
       const err = await res.json().catch(() => ({ detail: res.statusText }));

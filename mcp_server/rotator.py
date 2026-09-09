@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import logging
 import time
 from typing import List, Dict, Any, Optional, Set, Tuple
@@ -9,24 +10,36 @@ from backend.nlm_client import (
     query_notebook,
     ensure_notebook_shared,
     is_rate_limit_or_quota_error,
+    classify_quota_error,
     get_cli_profiles
 )
 
 logger = logging.getLogger("super_nlm.rotator")
+
+def get_seconds_until_next_utc_midnight() -> float:
+    """Calculates seconds remaining until 00:00 UTC with a 60s safety buffer."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    tomorrow = (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    diff = (tomorrow - now).total_seconds() + 60.0
+    return max(3600.0, diff)
 
 class AccountRotator:
     """
     Manages round-robin account rotation for Super-NLM notebook queries.
     Distributes query workload across all authenticated Google accounts to
     prevent single-account quota exhaustion during parallel agent execution.
+
+    Distinguishes between:
+      1. Short-term burst rate limits (HTTP 429 / RPM) -> 120s cooldown.
+      2. Hard daily quota caps (RPD) -> Cooldown until midnight UTC (~12-24h).
     """
 
-    def __init__(self, cooldown_duration: float = 120.0):
+    def __init__(self, burst_cooldown_duration: float = 120.0):
         self._lock = asyncio.Lock()
         self._counter: int = 0
-        self._cooldown_duration = cooldown_duration
-        # profile_id -> epoch timestamp when cooldown expires
-        self._cooldowns: Dict[str, float] = {}
+        self._burst_cooldown_duration = burst_cooldown_duration
+        # profile_id -> {"expires_at": float, "reason": "burst" | "daily", "details": str}
+        self._cooldowns: Dict[str, Dict[str, Any]] = {}
         # (notebook_id, target_email) -> True if sharing has been verified
         self._shared_cache: Set[Tuple[str, str]] = set()
         # profile_id -> stats
@@ -37,7 +50,8 @@ class AccountRotator:
             self._stats[profile_id] = {
                 "queries_dispatched": 0,
                 "queries_succeeded": 0,
-                "quota_exhausted_hits": 0,
+                "burst_429_hits": 0,
+                "daily_cap_hits": 0,
                 "other_errors": 0
             }
 
@@ -62,8 +76,8 @@ class AccountRotator:
     async def pick_next_profile(self, exclude_ids: Optional[Set[str]] = None) -> Tuple[AccountProfile, int]:
         """
         Atomically selects the next account profile in round-robin order.
-        Skips profiles that are currently under quota cooldown.
-        If all accounts are cooling down, selects the one that recovers soonest.
+        Skips profiles that are currently under burst or daily quota cooldown.
+        If all accounts are cooling down, prioritizes burst-cooldown accounts over daily-exhausted ones.
         """
         async with self._lock:
             profiles = await self.get_active_profiles()
@@ -74,7 +88,7 @@ class AccountRotator:
             now = time.time()
 
             # Clean expired cooldowns
-            expired = [pid for pid, expiry in self._cooldowns.items() if now >= expiry]
+            expired = [pid for pid, info in self._cooldowns.items() if now >= info["expires_at"]]
             for pid in expired:
                 del self._cooldowns[pid]
 
@@ -84,7 +98,7 @@ class AccountRotator:
                 # If everything excluded, fallback to any profile
                 available = profiles
 
-            # Identify candidates that are not in cooldown
+            # Identify candidates that are not in any cooldown
             active_candidates = [p for p in available if p.id not in self._cooldowns]
 
             if active_candidates:
@@ -96,11 +110,15 @@ class AccountRotator:
                 self._stats[selected.id]["queries_dispatched"] += 1
                 return selected, curr_idx
 
-            # If all available accounts are in cooldown, pick the one recovering soonest
+            # If all available accounts are in cooldown:
+            # Prioritize short burst accounts (0) over daily-exhausted accounts (1), then soonest expiry
             logger.warning("All eligible profiles are currently in cooldown! Picking closest recovery candidate.")
             soonest_profile = min(
                 available,
-                key=lambda p: self._cooldowns.get(p.id, float("inf"))
+                key=lambda p: (
+                    0 if self._cooldowns.get(p.id, {}).get("reason") == "burst" else 1,
+                    self._cooldowns.get(p.id, {}).get("expires_at", float("inf"))
+                )
             )
             self._counter += 1
             curr_idx = self._counter
@@ -108,14 +126,39 @@ class AccountRotator:
             self._stats[soonest_profile.id]["queries_dispatched"] += 1
             return soonest_profile, curr_idx
 
-    def mark_quota_exhausted(self, profile_id: str, cooldown_duration: Optional[float] = None):
-        """Places an account into cooldown after a 429 or quota limit error."""
-        duration = cooldown_duration or self._cooldown_duration
-        expiry = time.time() + duration
-        self._cooldowns[profile_id] = expiry
+    def mark_quota_exhausted(
+        self,
+        profile_id: str,
+        error_type: str = "burst",
+        details: str = "",
+        custom_duration: Optional[float] = None
+    ):
+        """
+        Places an account into cooldown based on limit classification:
+          - 'burst': short-term 429/RPM rate limit -> 120s cooldown.
+          - 'daily': hard daily quota ceiling -> cooldown until next midnight UTC.
+        """
         self._ensure_stats_entry(profile_id)
-        self._stats[profile_id]["quota_exhausted_hits"] += 1
-        logger.warning(f"Profile '{profile_id}' placed in quota cooldown for {duration:.0f}s (until {expiry})")
+
+        if error_type == "daily":
+            duration = custom_duration or get_seconds_until_next_utc_midnight()
+            self._stats[profile_id]["daily_cap_hits"] += 1
+            reason_label = "DAILY hard quota cap"
+        else:
+            duration = custom_duration or self._burst_cooldown_duration
+            self._stats[profile_id]["burst_429_hits"] += 1
+            reason_label = "BURST 429/concurrency limit"
+
+        expiry = time.time() + duration
+        self._cooldowns[profile_id] = {
+            "expires_at": expiry,
+            "reason": error_type,
+            "details": details or reason_label
+        }
+        logger.warning(
+            f"Profile '{profile_id}' placed in {reason_label} cooldown for "
+            f"{duration:.0f}s ({duration/3600:.1f}h) until {expiry}"
+        )
 
     def record_success(self, profile_id: str):
         """Records a successful query on a profile and removes any lingering cooldown."""
@@ -180,8 +223,9 @@ class AccountRotator:
     ) -> Dict[str, Any]:
         """
         Executes a query by rotating through available accounts.
-        If an account hits quota / 429, it is placed in cooldown and the query
-        is transparently retried on the next available account.
+        If an account hits a burst 429 or daily quota cap:
+          - Places account into appropriate cooldown (120s vs midnight UTC).
+          - Transparently retries the query on the next available account.
         """
         profiles = await self.get_active_profiles()
         limit_attempts = max_attempts or max(len(profiles), 2)
@@ -210,7 +254,7 @@ class AccountRotator:
                 new_conversation=new_conversation
             )
 
-            # 3. Check for quota / rate limit error
+            # 3. Check for success
             if res.get("success"):
                 self.record_success(profile.id)
                 return {
@@ -228,23 +272,23 @@ class AccountRotator:
                     }
                 }
 
-            # Handle failure
+            # Handle failure & classify quota error
             err_msg = str(res.get("error") or "")
-            is_quota = is_rate_limit_or_quota_error(err_msg)
+            quota_type = classify_quota_error(err_msg)
 
             attempt_history.append({
                 "profile_id": profile.id,
                 "email": profile.email,
                 "error": err_msg,
-                "is_quota_exhausted": is_quota
+                "quota_classification": quota_type
             })
 
-            if is_quota:
+            if quota_type:
                 logger.warning(
-                    f"Quota exhausted on profile '{profile.id}' ({err_msg}). "
+                    f"Quota exhausted on profile '{profile.id}' [{quota_type.upper()}]: {err_msg}. "
                     f"Triggering seamless rotation fallback..."
                 )
-                self.mark_quota_exhausted(profile.id)
+                self.mark_quota_exhausted(profile.id, error_type=quota_type, details=err_msg)
                 excluded.add(profile.id)
                 # Continue loop to next account
                 continue
@@ -280,19 +324,22 @@ class AccountRotator:
             now = time.time()
             profiles = await self.get_active_profiles()
 
-            # Active cooldowns with remaining time
+            # Active cooldowns with remaining time & reason
             cooldown_info = {}
-            for pid, expiry in self._cooldowns.items():
-                remaining = max(0.0, expiry - now)
+            for pid, info in self._cooldowns.items():
+                remaining = max(0.0, info["expires_at"] - now)
                 if remaining > 0:
                     cooldown_info[pid] = {
+                        "reason": info.get("reason", "burst"),
                         "cooldown_remaining_seconds": round(remaining, 1),
-                        "expires_at": round(expiry, 1)
+                        "cooldown_remaining_hours": round(remaining / 3600, 2),
+                        "expires_at": round(info["expires_at"], 1),
+                        "details": info.get("details", "")
                     }
 
             return {
                 "global_query_counter": self._counter,
-                "active_cooldown_duration_setting": self._cooldown_duration,
+                "burst_cooldown_duration_setting": self._burst_cooldown_duration,
                 "total_profiles_in_pool": len(profiles),
                 "profiles": [
                     {
@@ -302,11 +349,13 @@ class AccountRotator:
                         "tier": p.tier,
                         "isDefaultPro": p.isDefaultPro,
                         "is_cooling_down": p.id in cooldown_info,
+                        "cooldown_type": cooldown_info[p.id]["reason"] if p.id in cooldown_info else None,
                         "cooldown": cooldown_info.get(p.id),
                         "stats": self._stats.get(p.id, {
                             "queries_dispatched": 0,
                             "queries_succeeded": 0,
-                            "quota_exhausted_hits": 0,
+                            "burst_429_hits": 0,
+                            "daily_cap_hits": 0,
                             "other_errors": 0
                         })
                     }

@@ -5,7 +5,13 @@ import logging
 import subprocess
 import re
 from typing import List, Dict, Any, Optional
-from backend.config import NLM_EXECUTABLE
+import httpx
+from backend.config import (
+    NLM_EXECUTABLE,
+    GEMINI_API_KEY,
+    DEFAULT_SYNTHESIS_MODEL,
+    SYNTHESIS_FALLBACK_MODELS
+)
 from backend.models import AccountProfile, Notebook, NotebookRef
 
 logger = logging.getLogger(__name__)
@@ -296,17 +302,43 @@ async def query_notebook(
             "raw": res.get("stdout")
         }
 
-def is_rate_limit_or_quota_error(err: str) -> bool:
-    """Detects if an error message indicates rate limiting or quota exhaustion."""
+def classify_quota_error(err: str) -> Optional[str]:
+    """
+    Classifies a quota/rate limit error into:
+      - 'daily': Daily hard quota cap reached (resets at midnight UTC).
+      - 'burst': Short-term concurrency / 429 burst throttle (resets in 60-120s).
+      - None: Not a quota or rate limit error.
+    """
     if not err:
-        return False
+        return None
     lower = err.lower()
-    signals = [
+
+    daily_signals = [
+        "daily query limit",
+        "daily limit",
+        "daily quota",
+        "reached your limit for today",
+        "limit for today",
+        "try again tomorrow",
+        "day limit",
+        "quota exceeded for today"
+    ]
+    if any(sig in lower for sig in daily_signals):
+        return "daily"
+
+    burst_signals = [
         "rate limit", "quota", "429", "too many requests",
         "resource has been exhausted", "resource_exhausted",
-        "exceeded", "throttled", "limit reached"
+        "exceeded", "throttled", "limit reached", "temporarily unavailable"
     ]
-    return any(sig in lower for sig in signals)
+    if any(sig in lower for sig in burst_signals):
+        return "burst"
+
+    return None
+
+def is_rate_limit_or_quota_error(err: str) -> bool:
+    """Detects if an error message indicates rate limiting or quota exhaustion."""
+    return classify_quota_error(err) is not None
 
 async def ensure_notebook_shared(notebook_id: str, source_profile_id: str, target_email: str) -> bool:
     """
@@ -401,14 +433,122 @@ async def query_notebook_with_pro_fallback(
             "conversationId": conversation_id
         }
 
+async def synthesize_with_gemini(
+    question: str,
+    sub_results: List[Dict[str, Any]],
+    api_key: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Second-stage synthesis pass:
+    Takes answers and citations retrieved from multiple Google notebooks and synthesizes
+    them into a unified comparative intelligence brief using Google Gemini.
+    """
+    active_key = api_key if api_key is not None else GEMINI_API_KEY
+    if not active_key:
+        logger.info("[Super-NLM Synthesis] GEMINI_API_KEY is not set. Skipping stage 2 LLM synthesis.")
+        return {
+            "success": False,
+            "error": "GEMINI_API_KEY is not configured.",
+            "synthesizedBrief": None,
+            "model": None
+        }
+
+    # Format multi-notebook sources with explicit titles and profile IDs
+    evidence_blocks = []
+    for item in sub_results:
+        res = item.get("result", {})
+        title = item.get("title") or item.get("notebookId")
+        profile = item.get("profileId")
+        if res.get("success") and res.get("answer"):
+            evidence_blocks.append(
+                f"### Notebook: {title} (Account Profile: {profile})\n{res['answer'].strip()}\n"
+            )
+
+    if not evidence_blocks:
+        return {
+            "success": False,
+            "error": "No valid notebook answers were retrieved to synthesize.",
+            "synthesizedBrief": None,
+            "model": None
+        }
+
+    evidence_text = "\n\n".join(evidence_blocks)
+
+    system_instruction = (
+        "You are the Super-NLM Cross-Notebook Intelligence Synthesizer. "
+        "Your role is to perform a comprehensive, unified synthesis across independent Google NotebookLM notebooks. "
+        "Resolve overlapping or conflicting statements, de-duplicate shared insights, "
+        "highlight key differences or unique findings from each notebook, and maintain strict factual grounding "
+        "with explicit attribution (e.g. `[Notebook Title]`). "
+        "Format your output cleanly in GitHub-flavored markdown with an Executive Summary, Key Reconciled Findings / Diffs, "
+        "and Actionable Takeaways."
+    )
+
+    user_prompt = (
+        f"Research Goal / User Question: \"{question}\"\n\n"
+        f"--- EVIDENCE RETRIEVED FROM {len(evidence_blocks)} INDEPENDENT NOTEBOOK(S) ---\n\n"
+        f"{evidence_text}\n\n"
+        f"--- SYNTHESIS REQUIREMENTS ---\n"
+        f"1. Directly answer the user's research goal by synthesizing insights across all provided notebooks into a unified report.\n"
+        f"2. Explicitly reconcile consensus vs. distinct points between notebooks.\n"
+        f"3. Cite or attribute data points, file names, statistics, and claims to their source notebook.\n"
+        f"4. Eliminate redundant filler or repetitious boilerplate.\n"
+        f"5. Maintain high information density and professional technical rigor."
+    )
+
+    payload = {
+        "system_instruction": {"parts": [{"text": system_instruction}]},
+        "contents": [{"parts": [{"text": user_prompt}]}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": 4096
+        }
+    }
+
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        last_error = ""
+        for model in SYNTHESIS_FALLBACK_MODELS:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={active_key}"
+            try:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts and "text" in parts[0]:
+                            text = parts[0]["text"].strip()
+                            logger.info(f"[Super-NLM Synthesis] Successfully synthesized with model '{model}'")
+                            return {
+                                "success": True,
+                                "synthesizedBrief": text,
+                                "model": model,
+                                "error": None
+                            }
+                else:
+                    err_json = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                    err_msg = err_json.get("error", {}).get("message") or resp.text[:200]
+                    last_error = f"Model {model} returned HTTP {resp.status_code}: {err_msg}"
+                    logger.warning(f"[Super-NLM Synthesis] {last_error}. Trying next fallback...")
+            except Exception as e:
+                last_error = f"Model {model} failed with exception: {e}"
+                logger.warning(f"[Super-NLM Synthesis] {last_error}. Trying next fallback...")
+
+        return {
+            "success": False,
+            "error": last_error or "All Gemini synthesis models were unavailable.",
+            "synthesizedBrief": None,
+            "model": None
+        }
+
 async def synthesize_cross_notebook(
     notebooks: List[NotebookRef],
     question: str,
     synthesizer_profile_id: str
 ) -> Dict[str, Any]:
     """
-    Queries multiple notebooks (potentially across different accounts) and synthesizes
-    the findings using the synthesizer profile (e.g. the Pro AI account).
+    Stage 1: Queries multiple notebooks (potentially across different accounts) concurrently via nlm.
+    Stage 2: Synthesizes the retrieved knowledge into a unified comparative brief via Pro AI (Gemini).
     """
     # 1. Concurrently query each notebook
     async def _query_single(ref: NotebookRef):
@@ -422,7 +562,7 @@ async def synthesize_cross_notebook(
 
     sub_results = await asyncio.gather(*[_query_single(ref) for ref in notebooks])
 
-    # 2. Extract partial answers
+    # 2. Extract partial answers for raw source context
     partial_summaries = []
     for item in sub_results:
         res = item["result"]
@@ -434,12 +574,23 @@ async def synthesize_cross_notebook(
 
     combined_context = "\n\n".join(partial_summaries)
 
+    # 3. Stage 2 Pro AI Cross-Notebook Synthesis
+    synth_res = await synthesize_with_gemini(question, sub_results)
+
+    is_synthesized = synth_res.get("success", False)
+    synthesized_brief = synth_res.get("synthesizedBrief")
+    synthesis_model = synth_res.get("model")
+
     return {
         "success": True,
         "question": question,
         "synthesizerProfileId": synthesizer_profile_id,
+        "isSynthesized": is_synthesized,
+        "synthesisModel": synthesis_model,
+        "synthesizedBrief": synthesized_brief,
         "combinedContext": combined_context,
-        "notebookResults": sub_results
+        "notebookResults": sub_results,
+        "synthesisError": synth_res.get("error") if not is_synthesized else None
     }
 
 def launch_cli_login(profile_id: str, clear: bool = True):
