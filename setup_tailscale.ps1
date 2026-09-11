@@ -32,9 +32,9 @@ try {
     Write-Host "  1. Install the Tailscale app on your other device (iOS / Android / Mac / PC)."
     Write-Host "  2. Sign in with the same Tailscale account."
     Write-Host "  3. Open your browser on that device and navigate to:"
-    Write-Host "     http://${dnsName}:8001" -ForegroundColor Green
+    Write-Host "     http://${dnsName}:8000" -ForegroundColor Green
     Write-Host "     or"
-    Write-Host "     http://${ip}:8001" -ForegroundColor Green
+    Write-Host "     http://${ip}:8000" -ForegroundColor Green
 } catch {
     Write-Host "`nTailscale is installed but may not be logged in or connected." -ForegroundColor Yellow
     Write-Host "Run 'tailscale up' or open the Tailscale desktop client from your system tray to connect." -ForegroundColor Gray

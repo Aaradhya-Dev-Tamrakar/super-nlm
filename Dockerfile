@@ -20,7 +20,9 @@ RUN pip install --no-cache-dir \
     uvicorn \
     pydantic \
     httpx \
-    aiosqlite
+    aiosqlite \
+    qrcode \
+    mcp
 
 # Copy application source code
 COPY backend/ /app/backend/
