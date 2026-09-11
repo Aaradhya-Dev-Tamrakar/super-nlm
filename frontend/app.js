@@ -13,6 +13,7 @@ let state = {
   conversationIds: new Map(), // key: notebookId, value: conversationId
   activeQueries: new Map(), // key: notebookId, value: { notebookId, profileId, title, question, startTime }
   isLoading: false,
+  editingProfileId: null,
 };
 
 // ----------------- COURSE & STUDY CLASSIFICATION -----------------
@@ -1204,6 +1205,8 @@ function clearSelection() {
 
 // ----------------- ACCOUNTS MANAGER MODAL -----------------
 
+const PROFILE_COLOR_PRESETS = ['#8ab4f8', '#81c995', '#fdd663', '#f28b82', '#c58af9', '#78d9ec', '#ff8bc9', '#f9ab00'];
+
 function renderAccountsModalList() {
   const container = document.getElementById('accounts-list');
   if (!container) return;
@@ -1236,32 +1239,201 @@ function renderAccountsModalList() {
 
   container.innerHTML = state.profiles.map(p => {
     const isPro = p.isDefaultPro;
+    const isEditing = state.editingProfileId === p.id;
+
+    if (isEditing) {
+      return `
+        <div class="p-4 rounded-2xl m3-subcard border-2 border-[var(--google-blue)] bg-[var(--m3-surface-container-low)] space-y-3.5 shadow-md transition-all animate-m3-enter" data-edit-card="${escapeHtml(p.id)}">
+          <div class="flex items-center justify-between pb-2.5 border-b border-[var(--m3-outline-variant)]">
+            <div class="flex items-center gap-2">
+              <div class="p-1.5 rounded-full bg-[var(--google-blue-container)] text-[var(--google-blue)]">
+                <i data-lucide="user-cog" class="w-3.5 h-3.5"></i>
+              </div>
+              <div>
+                <h4 class="text-xs font-semibold text-[var(--m3-on-surface)] flex items-center gap-1.5">
+                  Edit Profile: <span class="text-[var(--google-blue)] font-medium">${escapeHtml(p.displayName)}</span>
+                  <span class="text-[10px] font-mono px-2 py-0.5 rounded-md bg-[var(--m3-surface-container)] text-[var(--m3-on-surface-subtle)] border border-[var(--m3-outline-variant)]">${escapeHtml(p.id)}</span>
+                </h4>
+                <p class="text-[10px] text-[var(--m3-on-surface-subtle)]">Update display label, account email, tier, badge color, and default AI status</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              data-action="cancel-edit"
+              class="btn-cancel-edit p-1.5 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] hover:bg-[var(--m3-surface-container-high)] transition cursor-pointer"
+              title="Cancel editing"
+            >
+              <i data-lucide="x" class="w-4 h-4 pointer-events-none"></i>
+            </button>
+          </div>
+
+          <form class="form-edit-profile space-y-3" data-profile-id="${escapeHtml(p.id)}">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[11px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-1">
+                  Display Label <span class="text-[var(--google-red)]">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="displayName"
+                  value="${escapeHtml(p.displayName)}"
+                  required
+                  placeholder="e.g. Personal, Work, College"
+                  class="w-full px-3.5 py-2 bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] rounded-xl text-xs text-[var(--m3-on-surface)] placeholder-[var(--m3-on-surface-subtle)] focus:outline-none focus:border-[var(--google-blue)] focus:ring-1 focus:ring-[var(--google-blue)] transition"
+                >
+              </div>
+              <div>
+                <label class="block text-[11px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-1">
+                  Google Account Email
+                </label>
+                <input
+                  type="email"
+                  name="email"
+                  value="${escapeHtml(p.email || '')}"
+                  placeholder="e.g. user@gmail.com"
+                  class="w-full px-3.5 py-2 bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] rounded-xl text-xs font-mono text-[var(--m3-on-surface)] placeholder-[var(--m3-on-surface-subtle)] focus:outline-none focus:border-[var(--google-blue)] focus:ring-1 focus:ring-[var(--google-blue)] transition"
+                >
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-[11px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-1">
+                  Profile Key (Slug) <span class="text-[var(--google-red)]">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="newId"
+                  value="${escapeHtml(p.id)}"
+                  required
+                  pattern="^[a-zA-Z0-9_\\-]+$"
+                  title="Alphanumeric characters, dashes, or underscores only"
+                  class="w-full px-3.5 py-2 bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] rounded-xl text-xs font-mono text-[var(--m3-on-surface)] placeholder-[var(--m3-on-surface-subtle)] focus:outline-none focus:border-[var(--google-blue)] focus:ring-1 focus:ring-[var(--google-blue)] transition"
+                >
+              </div>
+              <div>
+                <label class="block text-[11px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-1">
+                  Account Tier
+                </label>
+                <select
+                  name="tier"
+                  class="select-edit-tier w-full px-3.5 py-2 bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] rounded-xl text-xs text-[var(--m3-on-surface)] focus:outline-none focus:border-[var(--google-blue)] focus:ring-1 focus:ring-[var(--google-blue)] transition cursor-pointer"
+                >
+                  <option value="standard" ${p.tier === 'standard' ? 'selected' : ''}>Standard Account</option>
+                  <option value="pro" ${p.tier === 'pro' ? 'selected' : ''}>Pro AI Account</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[11px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-1">
+                  Badge Color
+                </label>
+                <div class="flex items-center gap-2">
+                  <input
+                    type="color"
+                    name="color"
+                    value="${p.color || '#8ab4f8'}"
+                    class="input-edit-color w-8 h-8 rounded-lg border-0 bg-transparent cursor-pointer"
+                  >
+                  <span class="edit-color-hex text-xs font-mono text-[var(--m3-on-surface-variant)]">${p.color || '#8ab4f8'}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Quick Color Preset Swatches -->
+            <div class="flex items-center gap-2 pt-0.5">
+              <span class="text-[10px] text-[var(--m3-on-surface-subtle)] uppercase tracking-wider">Presets:</span>
+              <div class="flex items-center gap-1.5">
+                ${PROFILE_COLOR_PRESETS.map(c => `
+                  <button
+                    type="button"
+                    data-color="${c}"
+                    style="background-color: ${c};"
+                    class="btn-color-preset w-4 h-4 rounded-full border border-black/20 hover:scale-125 transition-transform cursor-pointer"
+                    title="${c}"
+                  ></button>
+                `).join('')}
+              </div>
+            </div>
+
+            <!-- Default Pro Checkbox -->
+            <div class="flex items-center gap-2 pt-1">
+              <input
+                type="checkbox"
+                id="check-pro-${escapeHtml(p.id)}"
+                name="isDefaultPro"
+                ${p.isDefaultPro ? 'checked' : ''}
+                class="check-edit-pro rounded bg-[var(--m3-surface-container)] border-[var(--m3-outline)] text-[var(--google-blue)] focus:ring-0 cursor-pointer"
+              >
+              <label for="check-pro-${escapeHtml(p.id)}" class="text-xs text-[var(--m3-on-surface-variant)] cursor-pointer select-none flex items-center gap-1.5">
+                <i data-lucide="sparkles" class="w-3.5 h-3.5 text-[var(--google-yellow)]"></i>
+                <span>Set as Default Pro Engine (Primary AI query synthesizer)</span>
+              </label>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex items-center justify-end gap-2 pt-2 border-t border-[var(--m3-outline-variant)]">
+              <button
+                type="button"
+                data-action="cancel-edit"
+                class="btn-cancel-edit google-btn-outlined px-3.5 py-1.5 text-xs font-medium cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                class="btn-save-edit google-btn-primary px-4 py-1.5 text-xs font-medium flex items-center gap-1.5 cursor-pointer shadow-sm"
+              >
+                <i data-lucide="check" class="w-3.5 h-3.5 pointer-events-none"></i>
+                <span>Save Changes</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      `;
+    }
+
     return `
       <div class="flex items-center justify-between p-3.5 rounded-2xl m3-subcard hover:border-[var(--m3-outline)] transition-all">
         <div class="flex items-center gap-3">
-          <span class="w-3.5 h-3.5 rounded-full shrink-0" style="background-color: ${p.color};"></span>
+          <span class="w-3.5 h-3.5 rounded-full shrink-0 shadow-sm" style="background-color: ${p.color};"></span>
           <div>
             <div class="flex items-center gap-2">
-              <span class="text-xs font-medium text-[var(--m3-on-surface)] tracking-normal">${escapeHtml(p.displayName)}</span>
-              <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[var(--m3-surface-container)] text-[var(--m3-on-surface-subtle)] border border-[var(--m3-outline-variant)]">${p.id}</span>
+              <span class="text-xs font-semibold text-[var(--m3-on-surface)] tracking-normal">${escapeHtml(p.displayName)}</span>
+              <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[var(--m3-surface-container)] text-[var(--m3-on-surface-subtle)] border border-[var(--m3-outline-variant)]">${escapeHtml(p.id)}</span>
               ${isPro ? `
                 <span class="text-[9px] font-medium px-2 py-0.5 rounded-full bg-[var(--google-yellow-container)]/50 text-[var(--google-yellow)] border border-[var(--google-yellow)]/30 flex items-center gap-1">
                   <i data-lucide="sparkles" class="w-2.5 h-2.5"></i> DEFAULT PRO
                 </span>
-              ` : ''}
+              ` : (p.tier === 'pro' ? `
+                <span class="text-[9px] font-medium px-2 py-0.5 rounded-full bg-[var(--google-blue-container)]/50 text-[var(--google-blue)] border border-[var(--google-blue)]/30 flex items-center gap-1">
+                  PRO
+                </span>
+              ` : '')}
             </div>
             <p class="text-[11px] text-[var(--m3-on-surface-subtle)] font-mono mt-0.5">${escapeHtml(p.email || 'No email reported yet')}</p>
           </div>
         </div>
 
         <div class="flex items-center gap-2">
+          <!-- Edit button -->
+          <button
+            type="button"
+            data-action="edit"
+            data-profile-id="${escapeHtml(p.id)}"
+            title="Edit profile details"
+            class="btn-account-edit google-btn-outlined px-2.5 py-1 text-xs font-medium cursor-pointer text-[var(--m3-on-surface)] hover:border-[var(--google-blue)] hover:text-[var(--google-blue)] flex items-center gap-1"
+          >
+            <i data-lucide="pencil" class="w-3 h-3 pointer-events-none"></i>
+            <span class="pointer-events-none">Edit</span>
+          </button>
+
           <!-- Re-login button -->
           <button
             type="button"
             data-action="login"
-            data-profile-id="${p.id}"
+            data-profile-id="${escapeHtml(p.id)}"
             title="Authenticate with Google Chrome"
-            class="btn-account-login google-btn-outlined px-3 py-1 text-xs font-medium cursor-pointer"
+            class="btn-account-login google-btn-outlined px-2.5 py-1 text-xs font-medium cursor-pointer"
           >
             <i data-lucide="log-in" class="w-3.5 h-3.5 inline text-[var(--m3-on-surface-subtle)] pointer-events-none"></i>
             <span class="pointer-events-none">Login</span>
@@ -1272,9 +1444,9 @@ function renderAccountsModalList() {
             <button
               type="button"
               data-action="set-pro"
-              data-profile-id="${p.id}"
+              data-profile-id="${escapeHtml(p.id)}"
               title="Set this account as the primary Pro AI synthesis engine"
-              class="btn-account-set-pro google-btn-tonal px-3 py-1 text-xs text-[var(--google-yellow)] bg-[var(--google-yellow-container)]/40 hover:bg-[var(--google-yellow-container)]/70 border border-[var(--google-yellow)]/30 cursor-pointer"
+              class="btn-account-set-pro google-btn-tonal px-2.5 py-1 text-xs text-[var(--google-yellow)] bg-[var(--google-yellow-container)]/40 hover:bg-[var(--google-yellow-container)]/70 border border-[var(--google-yellow)]/30 cursor-pointer"
             >
               Make Pro
             </button>
@@ -1284,9 +1456,9 @@ function renderAccountsModalList() {
           <button
             type="button"
             data-action="delete"
-            data-profile-id="${p.id}"
+            data-profile-id="${escapeHtml(p.id)}"
             title="Delete account profile"
-            class="btn-account-delete p-2 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-red)] hover:bg-[var(--google-red-container)]/30 transition cursor-pointer"
+            class="btn-account-delete p-1.5 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-red)] hover:bg-[var(--google-red-container)]/30 transition cursor-pointer"
           >
             <i data-lucide="trash-2" class="w-3.5 h-3.5 pointer-events-none"></i>
           </button>
@@ -1295,7 +1467,59 @@ function renderAccountsModalList() {
     `;
   }).join('');
 
-  // Attach event listeners safely
+  // Wire event listeners
+  container.querySelectorAll('.btn-account-edit').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.editingProfileId = btn.getAttribute('data-profile-id');
+      renderAccountsModalList();
+    });
+  });
+  container.querySelectorAll('.btn-cancel-edit').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.editingProfileId = null;
+      renderAccountsModalList();
+    });
+  });
+  container.querySelectorAll('.input-edit-color').forEach(inp => {
+    inp.addEventListener('input', (e) => {
+      const hex = inp.closest('form')?.querySelector('.edit-color-hex');
+      if (hex) hex.textContent = e.target.value;
+    });
+  });
+  container.querySelectorAll('.btn-color-preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const form = btn.closest('form');
+      if (!form) return;
+      const colorVal = btn.getAttribute('data-color');
+      const colorInput = form.querySelector('.input-edit-color');
+      const hexLabel = form.querySelector('.edit-color-hex');
+      if (colorInput) colorInput.value = colorVal;
+      if (hexLabel) hexLabel.textContent = colorVal;
+    });
+  });
+  container.querySelectorAll('.select-edit-tier').forEach(sel => {
+    sel.addEventListener('change', (e) => {
+      const form = sel.closest('form');
+      const proCheck = form ? form.querySelector('.check-edit-pro') : null;
+      if (e.target.value === 'standard' && proCheck) {
+        proCheck.checked = false;
+      } else if (e.target.value === 'pro' && proCheck && !proCheck.checked) {
+        proCheck.checked = true;
+      }
+    });
+  });
+  container.querySelectorAll('.check-edit-pro').forEach(chk => {
+    chk.addEventListener('change', (e) => {
+      const form = chk.closest('form');
+      const tierSel = form ? form.querySelector('.select-edit-tier') : null;
+      if (e.target.checked && tierSel) {
+        tierSel.value = 'pro';
+      }
+    });
+  });
+  container.querySelectorAll('.form-edit-profile').forEach(form => {
+    form.addEventListener('submit', handleEditProfileSubmit);
+  });
   container.querySelectorAll('.btn-account-login').forEach(btn => {
     btn.addEventListener('click', () => handleTriggerLogin(btn.getAttribute('data-profile-id')));
   });
@@ -1307,6 +1531,77 @@ function renderAccountsModalList() {
   });
 
   if (window.lucide) lucide.createIcons();
+}
+
+async function handleEditProfileSubmit(e) {
+  e.preventDefault();
+  const form = e.target;
+  const oldProfileId = form.getAttribute('data-profile-id');
+  const displayName = form.querySelector('input[name="displayName"]').value.trim();
+  const email = form.querySelector('input[name="email"]').value.trim();
+  const newId = form.querySelector('input[name="newId"]').value.trim();
+  const tier = form.querySelector('select[name="tier"]').value;
+  const color = form.querySelector('input[name="color"]').value;
+  const isDefaultPro = form.querySelector('input[name="isDefaultPro"]').checked;
+
+  if (!displayName) {
+    showToast('Display Label is required', 'error');
+    return;
+  }
+  if (!newId) {
+    showToast('Profile Key is required', 'error');
+    return;
+  }
+
+  const submitBtn = form.querySelector('button[type="submit"]');
+  const originalHtml = submitBtn ? submitBtn.innerHTML : '';
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin pointer-events-none"></i><span>Saving...</span>';
+    if (window.lucide) lucide.createIcons({ root: submitBtn });
+  }
+  setGlobalLoading(true);
+
+  try {
+    const res = await fetch(`/api/profiles/${encodeURIComponent(oldProfileId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        newId: newId !== oldProfileId ? newId : undefined,
+        displayName: displayName,
+        email: email,
+        tier: tier,
+        color: color,
+        isDefaultPro: isDefaultPro
+      })
+    });
+
+    if (res.ok) {
+      const updated = await res.json();
+      state.editingProfileId = null;
+      if (state.activeProfileFilter === oldProfileId) {
+        state.activeProfileFilter = updated.id;
+      }
+      await loadProfiles();
+      await loadNotebooks();
+      renderAccountsModalList();
+      renderAccountPills();
+      renderNotebooksGrid();
+      showToast(`Profile '${displayName}' updated successfully`, 'success');
+    } else {
+      const err = await res.json();
+      showToast('Failed to update profile: ' + (err.detail || 'Server error'), 'error');
+    }
+  } catch (err) {
+    showToast('Error updating profile: ' + err.message, 'error');
+  } finally {
+    setGlobalLoading(false);
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = originalHtml;
+      if (window.lucide) lucide.createIcons({ root: submitBtn });
+    }
+  }
 }
 
 async function handleAddAccountSubmit(e) {
@@ -2722,6 +3017,7 @@ function openModal(id) {
 function closeModal(id) {
   const modal = document.getElementById(id);
   if (!modal) return;
+  if (id === 'modal-accounts') state.editingProfileId = null;
   const dialog = modal.querySelector('.m3-dialog');
   if (dialog) {
     dialog.classList.remove('modal-open');

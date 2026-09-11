@@ -2,6 +2,7 @@ import logging
 import asyncio
 from contextlib import asynccontextmanager
 from typing import List, Optional
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -21,6 +22,7 @@ from backend.nlm_client import (
     fetch_notebooks_for_profile, query_notebook,
     query_notebook_with_pro_fallback,
     synthesize_cross_notebook, launch_cli_login, delete_cli_profile,
+    rename_cli_profile,
     run_nlm_cmd, ensure_notebook_shared
 )
 from mcp_server.rotator import rotator
@@ -36,7 +38,7 @@ async def lifespan(app: FastAPI):
         cli_profiles = await get_cli_profiles()
         profiles = await get_profiles()
         for p in profiles:
-            if p.id in cli_profiles and cli_profiles[p.id]:
+            if not p.email and p.id in cli_profiles and cli_profiles[p.id]:
                 p.email = cli_profiles[p.id]
                 p.status = "connected"
                 await save_profile(p)
@@ -90,7 +92,7 @@ async def list_profiles():
     cli_profiles = await get_cli_profiles()
     profiles = await get_profiles()
     for p in profiles:
-        if p.id in cli_profiles and cli_profiles[p.id]:
+        if not p.email and p.id in cli_profiles and cli_profiles[p.id]:
             p.email = cli_profiles[p.id]
     return profiles
 
@@ -125,20 +127,51 @@ async def update_profile(profile_id: str, req: ProfileUpdateRequest):
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
 
+    target_id = clean_id
+    if req.newId and req.newId.strip():
+        new_clean_id = validate_profile_id(req.newId)
+        if new_clean_id != clean_id:
+            existing_target = await get_profile(new_clean_id)
+            if existing_target:
+                raise HTTPException(status_code=400, detail=f"Profile key '{new_clean_id}' already exists")
+
+            # 1. Rename CLI profile if supported
+            try:
+                await rename_cli_profile(clean_id, new_clean_id)
+            except Exception as e:
+                logger.warning(f"Failed to rename CLI profile {clean_id} -> {new_clean_id}: {e}")
+
+            # 2. Rename physical directory in ~/.notebooklm-mcp-cli/profiles if it exists
+            try:
+                p_dir = Path.home() / ".notebooklm-mcp-cli" / "profiles"
+                old_dir = p_dir / clean_id
+                new_dir = p_dir / new_clean_id
+                if old_dir.exists() and not new_dir.exists():
+                    old_dir.rename(new_dir)
+            except Exception as e:
+                logger.warning(f"Failed to rename profile directory {clean_id} -> {new_clean_id}: {e}")
+
+            profile.id = new_clean_id
+            target_id = new_clean_id
+
     if req.displayName is not None:
         profile.displayName = req.displayName.strip()
     if req.email is not None:
         profile.email = req.email.strip()
     if req.tier is not None:
         profile.tier = req.tier
+        if req.tier == "standard" and req.isDefaultPro is None and profile.isDefaultPro:
+            profile.isDefaultPro = False
     if req.color is not None:
         profile.color = req.color
     if req.icon is not None:
         profile.icon = req.icon
     if req.isDefaultPro is not None:
         profile.isDefaultPro = req.isDefaultPro
+        if req.isDefaultPro:
+            profile.tier = "pro"
 
-    await save_profile(profile)
+    await save_profile(profile, old_id=clean_id if target_id != clean_id else None)
 
     # Synchronize cached notebooks metadata with updated profile
     try:
@@ -146,6 +179,7 @@ async def update_profile(profile_id: str, req: ProfileUpdateRequest):
         updated_any = False
         for n in cached_notebooks:
             if n.profileId == clean_id:
+                n.profileId = target_id
                 n.profileName = profile.displayName
                 n.profileEmail = profile.email
                 n.tier = profile.tier

@@ -86,18 +86,20 @@ async def get_profile(profile_id: str) -> Optional[AccountProfile]:
             return p
     return None
 
-async def save_profile(profile: AccountProfile):
+async def save_profile(profile: AccountProfile, old_id: Optional[str] = None):
     async with _lock:
         profiles = await asyncio.to_thread(_load_profiles_sync)
         # If this is set as default pro, unset others
         if profile.isDefaultPro:
             for p in profiles:
-                if p.id != profile.id:
+                lookup = old_id if old_id else profile.id
+                if p.id != lookup and p.id != profile.id:
                     p.isDefaultPro = False
 
+        lookup_id = old_id if old_id else profile.id
         updated = False
         for i, p in enumerate(profiles):
-            if p.id == profile.id:
+            if p.id == lookup_id:
                 profiles[i] = profile
                 updated = True
                 break

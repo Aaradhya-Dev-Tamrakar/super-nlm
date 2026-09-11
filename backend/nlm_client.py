@@ -623,3 +623,7 @@ def launch_cli_login(profile_id: str, clear: bool = True):
 async def delete_cli_profile(profile_id: str) -> bool:
     res = await run_nlm_cmd(["login", "profile", "delete", profile_id], timeout=15)
     return res["success"]
+
+async def rename_cli_profile(old_id: str, new_id: str) -> bool:
+    res = await run_nlm_cmd(["login", "profile", "rename", old_id, new_id], timeout=15)
+    return res.get("success", False)

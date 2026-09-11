@@ -22,6 +22,7 @@ class ProfileCreateRequest(BaseModel):
     isDefaultPro: Optional[bool] = False
 
 class ProfileUpdateRequest(BaseModel):
+    newId: Optional[str] = None
     displayName: Optional[str] = None
     email: Optional[str] = None
     tier: Optional[Literal["pro", "standard"]] = None
