@@ -103,3 +103,10 @@ class StudioRequest(BaseModel):
     notebookId: str
     profileId: str
     artifactType: Literal["audio", "video", "slides", "mindmap", "report", "quiz", "flashcards"]
+
+class BatchShareRequest(BaseModel):
+    notebookIds: List[str] = Field(..., min_length=1, description="List of notebook UUIDs to share")
+    targetProfileIds: Optional[List[str]] = Field(default=None, description="Target profile IDs. If omitted, shares with all other registered accounts.")
+    role: Literal["editor", "viewer"] = Field(default="editor", description="Permission role to grant")
+    autoSync: bool = Field(default=True, description="Whether to trigger notebook cache sync after sharing")
+

@@ -416,6 +416,24 @@ function setupEventListeners() {
     telemetryCoursesBtn.addEventListener('click', toggleStudyFilter);
   }
 
+  // Sidebar telemetry accounts trigger
+  const telemetryAccountsBtn = document.getElementById('btn-telemetry-accounts');
+  if (telemetryAccountsBtn) {
+    telemetryAccountsBtn.addEventListener('click', () => {
+      openModal('modal-accounts');
+      renderAccountsModalList();
+    });
+  }
+
+  // Sidebar manage accounts trigger
+  const sidebarManageAccountsBtn = document.getElementById('btn-sidebar-manage-accounts');
+  if (sidebarManageAccountsBtn) {
+    sidebarManageAccountsBtn.addEventListener('click', () => {
+      openModal('modal-accounts');
+      renderAccountsModalList();
+    });
+  }
+
   // Manage Accounts Modal triggers
   const manageAccountsBtn = document.getElementById('btn-manage-accounts');
   if (manageAccountsBtn) {
@@ -754,7 +772,83 @@ function renderAccountPills() {
   });
   container.appendChild(addBtn);
 
+  // Synchronize sidebar accounts list
+  renderSidebarAccounts();
+
   if (window.lucide) lucide.createIcons();
+}
+
+function renderSidebarAccounts() {
+  const listEl = document.getElementById('sidebar-accounts-list');
+  if (!listEl) return;
+
+  if (state.profiles.length === 0) {
+    listEl.innerHTML = `
+      <div class="h-8 rounded-xl google-skeleton"></div>
+      <div class="h-8 rounded-xl google-skeleton"></div>
+    `;
+    return;
+  }
+
+  const uniqueNotebookCount = new Set(state.notebooks.map(n => n.id)).size;
+
+  let html = `
+    <button
+      type="button"
+      data-filter="all"
+      class="sidebar-account-btn w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition cursor-pointer ${
+        state.activeProfileFilter === 'all'
+          ? 'bg-[var(--google-blue-container)] text-[var(--google-blue-on-container)] font-medium'
+          : 'hover:bg-[var(--m3-surface-container-high)] text-[var(--m3-on-surface-variant)]'
+      }"
+    >
+      <div class="flex items-center gap-2 min-w-0">
+        <i data-lucide="users" class="w-3.5 h-3.5 shrink-0 ${state.activeProfileFilter === 'all' ? 'text-[var(--google-blue)]' : 'text-[var(--m3-on-surface-subtle)]'}"></i>
+        <span class="truncate">All Accounts</span>
+      </div>
+      <span class="px-1.5 py-0.2 text-[10px] rounded-full m3-subcard font-mono shrink-0 ${state.activeProfileFilter === 'all' ? 'text-[var(--google-blue-on-container)]' : 'text-[var(--m3-on-surface-subtle)]'}">${uniqueNotebookCount}</span>
+    </button>
+  `;
+
+  state.profiles.forEach(p => {
+    const count = state.notebooks.filter(n => n.profileId === p.id).length;
+    const isActive = state.activeProfileFilter === p.id;
+    const isPro = p.isDefaultPro || p.tier === 'pro';
+
+    html += `
+      <button
+        type="button"
+        data-filter="${escapeHtml(p.id)}"
+        class="sidebar-account-btn w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition cursor-pointer ${
+          isActive
+            ? 'bg-[var(--google-blue-container)] text-[var(--google-blue-on-container)] font-medium'
+            : 'hover:bg-[var(--m3-surface-container-high)] text-[var(--m3-on-surface-variant)]'
+        }"
+      >
+        <div class="flex items-center gap-2 min-w-0 flex-1">
+          <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${p.color || '#8ab4f8'};"></span>
+          <span class="truncate text-left" title="${escapeHtml(p.displayName || p.id)} (${escapeHtml(p.email || '')})">${escapeHtml(p.displayName || p.id)}</span>
+          ${isPro ? `
+            <span class="text-[9px] font-medium px-1 py-0.2 rounded bg-[var(--google-yellow-container)] text-[var(--google-yellow)] border border-[var(--google-yellow)]/30 shrink-0">PRO</span>
+          ` : ''}
+        </div>
+        <span class="px-1.5 py-0.2 text-[10px] rounded-full m3-subcard font-mono shrink-0 ml-1.5 ${isActive ? 'text-[var(--google-blue-on-container)]' : 'text-[var(--m3-on-surface-subtle)]'}">${count}</span>
+      </button>
+    `;
+  });
+
+  listEl.innerHTML = html;
+
+  listEl.querySelectorAll('.sidebar-account-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const filter = btn.getAttribute('data-filter');
+      state.activeProfileFilter = filter;
+      renderAccountPills();
+      renderNotebooksGrid();
+      const name = filter === 'all' ? 'All Accounts' : (state.profiles.find(x => x.id === filter)?.displayName || filter);
+      showToast(`Filter: ${name}`, 'info');
+    });
+  });
 }
 
 function renderCategoryChips() {
@@ -1024,50 +1118,50 @@ function renderNotebooksGrid() {
 
     return `
       <div 
-        class="m3-card animate-m3-stagger p-5 flex flex-col justify-between group relative ${isSelected ? 'selected' : ''}"
+        class="m3-card animate-m3-stagger p-5 flex flex-col justify-between group relative overflow-hidden ${isSelected ? 'selected' : ''}"
         style="animation-delay: ${Math.min(idx * 20, 200)}ms;"
       >
         
         <!-- Top row: Selection Checkbox, Account Tag, Course Badge, Pro Tier Badge -->
-        <div class="flex items-start justify-between gap-2 mb-3">
-          <div class="flex items-center gap-2">
+        <div class="flex items-center justify-between gap-2 mb-3 min-w-0">
+          <div class="flex items-center gap-2 min-w-0 flex-1">
             <input
               type="checkbox"
               data-id="${notebook.id}"
               data-profile="${notebook.profileId}"
               data-title="${escapeHtml(notebook.title)}"
-              class="notebook-select-checkbox rounded bg-[var(--m3-surface)] border-[var(--m3-outline)] text-[var(--google-blue)] focus:ring-0 cursor-pointer w-4 h-4 transition-transform active:scale-95"
+              class="notebook-select-checkbox rounded bg-[var(--m3-surface)] border-[var(--m3-outline)] text-[var(--google-blue)] focus:ring-0 cursor-pointer w-4 h-4 shrink-0 transition-transform active:scale-95"
               ${isSelected ? 'checked' : ''}
             >
             ${notebook.allProfiles && notebook.allProfiles.length > 1 ? `
-              <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)]" title="${escapeHtml(notebook.allProfiles.map(p => p.profileName || p.profileId).join(' • '))}">
-                <span class="flex items-center -space-x-1">
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)] min-w-0 max-w-full" title="${escapeHtml(notebook.allProfiles.map(p => p.profileName || p.profileId).join(' • '))}">
+                <span class="flex items-center -space-x-1 shrink-0">
                   ${notebook.allProfiles.map(p => `<span class="w-2 h-2 rounded-full border border-[var(--m3-surface)]" style="background-color: ${p.color || '#3b82f6'}"></span>`).join('')}
                 </span>
-                <span>${escapeHtml(notebook.profileName)}</span>
-                <span class="text-[10px] text-[var(--google-blue)] font-medium font-mono bg-[var(--google-blue-container)]/50 px-1 py-0.2 rounded">+${notebook.allProfiles.length - 1} shared</span>
+                <span class="truncate max-w-[85px] sm:max-w-[110px]">${escapeHtml(notebook.profileName)}</span>
+                <span class="text-[10px] text-[var(--google-blue)] font-medium font-mono bg-[var(--google-blue-container)]/50 px-1.5 py-0.2 rounded shrink-0" title="Shared across ${notebook.allProfiles.length} accounts">+${notebook.allProfiles.length - 1}</span>
               </span>
             ` : `
-              <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)]">
-                <span class="w-1.5 h-1.5 rounded-full" style="background-color: ${notebook.color}"></span>
-                <span>${escapeHtml(notebook.profileName)}</span>
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)] min-w-0 max-w-full">
+                <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background-color: ${notebook.color}"></span>
+                <span class="truncate max-w-[110px] sm:max-w-[140px]">${escapeHtml(notebook.profileName)}</span>
               </span>
             `}
           </div>
 
-          <div class="flex items-center gap-1.5 shrink-0">
+          <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
             ${isStudy && courseCode ? `
-              <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-[var(--google-blue-container)]/70 text-[var(--google-blue)] border border-[var(--google-blue)]/30 font-mono tracking-tight" title="Academic Course NLM: ${escapeHtml(courseCode)}">
-                <i data-lucide="graduation-cap" class="w-3 h-3 text-[var(--google-blue)]"></i> ${escapeHtml(courseCode)}
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-[var(--google-blue-container)]/70 text-[var(--google-blue)] border border-[var(--google-blue)]/30 font-mono tracking-tight shrink-0" title="Academic Course NLM: ${escapeHtml(courseCode)}">
+                <i data-lucide="graduation-cap" class="w-3 h-3 text-[var(--google-blue)] shrink-0"></i> ${escapeHtml(courseCode)}
               </span>
             ` : ''}
 
             ${isPro ? `
-              <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-medium bg-[var(--google-yellow-container)]/50 text-[var(--google-yellow)] border border-[var(--google-yellow)]/30">
-                <i data-lucide="sparkles" class="w-3 h-3 text-[var(--google-yellow)]"></i> PRO AI
+              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-[var(--google-yellow-container)]/50 text-[var(--google-yellow)] border border-[var(--google-yellow)]/30 shrink-0">
+                <i data-lucide="sparkles" class="w-3 h-3 text-[var(--google-yellow)] shrink-0"></i> PRO AI
               </span>
             ` : `
-              <span class="text-[10px] font-mono text-[var(--m3-on-surface-subtle)]">${escapeHtml(notebook.profileId)}</span>
+              <span class="text-[10px] font-mono text-[var(--m3-on-surface-subtle)] shrink-0">${escapeHtml(notebook.profileId)}</span>
             `}
           </div>
         </div>

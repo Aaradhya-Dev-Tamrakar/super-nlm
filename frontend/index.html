@@ -214,7 +214,7 @@
             <p class="text-[9px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider">Notebooks</p>
             <p id="telemetry-notebooks" class="text-lg font-bold font-mono text-[var(--m3-on-surface)] mt-0.5">0</p>
           </div>
-          <div class="p-2.5 rounded-xl m3-subcard">
+          <div class="p-2.5 rounded-xl m3-subcard cursor-pointer hover:border-[var(--google-blue)]/50 transition-colors" id="btn-telemetry-accounts" title="Manage Google Accounts (A)">
             <p class="text-[9px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider">Accounts</p>
             <p id="telemetry-profiles" class="text-lg font-bold font-mono text-[var(--google-blue)] mt-0.5">0</p>
           </div>
@@ -241,11 +241,27 @@
         <!-- Connect Account Action Button -->
         <button
           id="btn-sidebar-add-account"
-          class="google-btn-tonal w-full py-2 px-3 text-xs flex items-center justify-center gap-2"
+          class="google-btn-tonal w-full py-2 px-3 text-xs flex items-center justify-center gap-2 cursor-pointer"
         >
           <i data-lucide="user-plus" class="w-3.5 h-3.5"></i>
           <span>Add Google Account</span>
         </button>
+      </div>
+
+      <!-- Sidebar Connected Accounts Quick Switcher Card -->
+      <div class="m3-card p-4 space-y-3">
+        <div class="flex items-center justify-between pb-2 border-b border-[var(--m3-outline-variant)]">
+          <div class="flex items-center gap-2">
+            <i data-lucide="users" class="w-4 h-4 text-[var(--google-blue)]"></i>
+            <h3 class="text-xs font-medium uppercase tracking-wider text-[var(--m3-on-surface-variant)]">Accounts</h3>
+          </div>
+          <button id="btn-sidebar-manage-accounts" class="text-[11px] text-[var(--google-blue)] hover:underline font-medium cursor-pointer">
+            Manage
+          </button>
+        </div>
+        <div id="sidebar-accounts-list" class="space-y-1 max-h-56 overflow-y-auto pr-1">
+          <!-- Dynamically populated accounts with dots, names, PRO badges, and counts -->
+        </div>
       </div>
 
       <!-- Google Workspace Info Card -->
@@ -269,15 +285,37 @@
     <main class="flex-1 min-w-0 space-y-5">
 
       <!-- MATERIAL 3 FILTER CONTROLS -->
-      <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 flex-wrap">
-        <!-- Account Filter Chips -->
-        <div class="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none flex-1" id="account-pills-container">
-          <!-- Populated with M3 chips: "All Accounts", "Personal", "Work", etc. -->
+      <div class="space-y-3">
+        <!-- Account Filter Bar (Full width, wrapping chips - ALL accounts visible, NO scrolling) -->
+        <div class="flex items-center gap-2 flex-wrap" id="account-pills-container">
+          <!-- Populated with M3 chips: "All Accounts", "Personal", "Secondary", ... and "Add Account" -->
         </div>
 
-        <!-- Category / Study Filter Chips -->
-        <div class="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none shrink-0" id="category-pills-container">
-          <!-- Populated with M3 chips: "All Notebooks", "🎓 Study / Courses (6)", "🔬 Projects & Other" -->
+        <!-- Category Filter & Workspace Metrics Bar -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2.5 border-t border-[var(--m3-outline-variant)]/60">
+          <!-- Category / Study Filter Chips -->
+          <div class="flex items-center gap-1.5 flex-wrap shrink-0" id="category-pills-container">
+            <!-- Populated with M3 chips: "All", "🎓 Study Courses (6)", "🔬 Projects" -->
+          </div>
+
+          <!-- Metrics and Tier Legend -->
+          <div class="flex items-center justify-between sm:justify-end gap-4 text-xs text-[var(--m3-on-surface-subtle)] px-1">
+            <div class="flex items-center gap-2">
+              <span>Showing <strong id="visible-count" class="text-[var(--m3-on-surface)] font-mono font-medium">0</strong> notebooks</span>
+              <span class="text-[var(--m3-outline-variant)]">•</span>
+              <span id="active-filter-label" class="text-[var(--m3-on-surface-variant)] font-medium">All Accounts</span>
+            </div>
+            <div class="hidden md:flex items-center gap-3 text-[11px]">
+              <span class="flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-[var(--google-yellow)]"></span>
+                <span class="text-[var(--m3-on-surface-variant)]">Pro AI Tier</span>
+              </span>
+              <span class="flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-[var(--m3-outline)]"></span>
+                <span class="text-[var(--m3-on-surface-subtle)]">Standard Tier</span>
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -298,25 +336,6 @@
             <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
             <span>Synthesize with Pro AI</span>
           </button>
-        </div>
-      </div>
-
-      <!-- WORKSPACE METRICS BAR -->
-      <div class="flex items-center justify-between text-xs text-[var(--m3-on-surface-subtle)] px-1">
-        <div class="flex items-center gap-2">
-          <span>Showing <strong id="visible-count" class="text-[var(--m3-on-surface)] font-mono font-medium">0</strong> notebooks</span>
-          <span class="text-[var(--m3-outline-variant)]">•</span>
-          <span id="active-filter-label" class="text-[var(--m3-on-surface-variant)] font-medium">All Accounts</span>
-        </div>
-        <div class="flex items-center gap-4 text-[11px]">
-          <span class="flex items-center gap-1.5">
-            <span class="w-2 h-2 rounded-full bg-[var(--google-yellow)]"></span>
-            <span class="text-[var(--m3-on-surface-variant)]">Pro AI Tier</span>
-          </span>
-          <span class="flex items-center gap-1.5">
-            <span class="w-2 h-2 rounded-full bg-[var(--m3-outline)]"></span>
-            <span class="text-[var(--m3-on-surface-subtle)]">Standard Tier</span>
-          </span>
         </div>
       </div>
 

@@ -373,6 +373,118 @@ async def ensure_notebook_shared(notebook_id: str, source_profile_id: str, targe
 
     return invite_res["success"]
 
+async def batch_share_notebooks_to_accounts(
+    notebook_ids: List[str],
+    target_profile_ids: Optional[List[str]] = None,
+    role: str = "editor"
+) -> Dict[str, Any]:
+    """
+    Batch shares multiple notebooks across specified (or all registered) Google accounts.
+    Optimized to fetch share status once per notebook and only issue invitations for missing collaborators.
+    """
+    from backend.storage import get_profiles, get_cached_notebooks
+
+    profiles = await get_profiles()
+    profile_map = {p.id: p for p in profiles}
+    cached_notebooks = await get_cached_notebooks()
+    notebook_map = {n.id: n for n in cached_notebooks}
+
+    results = []
+    total_shared = 0
+    total_already_shared = 0
+    total_failed = 0
+    total_skipped_owner = 0
+
+    for nb_id in notebook_ids:
+        nb_entry = notebook_map.get(nb_id)
+        nb_title = nb_entry.title if nb_entry else nb_id
+        owner_profile_id = nb_entry.profileId if nb_entry else (profiles[0].id if profiles else "main")
+        owner_email = profile_map[owner_profile_id].email.lower() if owner_profile_id in profile_map and profile_map[owner_profile_id].email else ""
+
+        existing_collaborators = set()
+        status_res = await run_nlm_cmd(["share", "status", nb_id, "--profile", owner_profile_id, "--json"], timeout=20)
+        if status_res["success"]:
+            try:
+                data = json.loads(status_res["stdout"])
+                for c in data.get("collaborators", []):
+                    if c.get("email"):
+                        existing_collaborators.add(c.get("email").lower())
+            except Exception as e:
+                logger.warning(f"Could not parse share status for notebook {nb_id}: {e}")
+
+        if target_profile_ids:
+            target_profiles = [profile_map[pid] for pid in target_profile_ids if pid in profile_map]
+        else:
+            target_profiles = [p for p in profiles if p.id != owner_profile_id]
+
+        for target in target_profiles:
+            target_email = (target.email or "").strip().lower()
+            if not target_email:
+                continue
+
+            if target_email == owner_email:
+                total_skipped_owner += 1
+                results.append({
+                    "notebookId": nb_id,
+                    "notebookTitle": nb_title,
+                    "targetProfileId": target.id,
+                    "targetEmail": target.email,
+                    "status": "owner",
+                    "message": "Account is already notebook owner"
+                })
+                continue
+
+            if target_email in existing_collaborators:
+                total_already_shared += 1
+                results.append({
+                    "notebookId": nb_id,
+                    "notebookTitle": nb_title,
+                    "targetProfileId": target.id,
+                    "targetEmail": target.email,
+                    "status": "already_shared",
+                    "message": "Account already has access"
+                })
+                continue
+
+            invite_res = await run_nlm_cmd([
+                "share", "invite", nb_id, target_email,
+                "--role", role,
+                "--profile", owner_profile_id
+            ], timeout=25)
+
+            if invite_res["success"]:
+                total_shared += 1
+                existing_collaborators.add(target_email)
+                results.append({
+                    "notebookId": nb_id,
+                    "notebookTitle": nb_title,
+                    "targetProfileId": target.id,
+                    "targetEmail": target.email,
+                    "status": "shared",
+                    "message": f"Successfully invited as {role}"
+                })
+            else:
+                total_failed += 1
+                results.append({
+                    "notebookId": nb_id,
+                    "notebookTitle": nb_title,
+                    "targetProfileId": target.id,
+                    "targetEmail": target.email,
+                    "status": "failed",
+                    "message": invite_res.get("stderr") or "Invitation failed"
+                })
+
+    return {
+        "success": total_failed == 0,
+        "totalNotebooks": len(notebook_ids),
+        "totalOperations": len(results),
+        "shared": total_shared,
+        "alreadyShared": total_already_shared,
+        "skippedOwner": total_skipped_owner,
+        "failed": total_failed,
+        "details": results
+    }
+
 async def check_or_share_with_pro(notebook_id: str, source_profile_id: str, pro_email: str) -> bool:
     """Backward-compatible wrapper for Pro fallback sharing."""
     return await ensure_notebook_shared(notebook_id, source_profile_id, pro_email)
