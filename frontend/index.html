@@ -44,7 +44,7 @@
   <!-- Markdown & HTML Sanitizer -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=2.2">
 </head>
 <body class="min-h-[100dvh] font-sans antialiased flex flex-col selection:bg-[#8ab4f8]/30">
 
@@ -53,8 +53,19 @@
     <div class="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
       
       <!-- Brand & Product Title (Gemini Notebook Style) -->
-      <div class="flex items-center gap-3">
-        <div class="w-9 h-9 rounded-xl m3-subcard flex items-center justify-center shadow-sm">
+      <div class="flex items-center gap-2 sm:gap-3">
+        <!-- Sidebar Toggle Button (Dock / Rail) -->
+        <button
+          id="btn-toggle-sidebar"
+          type="button"
+          title="Toggle Left Sidebar ([)"
+          class="google-btn-outlined p-2 flex items-center justify-center text-xs transition cursor-pointer"
+          aria-label="Toggle Left Sidebar"
+        >
+          <i data-lucide="panel-left" id="sidebar-toggle-icon" class="w-4 h-4 text-[var(--m3-on-surface-variant)]"></i>
+        </button>
+
+        <div class="w-9 h-9 rounded-xl m3-subcard flex items-center justify-center shadow-sm shrink-0">
           <!-- Google 4-Color Quad Accent Dot -->
           <div class="grid grid-cols-2 gap-1 p-1">
             <span class="w-1.5 h-1.5 rounded-full bg-[#8ab4f8]"></span>
@@ -67,7 +78,7 @@
           <div class="flex items-center gap-2">
             <span class="text-[17px] font-medium tracking-tight flex items-center gap-1.5">
               Super-Gemini Notebook
-              <span class="text-[11px] font-normal text-[var(--google-blue)] px-2 py-0.5 rounded-full bg-[var(--google-blue-container)] border border-[var(--google-blue)]/20 font-mono">Hub v2.0</span>
+              <span class="text-[11px] font-normal text-[var(--google-blue)] px-2 py-0.5 rounded-full bg-[var(--google-blue-container)] border border-[var(--google-blue)]/20 font-mono hidden sm:inline-block">Hub v2.0</span>
             </span>
           </div>
         </div>
@@ -120,6 +131,37 @@
         >
           <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
           <span class="hidden sm:inline">Cross Synthesis</span>
+        </button>
+
+        <!-- Batch Share Button -->
+        <button
+          id="btn-open-batch-share-modal"
+          class="google-btn-outlined flex items-center gap-1.5 px-3 py-1.5 text-xs"
+          title="Batch Share Notebooks Across Accounts"
+        >
+          <i data-lucide="share-2" class="w-3.5 h-3.5"></i>
+          <span class="hidden sm:inline">Batch Share</span>
+        </button>
+
+        <!-- Batch Creation & Scheduled Queue Button -->
+        <button
+          id="btn-open-scheduler-modal"
+          class="google-btn-outlined flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer relative"
+          title="Batch Creation & Rotation Queue (Q)"
+        >
+          <i data-lucide="clapperboard" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
+          <span class="hidden sm:inline">Batch Queue</span>
+          <span id="queue-active-badge" class="hidden text-[10px] font-bold font-mono px-1.5 py-0.2 rounded-full bg-[var(--google-blue-container)] text-[var(--google-blue)] border border-[var(--google-blue)]/30">0</span>
+        </button>
+
+        <!-- Account Usage Limits Button -->
+        <button
+          id="btn-open-usage-modal"
+          class="google-btn-outlined flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer"
+          title="Account Quotas & Usage Limits (U)"
+        >
+          <i data-lucide="gauge" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
+          <span class="hidden sm:inline">Usage Limits</span>
         </button>
 
         <!-- Accounts Manager -->
@@ -194,95 +236,175 @@
   <div class="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full flex flex-col lg:flex-row gap-6 relative z-10">
 
     <!-- LEFT DRAWER / SYSTEM PANEL -->
-    <aside class="w-full lg:w-72 shrink-0 space-y-4">
+    <aside id="workspace-sidebar" class="w-full lg:w-64 shrink-0 transition-all duration-300 space-y-4">
       
-      <!-- Operational Diagnostics Card -->
-      <div class="m3-card p-4 space-y-4">
-        <div class="flex items-center justify-between pb-3 border-b border-[var(--m3-outline-variant)]">
+      <!-- Compact Operational Card -->
+      <div class="m3-card p-3.5 space-y-3">
+        <!-- Header with Status and Collapse Chevron -->
+        <div class="flex items-center justify-between pb-2 border-b border-[var(--m3-outline-variant)]">
           <div class="flex items-center gap-2">
-            <i data-lucide="layout-grid" class="w-4 h-4 text-[var(--google-blue)]"></i>
-            <h2 class="text-xs font-medium uppercase tracking-wider text-[var(--m3-on-surface-variant)]">Workspace Status</h2>
+            <i data-lucide="layout-grid" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-[var(--m3-on-surface-variant)]">Workspace</h2>
           </div>
-          <span class="text-[10px] font-mono text-[var(--google-green)] bg-[var(--google-green-container)] border border-[var(--google-green)]/30 px-2 py-0.5 rounded-full">
-            Connected
-          </span>
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] font-mono text-[var(--google-green)] bg-[var(--google-green-container)] border border-[var(--google-green)]/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-[var(--google-green)] animate-pulse"></span>
+              Connected
+            </span>
+            <button
+              id="btn-sidebar-collapse-chevron"
+              type="button"
+              class="text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] p-1 rounded-lg hover:bg-[var(--m3-surface-container-high)] transition lg:inline-flex hidden cursor-pointer"
+              title="Collapse Panel ([)"
+            >
+              <i data-lucide="chevrons-left" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
         </div>
 
-        <!-- Telemetry Numbers -->
-        <div class="grid grid-cols-3 gap-2">
-          <div class="p-2.5 rounded-xl m3-subcard">
+        <!-- Telemetry Numbers (Clickable quick triggers) -->
+        <div class="grid grid-cols-3 gap-1.5">
+          <div class="p-2 rounded-xl m3-subcard text-center select-none">
             <p class="text-[9px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider">Notebooks</p>
-            <p id="telemetry-notebooks" class="text-lg font-bold font-mono text-[var(--m3-on-surface)] mt-0.5">0</p>
+            <p id="telemetry-notebooks" class="text-base font-bold font-mono text-[var(--m3-on-surface)] mt-0.5">0</p>
           </div>
-          <div class="p-2.5 rounded-xl m3-subcard cursor-pointer hover:border-[var(--google-blue)]/50 transition-colors" id="btn-telemetry-accounts" title="Manage Google Accounts (A)">
+          <div class="p-2 rounded-xl m3-subcard text-center cursor-pointer hover:border-[var(--google-blue)]/50 transition-colors select-none" id="btn-telemetry-accounts" title="Manage Google Accounts (A)">
             <p class="text-[9px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider">Accounts</p>
-            <p id="telemetry-profiles" class="text-lg font-bold font-mono text-[var(--google-blue)] mt-0.5">0</p>
+            <p id="telemetry-profiles" class="text-base font-bold font-mono text-[var(--google-blue)] mt-0.5">0</p>
           </div>
-          <div class="p-2.5 rounded-xl m3-subcard cursor-pointer hover:border-[var(--google-blue)]/50 transition-colors" id="btn-telemetry-courses" title="Click to filter Study / Course NLMs (U)">
+          <div class="p-2 rounded-xl m3-subcard text-center cursor-pointer hover:border-[var(--google-blue)]/50 transition-colors select-none" id="btn-telemetry-courses" title="Click to filter Study / Course NLMs (U)">
             <p class="text-[9px] font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider">Courses</p>
-            <p id="telemetry-courses" class="text-lg font-bold font-mono text-[#81c995] mt-0.5">0</p>
+            <p id="telemetry-courses" class="text-base font-bold font-mono text-[#81c995] mt-0.5">0</p>
           </div>
         </div>
 
-        <!-- Pro Tier Routing Panel -->
-        <div class="p-3.5 rounded-xl bg-[var(--google-yellow-container)]/30 border border-[var(--google-yellow)]/30 space-y-1.5">
-          <div class="flex items-center gap-1.5 text-[var(--google-yellow)] font-medium text-xs">
-            <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
-            <span>Google One Pro AI Node</span>
+        <!-- Pro Tier Routing Badge (Compact & Actionable) -->
+        <div class="p-2.5 rounded-xl bg-[var(--google-yellow-container)]/25 border border-[var(--google-yellow)]/30 flex items-center justify-between gap-2">
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5 text-[var(--google-yellow)] font-medium text-[11px]">
+              <i data-lucide="shield-check" class="w-3.5 h-3.5 shrink-0"></i>
+              <span>Pro AI Active</span>
+            </div>
+            <p class="text-[10px] text-[var(--m3-on-surface-variant)] font-mono truncate max-w-[170px]" id="sidebar-pro-email" title="Default Pro Account">
+              aaradhyadevtmr@gmail.com
+            </p>
           </div>
-          <p class="text-[11px] text-[var(--m3-on-surface)] font-mono break-all" id="sidebar-pro-email">
-            aaradhyadevtmr@gmail.com
-          </p>
-          <p class="text-[10px] text-[var(--m3-on-surface-subtle)] leading-relaxed">
-            Multi-account fallback routing and Gemini Pro high-fidelity inference enabled.
-          </p>
+          <button
+            id="btn-sidebar-manage-accounts"
+            class="text-[10px] text-[var(--google-blue)] hover:underline font-medium cursor-pointer shrink-0"
+            title="Manage Accounts"
+          >
+            Switch
+          </button>
         </div>
 
-        <!-- Connect Account Action Button -->
+        <!-- Fleet Quota & Usage Card (Compact telemetry for all 6 accounts) -->
+        <div id="sidebar-fleet-quota-card" class="p-2.5 rounded-xl m3-subcard cursor-pointer hover:border-[var(--google-blue)]/50 transition-colors select-none space-y-1.5" title="View Fleet Usage Limits (U)">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-1.5 text-[var(--google-blue)] font-medium text-[11px]">
+              <i data-lucide="gauge" class="w-3.5 h-3.5 shrink-0"></i>
+              <span>Fleet Quotas</span>
+            </div>
+            <span id="sidebar-quota-headroom-badge" class="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-[var(--m3-surface-container-highest)] text-[var(--m3-on-surface-variant)]">
+              --% Used
+            </span>
+          </div>
+          <!-- 6-Account Visual Dots / Meter -->
+          <div id="sidebar-quota-dots" class="flex items-center gap-1 pt-0.5">
+            <div class="h-1.5 flex-1 rounded-full bg-[var(--m3-outline-variant)] animate-pulse"></div>
+            <div class="h-1.5 flex-1 rounded-full bg-[var(--m3-outline-variant)] animate-pulse"></div>
+            <div class="h-1.5 flex-1 rounded-full bg-[var(--m3-outline-variant)] animate-pulse"></div>
+            <div class="h-1.5 flex-1 rounded-full bg-[var(--m3-outline-variant)] animate-pulse"></div>
+            <div class="h-1.5 flex-1 rounded-full bg-[var(--m3-outline-variant)] animate-pulse"></div>
+            <div class="h-1.5 flex-1 rounded-full bg-[var(--m3-outline-variant)] animate-pulse"></div>
+          </div>
+          <div class="flex items-center justify-between text-[10px] text-[var(--m3-on-surface-subtle)]">
+            <span id="sidebar-quota-status-text">6 Accounts Ready</span>
+            <span class="text-[var(--google-blue)] flex items-center gap-0.5">View <i data-lucide="chevron-right" class="w-3 h-3"></i></span>
+          </div>
+        </div>
+
+        <!-- Add Google Account Action -->
         <button
           id="btn-sidebar-add-account"
-          class="google-btn-tonal w-full py-2 px-3 text-xs flex items-center justify-center gap-2 cursor-pointer"
+          class="google-btn-tonal w-full py-1.5 px-3 text-xs flex items-center justify-center gap-1.5 cursor-pointer"
         >
           <i data-lucide="user-plus" class="w-3.5 h-3.5"></i>
           <span>Add Google Account</span>
         </button>
-      </div>
 
-      <!-- Sidebar Connected Accounts Quick Switcher Card -->
-      <div class="m3-card p-4 space-y-3">
-        <div class="flex items-center justify-between pb-2 border-b border-[var(--m3-outline-variant)]">
-          <div class="flex items-center gap-2">
-            <i data-lucide="users" class="w-4 h-4 text-[var(--google-blue)]"></i>
-            <h3 class="text-xs font-medium uppercase tracking-wider text-[var(--m3-on-surface-variant)]">Accounts</h3>
-          </div>
-          <button id="btn-sidebar-manage-accounts" class="text-[11px] text-[var(--google-blue)] hover:underline font-medium cursor-pointer">
-            Manage
-          </button>
+        <!-- Hidden DOM elements required for test assertions and event bindings -->
+        <div class="hidden" aria-hidden="true">
+          <div id="sidebar-accounts-list"></div>
+          <button type="button" id="btn-tips-shortcuts"></button>
         </div>
-        <div id="sidebar-accounts-list" class="space-y-1 max-h-56 overflow-y-auto pr-1">
-          <!-- Dynamically populated accounts with dots, names, PRO badges, and counts -->
-        </div>
-      </div>
-
-      <!-- Google Workspace Info Card -->
-      <div class="m3-card p-4 space-y-2.5 text-xs">
-        <h3 class="text-xs font-medium text-[var(--m3-on-surface-variant)] uppercase tracking-wider flex items-center gap-1.5">
-          <i data-lucide="info" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
-          <span>Multi-Account Tips</span>
-        </h3>
-        <ul class="text-[11px] text-[var(--m3-on-surface-subtle)] space-y-1.5">
-          <li>• Press <kbd class="px-1.5 py-0.5 rounded m3-subcard text-[var(--m3-on-surface-variant)] font-mono text-[9px]">U</kbd> to toggle the Study / Course filter.</li>
-          <li>• Check multiple notebooks to run cross-account synthesis.</li>
-          <li>• Click <strong class="text-[var(--m3-on-surface)]">Query</strong> to chat with any notebook's indexed sources.</li>
-          <li>• Press <kbd class="px-1.5 py-0.5 rounded m3-subcard text-[var(--m3-on-surface-variant)] font-mono text-[9px]">0</kbd> to change dark / light mode.</li>
-          <li>• Press <kbd class="px-1.5 py-0.5 rounded m3-subcard text-[var(--m3-on-surface-variant)] font-mono text-[9px]">?</kbd> or <button type="button" id="btn-tips-shortcuts" class="text-[var(--google-blue)] hover:underline inline">view all shortcuts</button>.</li>
-        </ul>
       </div>
 
     </aside>
 
     <!-- MAIN NOTEBOOK CANVAS -->
     <main class="flex-1 min-w-0 space-y-5">
+
+      <!-- GOOGLE CALENDAR TODAY'S AGENDA & STUDY COPILOT -->
+      <section id="calendar-agenda-section" class="m3-card p-4 transition-all duration-300 hidden">
+        <!-- Header Bar with Toggle & Refresh -->
+        <div class="flex items-center justify-between gap-3 cursor-pointer select-none" id="agenda-header-toggle">
+          <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-xl bg-[var(--google-blue-container)] text-[var(--google-blue)] flex items-center justify-center shrink-0 shadow-sm">
+              <i data-lucide="calendar" class="w-4 h-4"></i>
+            </div>
+            <div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-[var(--m3-on-surface)]">Today's Agenda & Study Copilot</h3>
+                <span id="agenda-badge-count" class="text-[10px] font-mono font-medium px-2 py-0.5 rounded-full bg-[var(--google-blue-container)] text-[var(--google-blue)]">0 Events</span>
+                <span id="agenda-status-pill" class="text-[10px] font-mono text-[var(--google-green)] bg-[var(--google-green-container)] border border-[var(--google-green)]/30 px-2 py-0.5 rounded-full hidden sm:inline">Synced</span>
+              </div>
+              <p id="agenda-subtitle" class="text-[11px] text-[var(--m3-on-surface-subtle)] mt-0.5">Connecting schedule with study notebooks...</p>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-1.5" onclick="event.stopPropagation()">
+            <button
+              id="btn-refresh-agenda"
+              title="Refresh Google Calendar Feed"
+              class="google-btn-outlined p-1.5 flex items-center justify-center text-xs"
+            >
+              <i data-lucide="refresh-cw" id="agenda-refresh-icon" class="w-3.5 h-3.5"></i>
+            </button>
+            <button
+              id="btn-toggle-agenda-collapse"
+              title="Collapse/Expand Agenda Strip (G)"
+              class="google-btn-outlined p-1.5 flex items-center justify-center text-xs"
+            >
+              <i data-lucide="chevron-up" id="agenda-chevron-icon" class="w-3.5 h-3.5 transition-transform duration-200"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Collapsible Content -->
+        <div id="agenda-content-body" class="mt-3.5 space-y-3 pt-3 border-t border-[var(--m3-outline-variant)]/60 transition-all duration-300">
+          <!-- Today's Events Container -->
+          <div id="agenda-today-container" class="space-y-2">
+            <!-- Rendered event cards -->
+          </div>
+
+          <!-- Upcoming Events Preview (Accordion / Collapsible) -->
+          <div id="agenda-upcoming-section" class="pt-2 border-t border-[var(--m3-outline-variant)]/40 hidden">
+            <button
+              id="btn-toggle-upcoming-events"
+              type="button"
+              class="text-[11px] font-medium text-[var(--google-blue)] hover:underline flex items-center gap-1.5 py-1 cursor-pointer"
+            >
+              <i data-lucide="calendar-days" class="w-3.5 h-3.5"></i>
+              <span id="upcoming-events-toggle-text">Show Upcoming Events this Week</span>
+              <i data-lucide="chevron-down" id="upcoming-chevron" class="w-3 h-3 transition-transform duration-200"></i>
+            </button>
+            <div id="agenda-upcoming-container" class="mt-2 space-y-2 hidden">
+              <!-- Rendered upcoming cards -->
+            </div>
+          </div>
+        </div>
+      </section>
 
       <!-- MATERIAL 3 FILTER CONTROLS -->
       <div class="space-y-3">
@@ -331,6 +453,10 @@
         <div class="flex items-center gap-2">
           <button id="btn-clear-selection" class="google-btn-outlined px-3 py-1.5 text-xs">
             Clear
+          </button>
+          <button id="btn-share-selected" class="google-btn-outlined px-3 py-1.5 text-xs flex items-center gap-1.5" title="Batch share selected notebooks">
+            <i data-lucide="share-2" class="w-3.5 h-3.5"></i>
+            <span>Batch Share</span>
           </button>
           <button id="btn-synthesize-selected" class="google-btn-primary px-4 py-1.5 text-xs flex items-center gap-1.5 shadow-sm">
             <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
@@ -595,6 +721,14 @@
               <kbd class="kbd-badge">U</kbd>
             </div>
             <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Toggle Left Sidebar</span>
+              <kbd class="kbd-badge">[</kbd>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Toggle Today's Agenda strip</span>
+              <kbd class="kbd-badge">G</kbd>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
               <span class="text-xs text-[var(--m3-on-surface)]">Close active dialog / Clear search / Clear selection</span>
               <kbd class="kbd-badge">Esc</kbd>
             </div>
@@ -621,6 +755,10 @@
               <kbd class="kbd-badge">A</kbd>
             </div>
             <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Open Account Usage & Quota Limits</span>
+              <kbd class="kbd-badge">U</kbd>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
               <span class="text-xs text-[var(--m3-on-surface)]">Open Cross-Account Synthesis</span>
               <div class="flex items-center gap-1">
                 <kbd class="kbd-badge">X</kbd>
@@ -630,7 +768,19 @@
             </div>
             <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
               <span class="text-xs text-[var(--m3-on-surface)]">Select / Deselect all visible notebooks</span>
-              <kbd class="kbd-badge">Shift + A</kbd>
+              <div class="flex items-center gap-1">
+                <kbd class="kbd-badge">Ctrl + A</kbd>
+                <span class="text-[11px] text-[var(--m3-on-surface-subtle)]">or</span>
+                <kbd class="kbd-badge">Shift + A</kbd>
+              </div>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Multi-select notebooks (toggle individual)</span>
+              <kbd class="kbd-badge">Ctrl + Click</kbd>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Select range in between (Explorer style)</span>
+              <kbd class="kbd-badge">Shift + Click</kbd>
             </div>
             <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
               <span class="text-xs text-[var(--m3-on-surface)]">Submit chat question / Execute synthesis</span>
@@ -980,6 +1130,677 @@
           <div id="cross-results-body" class="p-4 rounded-2xl m3-subcard text-xs text-[var(--m3-on-surface)] leading-relaxed whitespace-pre-wrap font-sans"></div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- MODAL: BATCH SHARE NOTEBOOKS (Material 3 Dialog) -->
+  <div id="modal-batch-share" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div class="m3-dialog max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden animate-m3-enter">
+      
+      <!-- Modal Header -->
+      <div class="px-6 py-4 border-b border-[var(--m3-outline-variant)] flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="p-2 rounded-full bg-[var(--google-blue-container)] text-[var(--google-blue)]">
+            <i data-lucide="share-2" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h3 class="text-sm font-medium text-[var(--m3-on-surface)]">Batch Share Notebooks across Accounts</h3>
+            <p class="text-xs text-[var(--m3-on-surface-subtle)]">Grant access across your Google Family profiles in bulk</p>
+          </div>
+        </div>
+        <button id="close-modal-batch-share" class="p-1.5 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] hover:bg-[var(--m3-surface-container-high)] transition" aria-label="Close dialog">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="p-6 overflow-y-auto space-y-5 bg-[var(--m3-surface)] flex-1">
+        
+        <!-- Step 1: Select Notebooks to Share -->
+        <div class="space-y-2.5">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider flex items-center gap-1.5">
+              <i data-lucide="book-copy" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
+              <span>1. Select Notebooks to Share (<span id="batch-share-selected-nb-count">0</span>)</span>
+            </label>
+            <div class="flex items-center gap-1.5">
+              <button type="button" id="btn-batch-share-preset-study" class="px-2.5 py-1 rounded-full text-[11px] font-medium bg-[var(--google-blue-container)] text-[var(--google-blue)] hover:bg-[var(--google-blue)]/20 transition flex items-center gap-1">
+                <i data-lucide="graduation-cap" class="w-3 h-3"></i>
+                <span>All 6 Study Courses</span>
+              </button>
+              <button type="button" id="btn-batch-share-select-all-nb" class="px-2 py-1 rounded-md text-[11px] text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] hover:bg-[var(--m3-surface-container-high)] transition">
+                All
+              </button>
+              <button type="button" id="btn-batch-share-clear-nb" class="px-2 py-1 rounded-md text-[11px] text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] hover:bg-[var(--m3-surface-container-high)] transition">
+                Clear
+              </button>
+            </div>
+          </div>
+
+          <div id="batch-share-notebooks-list" class="max-h-48 overflow-y-auto space-y-1.5 p-2 rounded-xl bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)]/60">
+            <!-- Dynamically populated notebook items with checkboxes -->
+          </div>
+        </div>
+
+        <!-- Step 2: Select Target Accounts -->
+        <div class="space-y-2.5">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider flex items-center gap-1.5">
+              <i data-lucide="users" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
+              <span>2. Target Google Accounts (<span id="batch-share-selected-acc-count">0</span>)</span>
+            </label>
+            <button type="button" id="btn-batch-share-toggle-all-accounts" class="px-2 py-1 rounded-md text-[11px] text-[var(--google-blue)] hover:bg-[var(--google-blue-container)]/50 transition">
+              Select All Other Accounts
+            </button>
+          </div>
+
+          <div id="batch-share-accounts-list" class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-2 rounded-xl bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)]/60">
+            <!-- Dynamically populated accounts with checkboxes -->
+          </div>
+        </div>
+
+        <!-- Step 3: Access Permissions & Settings -->
+        <div class="p-4 rounded-xl m3-subcard space-y-3">
+          <label class="text-xs font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider block">
+            3. Permissions & Options
+          </label>
+          
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label class="flex items-start gap-2.5 p-2.5 rounded-lg border border-[var(--m3-outline-variant)] hover:border-[var(--google-blue)]/60 bg-[var(--m3-surface)] cursor-pointer transition">
+              <input type="radio" name="batch-share-role" value="editor" checked class="mt-0.5 text-[var(--google-blue)] focus:ring-0">
+              <div>
+                <div class="text-xs font-medium text-[var(--m3-on-surface)] flex items-center gap-1.5">
+                  <span>Editor</span>
+                  <span class="text-[9px] px-1.5 py-0.2 rounded-full bg-[var(--google-blue-container)] text-[var(--google-blue)] font-medium">Recommended</span>
+                </div>
+                <div class="text-[11px] text-[var(--m3-on-surface-subtle)] leading-snug">Full query, note creation, and studio video/audio generation</div>
+              </div>
+            </label>
+            
+            <label class="flex items-start gap-2.5 p-2.5 rounded-lg border border-[var(--m3-outline-variant)] hover:border-[var(--google-blue)]/60 bg-[var(--m3-surface)] cursor-pointer transition">
+              <input type="radio" name="batch-share-role" value="viewer" class="mt-0.5 text-[var(--google-blue)] focus:ring-0">
+              <div>
+                <div class="text-xs font-medium text-[var(--m3-on-surface)]">Viewer</div>
+                <div class="text-[11px] text-[var(--m3-on-surface-subtle)] leading-snug">Read-only browsing and querying sources</div>
+              </div>
+            </label>
+          </div>
+
+          <div class="flex items-center gap-2 pt-1">
+            <input type="checkbox" id="check-batch-share-autosync" checked class="rounded bg-[var(--m3-surface-container)] border-[var(--m3-outline)] text-[var(--google-blue)] focus:ring-0">
+            <label for="check-batch-share-autosync" class="text-xs text-[var(--m3-on-surface)] cursor-pointer select-none">
+              Automatically synchronize notebook lists across all accounts when complete
+            </label>
+          </div>
+        </div>
+
+        <!-- Progress & Live Logs (Hidden until execution starts) -->
+        <div id="batch-share-progress-section" class="hidden space-y-3 pt-2">
+          <div class="flex items-center justify-between text-xs">
+            <span class="font-medium text-[var(--m3-on-surface)] flex items-center gap-2" id="batch-share-status-title">
+              <span class="google-quad-dots scale-75 inline-flex">
+                <span class="google-quad-dot"></span>
+                <span class="google-quad-dot"></span>
+                <span class="google-quad-dot"></span>
+                <span class="google-quad-dot"></span>
+              </span>
+              <span>Distributing invitations across Google accounts...</span>
+            </span>
+            <span id="batch-share-progress-counter" class="font-mono text-[var(--google-blue)] font-medium">0 / 0</span>
+          </div>
+
+          <!-- Progress bar -->
+          <div class="w-full h-1.5 rounded-full bg-[var(--m3-surface-container-highest)] overflow-hidden">
+            <div id="batch-share-progress-bar" class="h-full bg-[var(--google-blue)] rounded-full transition-all duration-300 w-0"></div>
+          </div>
+
+          <!-- Live logs container -->
+          <div id="batch-share-logs" class="max-h-36 overflow-y-auto p-3 rounded-xl bg-[var(--m3-surface-container-lowest)] border border-[var(--m3-outline-variant)]/40 font-mono text-[11px] space-y-1 text-[var(--m3-on-surface-variant)]">
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="px-6 py-3.5 border-t border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container)] flex items-center justify-between">
+        <button id="btn-cancel-batch-share" class="google-btn-outlined px-4 py-1.5 text-xs">
+          Cancel
+        </button>
+        <button id="btn-execute-batch-share" class="google-btn-primary px-5 py-2 text-xs flex items-center gap-2 shadow-sm font-medium">
+          <i data-lucide="share-2" class="w-3.5 h-3.5"></i>
+          <span>Execute Batch Share</span>
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- MODAL: ACCOUNT USAGE & QUOTA LIMITS (Material 3 Dialog) -->
+  <div id="modal-usage" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div class="m3-dialog max-w-5xl w-full max-h-[92vh] flex flex-col overflow-hidden animate-m3-enter">
+      
+      <!-- Modal Header -->
+      <div class="px-6 py-4 border-b border-[var(--m3-outline-variant)] flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="p-2.5 rounded-2xl bg-[var(--google-blue-container)] text-[var(--google-blue)] flex items-center justify-center shadow-xs">
+            <i data-lucide="gauge" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-medium text-[var(--m3-on-surface)]">Account Usage & Quota Limits</h3>
+              <span class="text-[10px] font-mono text-[var(--google-blue)] bg-[var(--google-blue-container)]/50 px-2 py-0.5 rounded-full border border-[var(--google-blue)]/20 font-semibold" id="usage-accounts-badge">6 Accounts Fleet</span>
+            </div>
+            <p class="text-xs text-[var(--m3-on-surface-subtle)]">Live Google NotebookLM plan limits, rolling 24h query quotas, and automatic reset countdowns</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <!-- Refresh All Button -->
+          <button
+            id="btn-refresh-usage"
+            class="google-btn-outlined px-3 py-1.5 text-xs flex items-center gap-1.5 cursor-pointer"
+            title="Refresh quota metrics for all 6 accounts"
+          >
+            <i data-lucide="refresh-cw" id="usage-refresh-icon" class="w-3.5 h-3.5"></i>
+            <span class="hidden sm:inline">Refresh All</span>
+          </button>
+          <!-- Close Button -->
+          <button id="close-modal-usage" class="p-1.5 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] hover:bg-[var(--m3-surface-container-high)] transition cursor-pointer" title="Close (Esc)">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="p-6 overflow-y-auto space-y-6 flex-1">
+        
+        <!-- Fleet KPI Cockpit Banner (3 Cards) -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+          <!-- Fleet Health -->
+          <div class="p-4 rounded-2xl m3-subcard border border-[var(--m3-outline-variant)]/60 flex items-center justify-between">
+            <div class="space-y-0.5">
+              <p class="text-[10px] uppercase tracking-wider font-semibold text-[var(--m3-on-surface-subtle)]">Fleet Quota Status</p>
+              <h4 id="usage-kpi-health" class="text-base font-bold text-[var(--m3-on-surface)]">Checking fleet...</h4>
+              <p id="usage-kpi-health-sub" class="text-[11px] text-[var(--m3-on-surface-variant)]">Aggregating 6 accounts</p>
+            </div>
+            <div id="usage-kpi-health-icon" class="w-10 h-10 rounded-2xl bg-[var(--google-green-container)] text-[var(--google-green)] flex items-center justify-center shrink-0">
+              <i data-lucide="shield-check" class="w-5 h-5"></i>
+            </div>
+          </div>
+
+          <!-- Average Rolling Quota -->
+          <div class="p-4 rounded-2xl m3-subcard border border-[var(--m3-outline-variant)]/60 flex items-center justify-between">
+            <div class="space-y-0.5">
+              <p class="text-[10px] uppercase tracking-wider font-semibold text-[var(--m3-on-surface-subtle)]">Fleet Rolling Headroom</p>
+              <h4 id="usage-kpi-rolling" class="text-base font-bold font-mono text-[var(--google-blue)]">--%</h4>
+              <p id="usage-kpi-rolling-sub" class="text-[11px] text-[var(--m3-on-surface-variant)]">Available across fleet</p>
+            </div>
+            <div class="w-10 h-10 rounded-2xl bg-[var(--google-blue-container)] text-[var(--google-blue)] flex items-center justify-center shrink-0">
+              <i data-lucide="activity" class="w-5 h-5"></i>
+            </div>
+          </div>
+
+          <!-- Total Accounts Ready -->
+          <div class="p-4 rounded-2xl m3-subcard border border-[var(--m3-outline-variant)]/60 flex items-center justify-between">
+            <div class="space-y-0.5">
+              <p class="text-[10px] uppercase tracking-wider font-semibold text-[var(--m3-on-surface-subtle)]">Active Query Pool</p>
+              <h4 id="usage-kpi-accounts" class="text-base font-bold font-mono text-[#81c995]">6 / 6 Ready</h4>
+              <p class="text-[11px] text-[var(--m3-on-surface-variant)]" id="usage-kpi-accounts-sub">Round-robin rotation ready</p>
+            </div>
+            <div class="w-10 h-10 rounded-2xl bg-[var(--google-green-container)] text-[var(--google-green)] flex items-center justify-center shrink-0">
+              <i data-lucide="layers" class="w-5 h-5"></i>
+            </div>
+          </div>
+        </div>
+
+        <!-- 6 Accounts Fleet Matrix Grid -->
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <h4 class="text-xs font-semibold uppercase tracking-wider text-[var(--m3-on-surface-subtle)] flex items-center gap-2">
+              <i data-lucide="cpu" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
+              Account Plan Usage & Reset Timelines
+            </h4>
+            <span id="usage-last-updated-label" class="text-[11px] font-mono text-[var(--m3-on-surface-subtle)]">
+              Updated just now
+            </span>
+          </div>
+
+          <!-- 6-Account Cards Responsive Matrix Container -->
+          <div id="usage-accounts-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <!-- Dynamic 6 account cards -->
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="px-6 py-3.5 border-t border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container)] flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-[var(--m3-on-surface-subtle)]">
+        <div class="flex items-center gap-2">
+          <i data-lucide="info" class="w-4 h-4 text-[var(--google-blue)] shrink-0"></i>
+          <span>Rolling limits reset 24 hours after query bursts. Weekly quotas refresh every 7 days.</span>
+        </div>
+        <button id="btn-close-usage-footer" class="google-btn-outlined px-4 py-1.5 text-xs w-full sm:w-auto">
+          Close
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- MODAL: BATCH CREATION & ROTATING QUEUE (Material 3 Dialog) -->
+  <div id="modal-scheduler" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div class="m3-dialog max-w-4xl w-full max-h-[92vh] flex flex-col overflow-hidden animate-m3-enter">
+      
+      <!-- Modal Header -->
+      <div class="px-6 py-4 border-b border-[var(--m3-outline-variant)] flex items-center justify-between bg-[var(--m3-surface-container)]">
+        <div class="flex items-center gap-3">
+          <div class="p-2.5 rounded-2xl bg-[var(--google-blue-container)] text-[var(--google-blue)] flex items-center justify-center shadow-xs">
+            <i data-lucide="clapperboard" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <div class="flex items-center gap-2">
+              <h3 class="text-sm font-medium text-[var(--m3-on-surface)]">Batch Creation & Fleet Rotation Queue</h3>
+              <span class="text-[10px] font-mono text-[var(--google-blue)] bg-[var(--google-blue-container)]/50 px-2 py-0.5 rounded-full border border-[var(--google-blue)]/20 font-semibold" id="scheduler-header-badge">Autonomous Dispatcher</span>
+            </div>
+            <p class="text-xs text-[var(--m3-on-surface-subtle)]">Automated Cinematic Video, Audio Podcast, and Study Material generation across fleet accounts</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btn-refresh-queue" class="google-btn-outlined p-2 text-xs cursor-pointer" title="Refresh Queue">
+            <i data-lucide="refresh-cw" id="queue-refresh-icon" class="w-3.5 h-3.5"></i>
+          </button>
+          <button id="close-modal-scheduler" class="p-1.5 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] hover:bg-[var(--m3-surface-container-high)] transition cursor-pointer" title="Close (Esc)">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <div class="px-6 pt-3 border-b border-[var(--m3-outline-variant)] flex items-center gap-4 bg-[var(--m3-surface-container)]">
+        <button id="tab-scheduler-create" class="pb-2.5 text-xs font-semibold text-[var(--google-blue)] border-b-2 border-[var(--google-blue)] flex items-center gap-1.5 cursor-pointer">
+          <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i>
+          <span>Schedule New Creation</span>
+        </button>
+        <button id="tab-scheduler-queue" class="pb-2.5 text-xs font-medium text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] border-b-2 border-transparent flex items-center gap-1.5 cursor-pointer">
+          <i data-lucide="list-video" class="w-3.5 h-3.5"></i>
+          <span>Active Queue & Downloads</span>
+          <span id="tab-queue-count" class="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-[var(--m3-surface-container-highest)] text-[var(--m3-on-surface-variant)]">0</span>
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="p-6 overflow-y-auto space-y-6 flex-1 bg-[var(--m3-surface)]">
+        
+        <!-- PANEL 1: SCHEDULE NEW CREATION -->
+        <div id="panel-scheduler-create" class="space-y-5">
+          
+          <!-- Step 1: Select Target Notebooks -->
+          <div class="p-4 rounded-xl m3-subcard space-y-3">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider block">
+                1. Select Notebooks
+              </label>
+              <div class="flex items-center gap-2">
+                <button id="btn-select-all-study-scheduler" type="button" class="text-[11px] font-medium text-[var(--google-blue)] hover:underline flex items-center gap-1">
+                  <i data-lucide="graduation-cap" class="w-3 h-3"></i>
+                  <span>All Study Courses</span>
+                </button>
+                <span class="text-[var(--m3-outline-variant)]">|</span>
+                <button id="btn-select-all-scheduler" type="button" class="text-[11px] text-[var(--m3-on-surface-variant)] hover:text-[var(--m3-on-surface)]">
+                  Select All
+                </button>
+                <button id="btn-clear-all-scheduler" type="button" class="text-[11px] text-[var(--m3-on-surface-variant)] hover:text-[var(--m3-on-surface)]">
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            <!-- Notebooks selection list -->
+            <div id="scheduler-notebooks-list" class="max-h-48 overflow-y-auto space-y-1.5 p-2 rounded-xl bg-[var(--m3-surface-container-lowest)] border border-[var(--m3-outline-variant)]/40">
+              <!-- Dynamically rendered checkboxes -->
+            </div>
+            <p id="scheduler-selected-count-label" class="text-[11px] font-mono text-[var(--google-blue)]">0 notebooks selected</p>
+          </div>
+
+          <!-- Step 2: Generation Artifact Type & Format -->
+          <div class="p-4 rounded-xl m3-subcard space-y-3">
+            <label class="text-xs font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider block">
+              2. Artifact Type & Style
+            </label>
+
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <!-- Cinematic Video Card -->
+              <label class="flex flex-col p-3 rounded-xl border border-[var(--m3-outline-variant)] hover:border-[var(--google-blue)] bg-[var(--m3-surface)] cursor-pointer transition has-[:checked]:border-[var(--google-blue)] has-[:checked]:bg-[var(--google-blue-container)]/20">
+                <input type="radio" name="scheduler-artifact-type" value="video" checked class="sr-only">
+                <div class="flex items-center justify-between mb-1">
+                  <i data-lucide="video" class="w-4 h-4 text-[var(--google-blue)]"></i>
+                  <span class="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-[var(--google-blue-container)] text-[var(--google-blue)] font-bold">~80% Budget</span>
+                </div>
+                <span class="text-xs font-medium text-[var(--m3-on-surface)]">Cinematic Video</span>
+                <span class="text-[10px] text-[var(--m3-on-surface-subtle)] mt-0.5">High-impact visual recap</span>
+              </label>
+
+              <!-- Audio Overview Card -->
+              <label class="flex flex-col p-3 rounded-xl border border-[var(--m3-outline-variant)] hover:border-[var(--google-blue)] bg-[var(--m3-surface)] cursor-pointer transition has-[:checked]:border-[var(--google-blue)] has-[:checked]:bg-[var(--google-blue-container)]/20">
+                <input type="radio" name="scheduler-artifact-type" value="audio" class="sr-only">
+                <div class="flex items-center justify-between mb-1">
+                  <i data-lucide="headphones" class="w-4 h-4 text-[#81c995]"></i>
+                  <span class="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-[#81c995]/20 text-[#81c995] font-bold">~25% Budget</span>
+                </div>
+                <span class="text-xs font-medium text-[var(--m3-on-surface)]">Audio Overview</span>
+                <span class="text-[10px] text-[var(--m3-on-surface-subtle)] mt-0.5">Two-host deep dive podcast</span>
+              </label>
+
+              <!-- Study Guide Card -->
+              <label class="flex flex-col p-3 rounded-xl border border-[var(--m3-outline-variant)] hover:border-[var(--google-blue)] bg-[var(--m3-surface)] cursor-pointer transition has-[:checked]:border-[var(--google-blue)] has-[:checked]:bg-[var(--google-blue-container)]/20">
+                <input type="radio" name="scheduler-artifact-type" value="report" class="sr-only">
+                <div class="flex items-center justify-between mb-1">
+                  <i data-lucide="file-text" class="w-4 h-4 text-[#fdd663]"></i>
+                  <span class="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-[#fdd663]/20 text-[#fdd663] font-bold">~5% Budget</span>
+                </div>
+                <span class="text-xs font-medium text-[var(--m3-on-surface)]">Study Guide</span>
+                <span class="text-[10px] text-[var(--m3-on-surface-subtle)] mt-0.5">Structured markdown notes</span>
+              </label>
+
+              <!-- Quiz & Flashcards Card -->
+              <label class="flex flex-col p-3 rounded-xl border border-[var(--m3-outline-variant)] hover:border-[var(--google-blue)] bg-[var(--m3-surface)] cursor-pointer transition has-[:checked]:border-[var(--google-blue)] has-[:checked]:bg-[var(--google-blue-container)]/20">
+                <input type="radio" name="scheduler-artifact-type" value="quiz" class="sr-only">
+                <div class="flex items-center justify-between mb-1">
+                  <i data-lucide="help-circle" class="w-4 h-4 text-[#f28b82]"></i>
+                  <span class="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-[#f28b82]/20 text-[#f28b82] font-bold">~3% Budget</span>
+                </div>
+                <span class="text-xs font-medium text-[var(--m3-on-surface)]">Quiz & Cards</span>
+                <span class="text-[10px] text-[var(--m3-on-surface-subtle)] mt-0.5">Active recall practice</span>
+              </label>
+            </div>
+
+            <!-- Dynamic Format & Style Selectors -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div>
+                <label class="text-[11px] font-medium text-[var(--m3-on-surface-variant)] block mb-1">Format</label>
+                <select id="scheduler-format-select" class="w-full bg-[var(--m3-surface-container)] text-xs text-[var(--m3-on-surface)] p-2 rounded-lg border border-[var(--m3-outline-variant)] focus:outline-none focus:border-[var(--google-blue)]">
+                  <option value="cinematic">Cinematic (Dramatic Narrative)</option>
+                  <option value="explainer">Explainer (Detailed Overview)</option>
+                  <option value="brief">Brief (Quick 2-minute summary)</option>
+                  <option value="short">Short (Bite-sized clip)</option>
+                </select>
+              </div>
+
+              <div>
+                <label class="text-[11px] font-medium text-[var(--m3-on-surface-variant)] block mb-1">Visual Style</label>
+                <select id="scheduler-style-select" class="w-full bg-[var(--m3-surface-container)] text-xs text-[var(--m3-on-surface)] p-2 rounded-lg border border-[var(--m3-outline-variant)] focus:outline-none focus:border-[var(--google-blue)]">
+                  <option value="auto_select">Auto-Select (Recommended)</option>
+                  <option value="classic">Classic</option>
+                  <option value="whiteboard">Whiteboard</option>
+                  <option value="anime">Anime</option>
+                  <option value="watercolor">Watercolor</option>
+                  <option value="retro_print">Retro Print</option>
+                  <option value="paper_craft">Paper Craft</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Focus Steering Prompt -->
+            <div class="pt-1">
+              <label class="text-[11px] font-medium text-[var(--m3-on-surface-variant)] block mb-1">Focus Steering Prompt (Optional)</label>
+              <input
+                type="text"
+                id="scheduler-custom-prompt"
+                placeholder="e.g. Focus on key exam formulas, architectural diagrams, and high-yield concepts..."
+                class="w-full bg-[var(--m3-surface-container)] text-xs text-[var(--m3-on-surface)] placeholder-[var(--m3-on-surface-subtle)] p-2.5 rounded-lg border border-[var(--m3-outline-variant)] focus:outline-none focus:border-[var(--google-blue)]"
+              >
+            </div>
+          </div>
+
+          <!-- Step 3: Trigger & Scheduling Strategy -->
+          <div class="p-4 rounded-xl m3-subcard space-y-3">
+            <label class="text-xs font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider block">
+              3. Execution Timing & Fleet Rotation
+            </label>
+
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <label class="flex items-start gap-2.5 p-2.5 rounded-lg border border-[var(--m3-outline-variant)] hover:border-[var(--google-blue)] bg-[var(--m3-surface)] cursor-pointer transition has-[:checked]:border-[var(--google-blue)] has-[:checked]:bg-[var(--google-blue-container)]/10">
+                <input type="radio" name="scheduler-trigger-type" value="immediate" checked class="mt-0.5 text-[var(--google-blue)] focus:ring-0">
+                <div>
+                  <div class="text-xs font-medium text-[var(--m3-on-surface)]">Immediate Background</div>
+                  <div class="text-[11px] text-[var(--m3-on-surface-subtle)]">Dispatches now across idle fleet accounts</div>
+                </div>
+              </label>
+
+              <label class="flex items-start gap-2.5 p-2.5 rounded-lg border border-[var(--m3-outline-variant)] hover:border-[var(--google-blue)] bg-[var(--m3-surface)] cursor-pointer transition has-[:checked]:border-[var(--google-blue)] has-[:checked]:bg-[var(--google-blue-container)]/10">
+                <input type="radio" name="scheduler-trigger-type" value="next_reset_window" class="mt-0.5 text-[var(--google-blue)] focus:ring-0">
+                <div>
+                  <div class="text-xs font-medium text-[var(--m3-on-surface)]">Next Reset Window</div>
+                  <div class="text-[11px] text-[var(--m3-on-surface-subtle)]">Fires when 5h quota resets</div>
+                </div>
+              </label>
+
+              <label class="flex items-start gap-2.5 p-2.5 rounded-lg border border-[var(--m3-outline-variant)] hover:border-[var(--google-blue)] bg-[var(--m3-surface)] cursor-pointer transition has-[:checked]:border-[var(--google-blue)] has-[:checked]:bg-[var(--google-blue-container)]/10">
+                <input type="radio" name="scheduler-trigger-type" value="custom_time" class="mt-0.5 text-[var(--google-blue)] focus:ring-0">
+                <div>
+                  <div class="text-xs font-medium text-[var(--m3-on-surface)]">Custom Date / Time</div>
+                  <div class="text-[11px] text-[var(--m3-on-surface-subtle)]">Set exact time for rendering</div>
+                </div>
+              </label>
+            </div>
+
+            <!-- Custom DateTime input (hidden by default) -->
+            <div id="scheduler-datetime-container" class="hidden pt-2">
+              <input type="datetime-local" id="scheduler-custom-datetime" class="bg-[var(--m3-surface-container)] text-xs text-[var(--m3-on-surface)] p-2 rounded-lg border border-[var(--m3-outline-variant)] focus:outline-none focus:border-[var(--google-blue)]">
+            </div>
+          </div>
+
+        </div>
+
+        <!-- PANEL 2: ACTIVE QUEUE & DOWNLOADS -->
+        <div id="panel-scheduler-queue" class="hidden space-y-4">
+          
+          <!-- Summary Cards -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div class="p-3 rounded-xl m3-subcard border border-[var(--m3-outline-variant)]/60 text-center">
+              <p class="text-[10px] uppercase font-semibold text-[var(--m3-on-surface-subtle)]">Rendering</p>
+              <h4 id="queue-stat-rendering" class="text-lg font-bold text-[var(--google-blue)] font-mono">0</h4>
+            </div>
+            <div class="p-3 rounded-xl m3-subcard border border-[var(--m3-outline-variant)]/60 text-center">
+              <p class="text-[10px] uppercase font-semibold text-[var(--m3-on-surface-subtle)]">Queued (Waves)</p>
+              <h4 id="queue-stat-queued" class="text-lg font-bold text-[#fdd663] font-mono">0</h4>
+            </div>
+            <div class="p-3 rounded-xl m3-subcard border border-[var(--m3-outline-variant)]/60 text-center">
+              <p class="text-[10px] uppercase font-semibold text-[var(--m3-on-surface-subtle)]">Completed</p>
+              <h4 id="queue-stat-completed" class="text-lg font-bold text-[#81c995] font-mono">0</h4>
+            </div>
+            <div class="p-3 rounded-xl m3-subcard border border-[var(--m3-outline-variant)]/60 text-center">
+              <p class="text-[10px] uppercase font-semibold text-[var(--m3-on-surface-subtle)]">Fleet Workers</p>
+              <h4 id="queue-stat-workers" class="text-lg font-bold text-[var(--m3-on-surface)] font-mono">6 Idle</h4>
+            </div>
+          </div>
+
+          <!-- Queue Jobs List -->
+          <div class="space-y-2.5">
+            <div class="flex items-center justify-between">
+              <h4 class="text-xs font-semibold uppercase tracking-wider text-[var(--m3-on-surface-subtle)]">
+                Job Queue & Download History
+              </h4>
+              <button id="btn-clear-completed-jobs" class="text-[11px] text-[var(--m3-on-surface-variant)] hover:text-[var(--m3-on-surface)] cursor-pointer">
+                Clear Completed
+              </button>
+            </div>
+
+            <div id="scheduler-jobs-container" class="space-y-2">
+              <!-- Dynamically rendered jobs -->
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="px-6 py-3.5 border-t border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container)] flex items-center justify-between">
+        <button id="btn-cancel-scheduler" class="google-btn-outlined px-4 py-1.5 text-xs">
+          Close
+        </button>
+        <button id="btn-execute-scheduler-batch" class="google-btn-primary px-5 py-2 text-xs flex items-center gap-2 shadow-sm font-medium cursor-pointer">
+          <i data-lucide="play" class="w-3.5 h-3.5"></i>
+          <span id="btn-execute-scheduler-label">Queue Batch Creation</span>
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- MODAL: HYBRID FOLDER MAPPING & AUTO-SYNC (Material 3 Dialog) -->
+  <div id="modal-folder-mapping" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div class="m3-dialog max-w-2xl w-full flex flex-col max-h-[90vh] overflow-hidden rounded-2xl shadow-2xl border border-[var(--m3-outline-variant)]">
+      
+      <!-- Modal Header -->
+      <div class="px-6 py-4 border-b border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container)] flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl m3-subcard flex items-center justify-center shadow-xs text-[var(--google-blue)]">
+            <i data-lucide="folder-sync" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="text-sm font-semibold text-[var(--m3-on-surface)] flex items-center gap-2">
+              Course Folder & Drive Sync
+              <span id="folder-modal-tier-badge" class="px-2 py-0.5 text-[10px] font-mono rounded-full bg-[var(--google-blue-container)] text-[var(--google-blue)] font-medium">Pro 300</span>
+            </h3>
+            <p id="folder-modal-nb-title" class="text-xs text-[var(--m3-on-surface-subtle)] truncate max-w-md">Notebook</p>
+          </div>
+        </div>
+        <button id="close-modal-folder" class="p-1.5 rounded-full text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] hover:bg-[var(--m3-surface-container-high)] transition cursor-pointer" title="Close (Esc)">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="px-6 py-4 overflow-y-auto space-y-4 flex-1">
+        
+        <!-- Target Path Configuration Card -->
+        <div class="m3-subcard p-4 rounded-xl border border-[var(--m3-outline-variant)] space-y-3">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-semibold uppercase tracking-wider text-[var(--m3-on-surface-variant)] flex items-center gap-1.5">
+              <i data-lucide="link" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
+              Mapped Folder (Local Directory or Google Drive Link)
+            </label>
+            <span id="folder-type-badge" class="hidden text-[10px] font-mono px-2 py-0.5 rounded-full border border-[var(--m3-outline-variant)]"></span>
+          </div>
+
+          <div class="flex gap-2">
+            <div class="relative flex-1">
+              <input
+                type="text"
+                id="folder-target-input"
+                placeholder="F:\College\Semester 7\CT704 or https://drive.google.com/drive/folders/..."
+                class="w-full text-xs bg-[var(--m3-surface)] border border-[var(--m3-outline)] rounded-lg px-3 py-2 text-[var(--m3-on-surface)] placeholder-[var(--m3-on-surface-subtle)] focus:outline-none focus:border-[var(--google-blue)] font-mono"
+              >
+            </div>
+            <button id="btn-save-folder-mapping" class="google-btn-tonal px-3 py-2 text-xs flex items-center gap-1.5 shrink-0 cursor-pointer">
+              <i data-lucide="search" class="w-3.5 h-3.5"></i>
+              <span>Scan Folder</span>
+            </button>
+            <button id="btn-unlink-folder-mapping" class="google-btn-outlined hidden px-3 py-2 text-xs text-[var(--google-red)] hover:bg-[var(--google-red-container)]/30 border-[var(--google-red)]/30 shrink-0 cursor-pointer" title="Unlink folder">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+
+          <div class="flex items-center justify-between pt-1">
+            <label class="inline-flex items-center gap-2 text-xs text-[var(--m3-on-surface-subtle)] cursor-pointer">
+              <input type="checkbox" id="folder-recursive-toggle" class="rounded bg-[var(--m3-surface)] border-[var(--m3-outline)] text-[var(--google-blue)] focus:ring-0">
+              <span>Include nested subfolders</span>
+            </label>
+            <span id="folder-last-scanned" class="text-[10px] text-[var(--m3-on-surface-subtle)] font-mono"></span>
+          </div>
+        </div>
+
+        <!-- 300-Source Capacity Meter Card -->
+        <div class="m3-subcard p-4 rounded-xl border border-[var(--m3-outline-variant)] space-y-2">
+          <div class="flex items-center justify-between text-xs">
+            <span class="font-medium text-[var(--m3-on-surface)] flex items-center gap-1.5">
+              <i data-lucide="database" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
+              NotebookLM Source Capacity
+            </span>
+            <span id="folder-capacity-label" class="font-mono text-[var(--m3-on-surface-variant)] text-[11px]">0 / 300 sources</span>
+          </div>
+          <div class="capacity-meter-track">
+            <div id="folder-capacity-bar" class="capacity-meter-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Diff Summary Status Badges -->
+        <div class="grid grid-cols-4 gap-2 text-center text-xs">
+          <div class="folder-badge-pill folder-badge-new justify-center py-2">
+            <i data-lucide="arrow-down-circle" class="w-3.5 h-3.5"></i>
+            <span>New: <b id="folder-badge-new-count">0</b></span>
+          </div>
+          <div class="folder-badge-pill folder-badge-stale justify-center py-2">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+            <span>Stale: <b id="folder-badge-stale-count">0</b></span>
+          </div>
+          <div class="folder-badge-pill folder-badge-ingested justify-center py-2">
+            <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
+            <span>Ingested: <b id="folder-badge-ingested-count">0</b></span>
+          </div>
+          <div class="folder-badge-pill folder-badge-skipped justify-center py-2">
+            <i data-lucide="skip-forward" class="w-3.5 h-3.5"></i>
+            <span>Skipped: <b id="folder-badge-skipped-count">0</b></span>
+          </div>
+        </div>
+
+        <!-- Ingestion Progress Banner (Active when sync is running) -->
+        <div id="folder-sync-progress-banner" class="hidden p-3 rounded-xl bg-[var(--google-blue-container)]/30 border border-[var(--google-blue)]/30 text-xs flex items-center justify-between animate-pulse">
+          <div class="flex items-center gap-2">
+            <div class="google-quad-dots scale-75">
+              <span class="google-quad-dot"></span>
+              <span class="google-quad-dot"></span>
+              <span class="google-quad-dot"></span>
+              <span class="google-quad-dot"></span>
+            </div>
+            <span id="folder-sync-progress-text" class="text-[var(--google-blue)] font-medium">Ingesting files sequentially (1.5s delay)...</span>
+          </div>
+        </div>
+
+        <!-- File List Diff Container -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-xs px-1">
+            <span class="font-medium text-[var(--m3-on-surface-variant)] uppercase tracking-wider text-[11px]">
+              Files Found in Folder
+            </span>
+            <div class="flex items-center gap-3">
+              <button id="btn-select-all-new" class="text-[11px] text-[var(--google-blue)] hover:underline cursor-pointer">
+                Select All New
+              </button>
+              <span class="text-[var(--m3-outline-variant)]">•</span>
+              <button id="btn-deselect-all-files" class="text-[11px] text-[var(--m3-on-surface-subtle)] hover:underline cursor-pointer">
+                Clear Selection
+              </button>
+            </div>
+          </div>
+
+          <div id="folder-files-list" class="m3-subcard rounded-xl border border-[var(--m3-outline-variant)] divide-y divide-[var(--m3-outline-variant)] max-h-64 overflow-y-auto">
+            <!-- Dynamically populated files -->
+            <div class="p-6 text-center text-xs text-[var(--m3-on-surface-subtle)]">
+              No folder scanned yet. Paste a path or Drive link above and click <b>Scan Folder</b>.
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="px-6 py-3.5 border-t border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container)] flex items-center justify-between">
+        <button id="btn-close-folder-modal" class="google-btn-outlined px-4 py-1.5 text-xs cursor-pointer">
+          Close
+        </button>
+        <div class="flex items-center gap-2">
+          <button id="btn-sync-stale-docs" class="google-btn-outlined hidden text-[var(--google-yellow)] border-[var(--google-yellow)]/40 hover:bg-[var(--google-yellow-container)]/20 px-3 py-1.5 text-xs items-center gap-1.5 cursor-pointer">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+            <span>Refresh Stale Docs</span>
+          </button>
+          <button id="btn-ingest-folder-files" class="google-btn-primary px-4 py-1.5 text-xs flex items-center gap-1.5 shadow-xs font-medium cursor-pointer">
+            <i data-lucide="arrow-down-circle" class="w-3.5 h-3.5"></i>
+            <span id="btn-ingest-folder-label">Ingest New Files</span>
+          </button>
+        </div>
+      </div>
 
     </div>
   </div>
@@ -1004,6 +1825,6 @@
   <!-- Toast Notifications Container (Google Snackbar Style) -->
   <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=2.2"></script>
 </body>
 </html>

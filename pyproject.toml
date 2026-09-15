@@ -12,6 +12,9 @@ dependencies = [
     "aiosqlite>=0.20.0",
     "qrcode>=7.4.2",
     "mcp>=2.0.0",
+    "icalendar>=5.0.13",
+    "recurring-ical-events>=3.3.0",
+    "python-dateutil>=2.9.0",
 ]
 
 [project.scripts]
@@ -28,3 +31,8 @@ packages = ["backend", "mcp_server"]
 # Optimized for Windows Dev Drive (ReFS) with Block Cloning / Copy-on-Write
 link-mode = "clone"
 cache-dir = "F:/.uv-cache"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

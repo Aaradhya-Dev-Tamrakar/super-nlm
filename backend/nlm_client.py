@@ -12,7 +12,12 @@ from backend.config import (
     DEFAULT_SYNTHESIS_MODEL,
     SYNTHESIS_FALLBACK_MODELS
 )
-from backend.models import AccountProfile, Notebook, NotebookRef
+import datetime
+from backend.models import (
+    AccountProfile, Notebook, NotebookRef,
+    UsageWindow, ProfileUsage, FleetUsageResponse,
+    detect_course_info
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +42,14 @@ def _run_subprocess_sync(cmd: List[str], timeout: int) -> Dict[str, Any]:
             errors="replace",
             **extra_kwargs
         )
+        out = res.stdout.replace("\r\n", "\n").strip()
+        err = res.stderr.replace("\r\n", "\n").strip()
+        if res.returncode != 0 and not err and out:
+            err = out
         return {
             "returncode": res.returncode,
-            "stdout": res.stdout.replace("\r\n", "\n").strip(),
-            "stderr": res.stderr.replace("\r\n", "\n").strip(),
+            "stdout": out,
+            "stderr": err,
             "success": res.returncode == 0
         }
     except subprocess.TimeoutExpired:
@@ -62,24 +71,20 @@ async def run_nlm_cmd(args: List[str], timeout: int = 60) -> Dict[str, Any]:
     cmd = [NLM_EXECUTABLE] + args
     logger.info(f"Running command: {' '.join(cmd)}")
     try:
-        loop = asyncio.get_running_loop()
-        # On Windows, SelectorEventLoop (used by uvicorn reload) does not support create_subprocess_exec
-        if sys.platform == "win32" and isinstance(loop, getattr(asyncio, "_WindowsSelectorEventLoop", ())):
-            return await asyncio.to_thread(_run_subprocess_sync, cmd, timeout)
-
-        extra_kwargs = {}
+        # On Windows, synchronous subprocess in thread pool is immune to IOCP pipe/reloader conflicts
         if sys.platform == "win32":
-            extra_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            return await asyncio.to_thread(_run_subprocess_sync, cmd, timeout)
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            **extra_kwargs
+            stderr=asyncio.subprocess.PIPE
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         out_str = stdout.decode("utf-8", errors="replace").replace("\r\n", "\n").strip()
         err_str = stderr.decode("utf-8", errors="replace").replace("\r\n", "\n").strip()
+        if proc.returncode != 0 and not err_str and out_str:
+            err_str = out_str
 
         return {
             "returncode": proc.returncode,
@@ -131,13 +136,18 @@ async def get_cli_profiles() -> Dict[str, str]:
                 profiles[p_id] = p_email
     return profiles
 
-async def fetch_notebooks_for_profile(profile: AccountProfile) -> List[Notebook]:
+async def fetch_notebooks_for_profile(profile: AccountProfile, retries: int = 1) -> List[Notebook]:
     """
-    Fetches all notebooks for a given profile with error resilience.
+    Fetches all notebooks for a given profile with error resilience and transient retry.
     """
     res = await run_nlm_cmd(["notebook", "list", "--profile", profile.id, "--json"], timeout=45)
+    if not res["success"] and retries > 0:
+        logger.info(f"Retrying notebook fetch for profile '{profile.id}' in 1.5s...")
+        await asyncio.sleep(1.5)
+        return await fetch_notebooks_for_profile(profile, retries=retries - 1)
+
     if not res["success"]:
-        err_msg = res.get("stderr") or "Unknown error"
+        err_msg = (res.get("stderr") or "").strip() or (res.get("stdout") or "").strip() or "Unknown error"
         logger.warning(f"Failed to fetch notebooks for profile {profile.id}: {err_msg}")
         raise RuntimeError(f"Failed to fetch notebooks for profile {profile.id}: {err_msg}")
 
@@ -166,10 +176,16 @@ async def fetch_all_notebooks_concurrently(
     fallback_cached: Optional[List[Notebook]] = None
 ) -> Dict[str, Any]:
     """
-    Fetches notebooks for all profiles simultaneously.
+    Fetches notebooks for all profiles with bounded concurrency (Semaphore=3).
     Retains cached notebooks if a profile fails to sync.
     """
-    tasks = [fetch_notebooks_for_profile(p) for p in profiles]
+    sem = asyncio.Semaphore(3)
+
+    async def _fetch_with_sem(p: AccountProfile):
+        async with sem:
+            return await fetch_notebooks_for_profile(p)
+
+    tasks = [_fetch_with_sem(p) for p in profiles]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     all_notebooks: List[Notebook] = []
@@ -398,7 +414,18 @@ async def batch_share_notebooks_to_accounts(
     for nb_id in notebook_ids:
         nb_entry = notebook_map.get(nb_id)
         nb_title = nb_entry.title if nb_entry else nb_id
-        owner_profile_id = nb_entry.profileId if nb_entry else (profiles[0].id if profiles else "main")
+
+        # Resolve the most suitable owner profile (prefer 'main' or default pro if they have this notebook)
+        matching_profiles = [n.profileId for n in cached_notebooks if n.id == nb_id]
+        if "main" in matching_profiles:
+            owner_profile_id = "main"
+        elif any(getattr(p, 'isDefaultPro', False) and p.id in matching_profiles for p in profiles):
+            owner_profile_id = next(p.id for p in profiles if getattr(p, 'isDefaultPro', False) and p.id in matching_profiles)
+        elif matching_profiles:
+            owner_profile_id = matching_profiles[0]
+        else:
+            owner_profile_id = nb_entry.profileId if nb_entry else (profiles[0].id if profiles else "main")
+
         owner_email = profile_map[owner_profile_id].email.lower() if owner_profile_id in profile_map and profile_map[owner_profile_id].email else ""
 
         existing_collaborators = set()
@@ -407,8 +434,11 @@ async def batch_share_notebooks_to_accounts(
             try:
                 data = json.loads(status_res["stdout"])
                 for c in data.get("collaborators", []):
-                    if c.get("email"):
-                        existing_collaborators.add(c.get("email").lower())
+                    c_email = (c.get("email") or "").strip().lower()
+                    if c_email:
+                        existing_collaborators.add(c_email)
+                    if c.get("role") == "owner" and c_email:
+                        owner_email = c_email
             except Exception as e:
                 logger.warning(f"Could not parse share status for notebook {nb_id}: {e}")
 
@@ -474,6 +504,40 @@ async def batch_share_notebooks_to_accounts(
                     "message": invite_res.get("stderr") or "Invitation failed"
                 })
 
+    # Populate local cache entries for shared notebooks so UI displays them immediately under target profiles
+    try:
+        from backend.storage import save_cached_notebooks
+        from backend.models import Notebook
+        existing_keys = {(n.id, n.profileId) for n in cached_notebooks}
+        new_entries = []
+        for r in results:
+            if r["status"] in ("shared", "already_shared"):
+                nb_id = r["notebookId"]
+                pid = r["targetProfileId"]
+                if (nb_id, pid) not in existing_keys:
+                    master_nb = notebook_map.get(nb_id)
+                    p_info = profile_map.get(pid)
+                    if master_nb and p_info:
+                        new_entries.append(Notebook(
+                            id=nb_id,
+                            title=master_nb.title,
+                            source_count=master_nb.source_count,
+                            updated_at=master_nb.updated_at,
+                            profileId=pid,
+                            profileName=p_info.displayName,
+                            profileEmail=p_info.email,
+                            tier=p_info.tier,
+                            color=p_info.color,
+                            category=master_nb.category,
+                            is_study=master_nb.is_study,
+                            course_code=master_nb.course_code
+                        ))
+                        existing_keys.add((nb_id, pid))
+        if new_entries:
+            await save_cached_notebooks(cached_notebooks + new_entries)
+    except Exception as e:
+        logger.warning(f"Could not auto-populate cache for shared notebooks: {e}")
+
     return {
         "success": total_failed == 0,
         "totalNotebooks": len(notebook_ids),
@@ -484,6 +548,46 @@ async def batch_share_notebooks_to_accounts(
         "failed": total_failed,
         "details": results
     }
+
+async def auto_share_study_notebooks(
+    notebooks: Optional[List[Any]] = None,
+    role: str = "editor"
+) -> Dict[str, Any]:
+    """
+    Identifies all unique study course notebooks (detected via detect_course_info or is_study=True)
+    and automatically batch shares them across all registered Google accounts as editor.
+    """
+    from backend.storage import get_cached_notebooks
+
+    if notebooks is None:
+        notebooks = await get_cached_notebooks()
+
+    study_ids = []
+    seen = set()
+    for n in notebooks:
+        nid = getattr(n, "id", None) or (n.get("id") if isinstance(n, dict) else None)
+        title = getattr(n, "title", "") or (n.get("title", "") if isinstance(n, dict) else "")
+        is_study = getattr(n, "is_study", None)
+        if is_study is None:
+            is_study, _, _ = detect_course_info(title, nid or "")
+        if (is_study or getattr(n, "category", "") == "study") and nid and nid not in seen:
+            seen.add(nid)
+            study_ids.append(nid)
+
+    if not study_ids:
+        return {
+            "success": True,
+            "totalNotebooks": 0,
+            "totalOperations": 0,
+            "shared": 0,
+            "alreadyShared": 0,
+            "skippedOwner": 0,
+            "failed": 0,
+            "details": []
+        }
+
+    logger.info(f"Auto-sharing {len(study_ids)} study course notebooks across all registered accounts...")
+    return await batch_share_notebooks_to_accounts(notebook_ids=study_ids, role=role)
 
 async def check_or_share_with_pro(notebook_id: str, source_profile_id: str, pro_email: str) -> bool:
     """Backward-compatible wrapper for Pro fallback sharing."""
@@ -739,3 +843,218 @@ async def delete_cli_profile(profile_id: str) -> bool:
 async def rename_cli_profile(old_id: str, new_id: str) -> bool:
     res = await run_nlm_cmd(["login", "profile", "rename", old_id, new_id], timeout=15)
     return res.get("success", False)
+
+# ----------------- PLAN USAGE & QUOTA LIMITS -----------------
+
+async def fetch_profile_usage(profile: AccountProfile, timeout: int = 25) -> ProfileUsage:
+    """
+    Fetches live plan usage limits for a profile using 'nlm usage --profile <id> --json'.
+    Returns a ProfileUsage model with rolling and weekly quotas and reset timestamps.
+    """
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    res = await run_nlm_cmd(["usage", "--profile", profile.id, "--json"], timeout=timeout)
+    if not res["success"]:
+        err_msg = (res.get("stderr") or "").strip() or (res.get("stdout") or "").strip() or "Failed to fetch usage limits"
+        return ProfileUsage(
+            profile_id=profile.id,
+            display_name=profile.displayName,
+            email=profile.email,
+            tier=profile.tier,
+            color=profile.color,
+            is_default_pro=bool(getattr(profile, "isDefaultPro", False)),
+            status="error",
+            windows=[],
+            error=err_msg,
+            fetched_at=now_iso
+        )
+
+    try:
+        data = json.loads(res["stdout"])
+        windows_data = data.get("windows", [])
+        windows = [
+            UsageWindow(
+                window=w.get("window", "unknown"),
+                percent_used=round(float(w.get("percent_used", 0.0)), 2),
+                percent_remaining=round(float(w.get("percent_remaining", 100.0)), 2),
+                resets_at=w.get("resets_at")
+            )
+            for w in windows_data
+        ]
+        tier_raw = data.get("tier", profile.tier)
+        tier_label = "pro" if "PRO" in str(tier_raw).upper() else profile.tier
+
+        return ProfileUsage(
+            profile_id=profile.id,
+            display_name=profile.displayName,
+            email=profile.email,
+            tier=tier_label,
+            color=profile.color,
+            is_default_pro=bool(getattr(profile, "isDefaultPro", False)),
+            status="connected",
+            windows=windows,
+            error=None,
+            fetched_at=now_iso
+        )
+    except Exception as e:
+        logger.error(f"Error parsing usage JSON for profile {profile.id}: {e}")
+        return ProfileUsage(
+            profile_id=profile.id,
+            display_name=profile.displayName,
+            email=profile.email,
+            tier=profile.tier,
+            color=profile.color,
+            is_default_pro=bool(getattr(profile, "isDefaultPro", False)),
+            status="error",
+            windows=[],
+            error=f"JSON parse error: {e}",
+            fetched_at=now_iso
+        )
+
+async def fetch_fleet_usage(profiles: List[AccountProfile]) -> FleetUsageResponse:
+    """
+    Concurrently fetches usage limits for all profiles with bounded concurrency (Semaphore=3).
+    Computes aggregate metrics (average rolling usage, healthy/warning/critical counts).
+    """
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    sem = asyncio.Semaphore(3)
+
+    async def _fetch_with_sem(p: AccountProfile) -> ProfileUsage:
+        async with sem:
+            return await fetch_profile_usage(p)
+
+    tasks = [_fetch_with_sem(p) for p in profiles]
+    results: List[ProfileUsage] = await asyncio.gather(*tasks)
+
+    connected_count = sum(1 for r in results if r.status == "connected")
+    rolling_percents = []
+    healthy_count = 0
+    warning_count = 0
+    critical_count = 0
+
+    for r in results:
+        rolling_win = next((w for w in r.windows if w.window == "rolling"), None)
+        if rolling_win:
+            used = rolling_win.percent_used
+            rolling_percents.append(used)
+            if used >= 90.0:
+                critical_count += 1
+            elif used >= 70.0:
+                warning_count += 1
+            else:
+                healthy_count += 1
+        elif r.status == "connected":
+            healthy_count += 1
+
+    avg_used = sum(rolling_percents) / len(rolling_percents) if rolling_percents else 0.0
+
+    return FleetUsageResponse(
+        total_accounts=len(profiles),
+        connected_accounts=connected_count,
+        average_rolling_used=round(avg_used, 1),
+        healthy_count=healthy_count,
+        warning_count=warning_count,
+        critical_count=critical_count,
+        profiles=results,
+        fetched_at=now_iso
+    )
+
+# ----------------- STUDIO ARTIFACT CREATION & DOWNLOAD -----------------
+
+async def create_studio_artifact(
+    profile_id: str,
+    notebook_id: str,
+    artifact_type: str = "video",
+    format_option: Optional[str] = None,
+    style: Optional[str] = None,
+    custom_prompt: Optional[str] = None,
+    quantity: Optional[int] = None,
+    difficulty: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Triggers creation of a studio artifact (video, audio, report, quiz, flashcards, mindmap, slides, etc.)
+    using 'nlm <artifact_type> create <notebook_id> --profile <profile_id> --confirm [flags]'.
+    """
+    artifact_type_lower = artifact_type.lower().strip()
+    args = [artifact_type_lower, "create", notebook_id, "--profile", profile_id, "--confirm", "--json"]
+
+    if artifact_type_lower == "video":
+        if format_option:
+            args.extend(["--format", format_option])
+        if style:
+            args.extend(["--style", style])
+        if custom_prompt:
+            args.extend(["--focus", custom_prompt])
+    elif artifact_type_lower == "audio":
+        if format_option:
+            args.extend(["--format", format_option])
+        if custom_prompt:
+            args.extend(["--focus", custom_prompt])
+    elif artifact_type_lower == "report":
+        if format_option:
+            args.extend(["--format", format_option])
+        if custom_prompt:
+            args.extend(["--prompt", custom_prompt])
+    elif artifact_type_lower in ("quiz", "flashcards"):
+        if difficulty:
+            args.extend(["--difficulty", difficulty])
+        if quantity and artifact_type_lower == "quiz":
+            args.extend(["--count", str(quantity)])
+
+    logger.info(f"[Studio Create] Dispatching '{artifact_type_lower}' for notebook '{notebook_id}' on profile '{profile_id}'")
+    res = await run_nlm_cmd(args, timeout=90)
+    return res
+
+async def get_studio_status(profile_id: str, notebook_id: str) -> List[Dict[str, Any]]:
+    """
+    Fetches the studio artifact status list for a given notebook and profile.
+    Returns a list of dicts with artifact details (id, type, status, title, created_at).
+    """
+    res = await run_nlm_cmd(["studio", "status", notebook_id, "--profile", profile_id, "--json"], timeout=30)
+    if not res.get("success"):
+        logger.warning(f"[Studio Status] Failed for notebook '{notebook_id}' on profile '{profile_id}': {res.get('stderr')}")
+        return []
+
+    try:
+        data = json.loads(res["stdout"])
+        if isinstance(data, list):
+            return data
+        elif isinstance(data, dict) and "artifacts" in data:
+            return data["artifacts"]
+        return []
+    except Exception as e:
+        logger.warning(f"[Studio Status] Failed to parse JSON response: {e}")
+        return []
+
+async def download_studio_artifact(
+    profile_id: str,
+    notebook_id: str,
+    artifact_type: str,
+    artifact_id: Optional[str],
+    output_filepath: str
+) -> Dict[str, Any]:
+    """
+    Downloads a studio artifact to the specified local file path.
+    """
+    artifact_type_lower = artifact_type.lower().strip()
+    # Map model artifact types to download command types
+    cmd_type_map = {
+        "video": "video",
+        "audio": "audio",
+        "report": "report",
+        "slides": "slide-deck",
+        "infographic": "infographic",
+        "mindmap": "mind-map",
+        "quiz": "quiz",
+        "flashcards": "flashcards",
+        "data-table": "data-table"
+    }
+    cmd_type = cmd_type_map.get(artifact_type_lower, artifact_type_lower)
+    args = ["download", cmd_type, notebook_id, "--output", output_filepath, "--no-progress"]
+    if artifact_id:
+        args.extend(["--id", artifact_id])
+
+    logger.info(f"[Studio Download] Downloading '{cmd_type}' for notebook '{notebook_id}' to '{output_filepath}'")
+    res = await run_nlm_cmd(args, timeout=180)
+    return res
+
+

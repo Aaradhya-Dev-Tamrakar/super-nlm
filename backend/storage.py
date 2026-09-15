@@ -4,8 +4,8 @@ import os
 import tempfile
 from typing import List, Dict, Optional, Any
 from pathlib import Path
-from backend.config import PROFILES_FILE, CACHE_FILE, DEFAULT_SEED_PROFILES
-from backend.models import AccountProfile, Notebook
+from backend.config import PROFILES_FILE, CACHE_FILE, DEFAULT_SEED_PROFILES, FOLDER_MAPPINGS_FILE
+from backend.models import AccountProfile, Notebook, FolderMapping
 
 _lock = asyncio.Lock()
 
@@ -123,3 +123,53 @@ async def get_cached_notebooks() -> List[Notebook]:
 async def save_cached_notebooks(notebooks: List[Notebook]):
     async with _lock:
         await asyncio.to_thread(_save_cache_sync, notebooks)
+
+async def delete_cached_notebook(notebook_id: str) -> int:
+    """Removes all cached instances of a notebook across all profiles."""
+    async with _lock:
+        notebooks = await asyncio.to_thread(_load_cache_sync)
+        remaining = [n for n in notebooks if n.id != notebook_id]
+        removed = len(notebooks) - len(remaining)
+        if removed > 0:
+            await asyncio.to_thread(_save_cache_sync, remaining)
+        return removed
+
+# ----------------- FOLDER MAPPINGS PERSISTENCE -----------------
+
+def _load_folder_mappings_sync() -> Dict[str, FolderMapping]:
+    if not FOLDER_MAPPINGS_FILE.exists():
+        return {}
+    try:
+        with open(FOLDER_MAPPINGS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return {k: FolderMapping(**v) for k, v in data.items()}
+    except Exception as e:
+        logger.error(f"Failed to read folder mappings from {FOLDER_MAPPINGS_FILE}: {e}")
+        return {}
+
+def _save_folder_mappings_sync(mappings: Dict[str, FolderMapping]):
+    _atomic_write_json(FOLDER_MAPPINGS_FILE, {k: v.model_dump() for k, v in mappings.items()})
+
+async def get_folder_mappings() -> Dict[str, FolderMapping]:
+    async with _lock:
+        return await asyncio.to_thread(_load_folder_mappings_sync)
+
+async def get_folder_mapping(notebook_id: str) -> Optional[FolderMapping]:
+    mappings = await get_folder_mappings()
+    return mappings.get(notebook_id)
+
+async def save_folder_mapping(mapping: FolderMapping):
+    async with _lock:
+        mappings = await asyncio.to_thread(_load_folder_mappings_sync)
+        mappings[mapping.notebook_id] = mapping
+        await asyncio.to_thread(_save_folder_mappings_sync, mappings)
+
+async def delete_folder_mapping(notebook_id: str) -> bool:
+    async with _lock:
+        mappings = await asyncio.to_thread(_load_folder_mappings_sync)
+        if notebook_id in mappings:
+            del mappings[notebook_id]
+            await asyncio.to_thread(_save_folder_mappings_sync, mappings)
+            return True
+        return False
+

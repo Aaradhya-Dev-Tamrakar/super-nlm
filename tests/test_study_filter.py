@@ -15,7 +15,7 @@ from backend.models import (
 COURSE_CASES = [
     ("96a12a04-073e-43ca-9f6d-ca0048d63486", "CT653 - Artificial Intelligence", "CT653"),
     ("c627a211-552e-496b-9ebb-42d22ac05a95", "EX751 - Wireless Communications", "EX751"),
-    ("bc8653c3-a1d3-42b7-bca1-cd8e4effc038", "CT704 - Digital Signal Analysis and Processing", "CT704"),
+    ("66c34505-a60d-4a24-98df-446d8df12a24", "CT704 - Digital Signal Analysis and Processing", "CT704"),
     ("c3c8ecd4-2884-42a1-aa49-c4de168c1ec7", "EX752 - RF and Microwave Engineering", "EX752"),
     ("94cd4e14-802d-4231-b27d-6a4f4a2e6182", "ME708 - Organization and Management", "ME708"),
     ("56cdad30-13d3-4621-a0b7-8f841858476b", "EX725 04 - Aeronautical Telecommunication", "EX725 04"),
@@ -118,9 +118,21 @@ def test_frontend_markup_and_scripts():
     assert "toggleStudyFilter" in js, "toggleStudyFilter function missing in app.js"
     assert "e.key.toLowerCase() === 'u'" in js, "U key shortcut missing in app.js"
 
+def test_auto_share_study_endpoint():
+    client = TestClient(app)
+    res = client.post("/api/notebooks/auto-share-study")
+    assert res.status_code == 200
+    data = res.json()
+    assert "totalNotebooks" in data
+    assert "shared" in data
+    assert "alreadyShared" in data
+    assert data["totalNotebooks"] >= len(COURSE_CASES)
+
 if __name__ == "__main__":
     test_course_detection_logic()
     test_notebook_model_post_init()
     test_api_category_filter()
+    test_auto_share_study_endpoint()
     test_frontend_markup_and_scripts()
-    print("ALL STUDY FILTER TESTS PASSED SUCCESSFULLY!")
+    print("ALL STUDY FILTER & AUTO-SHARE TESTS PASSED SUCCESSFULLY!")
+

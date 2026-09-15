@@ -14,6 +14,8 @@
 - **Interactive Keyboard Shortcuts (`?`):** Navigate the entire hub rapidly with single-key shortcuts (`/`, `s`, `r`, `a`, `c`, `?`, `Esc`).
 - **In-App Quick Chat:** Ask questions directly to any notebook without switching Google accounts or opening browser tabs, featuring persistent session pinning, markdown rendering, and citations.
 - **Cross-Account Synthesis:** Select 2 or more notebooks across different accounts and synthesize them using your Pro AI model, complete with a real-time progression indicator and a floating background dock pill.
+- **Google Calendar Agenda & Study Copilot:** Reads your private Google Calendar via iCal (`.env`), automatically matches upcoming exams, lectures, and labs to course notebooks (`CT704`, `EX751`, `CT653`, etc.), and surfaces 1-click Quick Chat and NotebookLM links without quota or GCP setup.
+- **Hybrid Folder Mapping & Drive Sync:** Map local directories or Google Drive Web folders per notebook with live 300-source Pro capacity tracking, automated diffing (new vs. ingested vs. stale), academic code adapter (`.ipynb`, `.py`, `.c`, `.m`), and sequential rate-limited ingestion.
 - **Export to PDF:** Save synthesis summaries and source notebook responses as clean, professional PDF reports with scope selection (*Both Synthesis & Raw*, *Synthesis Only*, or *Raw Notebooks Only*).
 - **Model Context Protocol (MCP) Server:** Native MCP integration with round-robin multi-account rotation, allowing parallel AI agents in Antigravity, Claude Desktop, or Claude Code to query notebooks without exhausting rate limits on any single account.
 - **Automated Git Synchronization (`sync.ps1`):** Built-in repository synchronization engine with pre-commit secret leak protection, intelligent component-scoped conventional commits, and rebase conflict auto-recovery.
@@ -46,6 +48,10 @@ Super-NLM includes a built-in MCP server (`super-nlm-mcp`) designed specifically
 | `sync_notebooks` | *none* | Force a complete background refresh of notebooks across all Google accounts from Google NotebookLM. |
 | `cross_query` | `notebook_ids[]`, `query`, `synthesizer_profile_id?` | Parallel query across multiple notebooks with Pro AI synthesis. |
 | `rotation_status` | *none* | Real-time diagnostics: global query count, active cooldown timers, and per-account stats. |
+| `get_agenda` | `days?` | Retrieve upcoming schedule with smart automatic matching against Google NotebookLM notebooks. |
+| `map_notebook_folder` | `notebook_id`, `target_path`, `folder_type?`, `display_name?`, `auto_sync?`, `recursive?` | Map a local directory or Google Drive folder URL to a notebook. |
+| `get_folder_status` | `notebook_id` | Check mapped folder status, diffed file list, and 300-source capacity meter. |
+| `sync_notebook_folder` | `notebook_id`, `action?`, `selected_files?` | Sequentially ingest new files and/or refresh stale Google Drive docs with 1.5s rate-limit delay. |
 
 ### MCP Client Setup
 
@@ -101,6 +107,8 @@ Press `?` anywhere in the app to view the interactive shortcut reference dialog:
 | `s` or `r` | Sync All Notebooks across all accounts |
 | `a` | Open Google Accounts Manager modal |
 | `c` | Open Multi-Notebook Cross-Synthesis modal |
+| `u` | Toggle Study / Course NLMs filter |
+| `g` | Toggle Today's Agenda & Study Copilot strip |
 | `?` | Toggle Keyboard Shortcuts cheat-sheet |
 | `Esc` | Close active dialog or modal |
 

@@ -97,12 +97,20 @@ if __name__ == "__main__":
         threading.Thread(target=open_browser, args=(url,), daemon=True).start()
 
     import uvicorn
-    loop_param = "asyncio:ProactorEventLoop" if sys.platform == "win32" else "asyncio"
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    reload_dirs = [os.path.join(base_dir, "backend")]
+    reload_includes = ["*.py", "*.html", "*.css", "*.js"]
+    reload_excludes = ["*.json", "*.ics", "data/*", "downloads/*", "graphify-out/*", "*.mp4", ".venv/*"]
+
     uvicorn.run(
         "backend.app:app",
         host=HOST,
         port=port,
         reload=True,
-        loop=loop_param,
+        reload_dirs=reload_dirs,
+        reload_includes=reload_includes,
+        reload_excludes=reload_excludes,
+        loop="asyncio",
         timeout_keep_alive=30
     )
+

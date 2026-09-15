@@ -1,31 +1,44 @@
 import logging
 import asyncio
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+from datetime import datetime
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.config import FRONTEND_DIR, NLM_EXECUTABLE
+from backend.config import FRONTEND_DIR, NLM_EXECUTABLE, DOWNLOADS_DIR
 from backend.models import (
     AccountProfile, ProfileCreateRequest, ProfileUpdateRequest,
-    Notebook, QueryRequest, CrossQueryRequest, detect_course_info
+    Notebook, QueryRequest, CrossQueryRequest, detect_course_info,
+    BatchShareRequest, CalendarAgendaResponse,
+    FleetUsageResponse, ProfileUsage,
+    ScheduledJob, SingleScheduleRequest, BatchScheduleRequest,
+    BatchScheduleResponse, SchedulerStatusResponse,
+    FolderMapping, FolderMappingCreateRequest, FolderStatusResponse,
+    FolderSyncRequest, FolderSyncResponse
 )
+from backend.calendar_service import calendar_service
 from backend.storage import (
     get_profiles, get_profile, save_profile, delete_profile,
-    get_cached_notebooks, save_cached_notebooks
+    get_cached_notebooks, save_cached_notebooks, delete_cached_notebook,
+    get_folder_mappings, get_folder_mapping, save_folder_mapping, delete_folder_mapping
 )
+from backend.drive_sync_service import drive_sync_service, normalize_folder_target
 from backend.nlm_client import (
     get_cli_profiles, fetch_all_notebooks_concurrently,
     fetch_notebooks_for_profile, query_notebook,
     query_notebook_with_pro_fallback,
     synthesize_cross_notebook, launch_cli_login, delete_cli_profile,
     rename_cli_profile,
-    run_nlm_cmd, ensure_notebook_shared
+    run_nlm_cmd, ensure_notebook_shared, batch_share_notebooks_to_accounts,
+    auto_share_study_notebooks,
+    fetch_profile_usage, fetch_fleet_usage
 )
 from mcp_server.rotator import rotator
+from backend.scheduler import scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("super_nlm")
@@ -42,12 +55,15 @@ async def lifespan(app: FastAPI):
                 p.email = cli_profiles[p.id]
                 p.status = "connected"
                 await save_profile(p)
-        # Background initial sync of notebooks
-        asyncio.create_task(sync_all_notebooks())
+        # Background initial sync of notebooks and auto-share study courses
+        asyncio.create_task(sync_all_notebooks(auto_share_study=True))
+        # Start the background job scheduler daemon
+        await scheduler.start()
     except Exception as e:
         logger.error(f"Error during startup sync: {e}")
     yield
     logger.info("Shutting down Super-NLM Hub...")
+    await scheduler.stop()
 
 app = FastAPI(title="Super-Gemini Notebook", lifespan=lifespan)
 
@@ -69,8 +85,8 @@ app.add_middleware(
 )
 
 
-async def sync_all_notebooks() -> List[Notebook]:
-    """Helper to sync all notebooks across all profiles concurrently."""
+async def sync_all_notebooks(auto_share_study: bool = True) -> List[Notebook]:
+    """Helper to sync all notebooks across all profiles concurrently and auto-share study courses."""
     profiles = await get_profiles()
     cached = await get_cached_notebooks()
     result = await fetch_all_notebooks_concurrently(profiles, fallback_cached=cached)
@@ -83,6 +99,14 @@ async def sync_all_notebooks() -> List[Notebook]:
     for p in profiles:
         await save_profile(p)
     await save_cached_notebooks(notebooks)
+
+    if auto_share_study:
+        try:
+            # Asynchronously auto-share all detected study course notebooks across all profiles
+            asyncio.create_task(auto_share_study_notebooks(notebooks))
+        except Exception as e:
+            logger.warning(f"Could not trigger background auto-share of study notebooks: {e}")
+
     return notebooks
 
 # ----------------- PROFILES API -----------------
@@ -222,6 +246,57 @@ async def trigger_profile_login(profile_id: str, clear: bool = True):
     launch_cli_login(profile.id, clear=clear)
     return {"success": True, "message": f"Login window launched for '{profile.id}'"}
 
+# ----------------- USAGE & QUOTA LIMITS API -----------------
+
+import time
+from typing import Dict, Any
+
+_fleet_usage_cache: Dict[str, Any] = {
+    "data": None,
+    "timestamp": 0.0
+}
+FLEET_USAGE_CACHE_TTL = 60.0  # seconds
+
+@app.get("/api/usage", response_model=FleetUsageResponse)
+async def get_fleet_usage(force_refresh: bool = Query(False, description="Force bypass cache and query nlm directly")):
+    """
+    Returns plan usage and quota limits across all registered Google accounts.
+    Uses an in-memory 60s cache unless force_refresh is True.
+    """
+    now = time.time()
+    if not force_refresh and _fleet_usage_cache["data"] and (now - _fleet_usage_cache["timestamp"] < FLEET_USAGE_CACHE_TTL):
+        return _fleet_usage_cache["data"]
+
+    profiles = await get_profiles()
+    fleet_response = await fetch_fleet_usage(profiles)
+    _fleet_usage_cache["data"] = fleet_response
+    _fleet_usage_cache["timestamp"] = now
+    return fleet_response
+
+@app.get("/api/profiles/{profile_id}/usage", response_model=ProfileUsage)
+async def get_single_profile_usage(profile_id: str):
+    """
+    Fetches real-time usage limits for a specific Google account profile.
+    Also updates the profile in the cached fleet summary if present.
+    """
+    clean_id = validate_profile_id(profile_id)
+    profile = await get_profile(clean_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail=f"Profile '{clean_id}' not found")
+
+    usage = await fetch_profile_usage(profile)
+
+    if _fleet_usage_cache["data"] and hasattr(_fleet_usage_cache["data"], "profiles"):
+        updated_profiles = []
+        for p in _fleet_usage_cache["data"].profiles:
+            if p.profile_id == clean_id:
+                updated_profiles.append(usage)
+            else:
+                updated_profiles.append(p)
+        _fleet_usage_cache["data"].profiles = updated_profiles
+
+    return usage
+
 # ----------------- NOTEBOOKS API -----------------
 
 @app.get("/api/notebooks", response_model=List[Notebook])
@@ -266,6 +341,102 @@ async def list_notebooks(
 async def sync_notebooks():
     notebooks = await sync_all_notebooks()
     return notebooks
+
+@app.post("/api/notebooks/batch-share")
+async def batch_share_endpoint(req: BatchShareRequest, background_tasks: BackgroundTasks):
+    """
+    Batch shares multiple notebooks across target Google accounts.
+    If targetProfileIds is omitted, shares with all other registered accounts.
+    """
+    res = await batch_share_notebooks_to_accounts(
+        notebook_ids=req.notebookIds,
+        target_profile_ids=req.targetProfileIds,
+        role=req.role
+    )
+    if req.autoSync:
+        background_tasks.add_task(sync_all_notebooks, False)
+    return res
+
+@app.post("/api/notebooks/auto-share-study")
+async def auto_share_study_endpoint(background_tasks: BackgroundTasks, role: str = Query("editor", description="Role to grant: editor or viewer")):
+    """
+    Automatically detects all Study / Course notebooks and shares them
+    across all configured Google accounts as editor/viewer.
+    """
+    cached = await get_cached_notebooks()
+    res = await auto_share_study_notebooks(cached, role=role)
+    background_tasks.add_task(sync_all_notebooks, False)
+    return res
+
+@app.delete("/api/notebooks/{notebook_id}")
+async def delete_notebook_from_cache(notebook_id: str):
+    """
+    Deletes/purges a notebook from the local fleet cache across all profiles.
+    """
+    removed_count = await delete_cached_notebook(notebook_id)
+    return {
+        "success": True,
+        "notebook_id": notebook_id,
+        "removed_count": removed_count,
+        "message": f"Successfully deleted notebook {notebook_id} from local cache ({removed_count} profile instances removed)."
+    }
+
+# ----------------- HYBRID FOLDER MAPPING & SYNC API -----------------
+
+@app.get("/api/folders/mappings", response_model=Dict[str, FolderMapping])
+async def list_all_folder_mappings():
+    """Returns all active folder-to-notebook mappings for dashboard badge rendering."""
+    return await get_folder_mappings()
+
+@app.get("/api/notebooks/{notebook_id}/folder", response_model=FolderStatusResponse)
+async def get_notebook_folder_status(notebook_id: str):
+    """
+    Returns the mapped folder status, diffed file list (ingested, new, stale, unsupported),
+    and NotebookLM 300-source Pro capacity gauge.
+    """
+    return await drive_sync_service.get_folder_status(notebook_id)
+
+@app.post("/api/notebooks/{notebook_id}/folder", response_model=FolderStatusResponse)
+async def set_notebook_folder_mapping(notebook_id: str, req: FolderMappingCreateRequest):
+    """
+    Maps a local directory or Google Drive Web Folder URL/ID to a notebook.
+    Automatically identifies folder type and performs initial status scan.
+    """
+    folder_type, target = normalize_folder_target(req.target_path)
+    if req.folder_type:
+        folder_type = req.folder_type
+
+    mapping = FolderMapping(
+        notebook_id=notebook_id,
+        folder_type=folder_type,
+        target_path=target,
+        display_name=req.display_name.strip() if req.display_name else Path(target).name,
+        auto_sync=bool(req.auto_sync),
+        recursive=bool(req.recursive),
+        last_scanned=datetime.now().isoformat()
+    )
+    await save_folder_mapping(mapping)
+    return await drive_sync_service.get_folder_status(notebook_id)
+
+@app.delete("/api/notebooks/{notebook_id}/folder")
+async def remove_notebook_folder_mapping(notebook_id: str):
+    """Unlinks the mapped folder from the specified notebook."""
+    deleted = await delete_folder_mapping(notebook_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="No folder mapping found for this notebook.")
+    return {"success": True, "notebook_id": notebook_id, "message": "Folder unlinked successfully."}
+
+@app.post("/api/notebooks/{notebook_id}/folder/sync", response_model=FolderSyncResponse)
+async def sync_notebook_folder(notebook_id: str, req: FolderSyncRequest):
+    """
+    Executes sequential ingestion of new folder files and refreshes stale Drive sources.
+    Uses 1.5s delay between file uploads to protect against quota bursts.
+    """
+    return await drive_sync_service.sync_folder(
+        notebook_id=notebook_id,
+        action=req.action,
+        selected_files=req.selected_files
+    )
 
 # ----------------- QUERY & SYNTHESIS API -----------------
 
@@ -356,6 +527,100 @@ async def ask_notebook_rotated(
         new_conversation=new_conversation,
         require_pro=use_pro
     )
+
+# ----------------- CALENDAR & AGENDA API -----------------
+
+@app.get("/api/calendar/agenda", response_model=CalendarAgendaResponse)
+async def get_calendar_agenda(days: int = Query(7, ge=1, le=30, description="Days ahead to retrieve events")):
+    """
+    Returns today's and upcoming events from Google Calendar iCal feed,
+    with smart automatic matching against user course and study notebooks.
+    """
+    notebooks = await get_cached_notebooks()
+    return await calendar_service.get_agenda(notebooks, days=days, force_refresh=False)
+
+@app.post("/api/calendar/refresh", response_model=CalendarAgendaResponse)
+async def refresh_calendar_agenda(days: int = Query(7, ge=1, le=30, description="Days ahead to retrieve events")):
+    """
+    Forces a cache bypass and fetches the latest Google Calendar iCal feed.
+    """
+    notebooks = await get_cached_notebooks()
+    return await calendar_service.get_agenda(notebooks, days=days, force_refresh=True)
+
+# ----------------- SCHEDULED CREATION & BATCH QUEUE API -----------------
+
+@app.post("/api/scheduler/batch", response_model=BatchScheduleResponse)
+async def schedule_batch_creation(req: BatchScheduleRequest):
+    """
+    Schedules a batch of studio creations (e.g. cinematic videos, audio overviews, study guides)
+    across multiple notebooks. Jobs are queued and executed round-robin across connected fleet accounts.
+    """
+    cached = await get_cached_notebooks()
+    nb_map = {n.id: n.title for n in cached}
+    return await scheduler.schedule_batch(req, nb_map)
+
+@app.post("/api/scheduler/job", response_model=ScheduledJob)
+async def schedule_single_creation(req: SingleScheduleRequest):
+    """
+    Schedules a single creation job (immediately, off-peak, or at a custom time).
+    """
+    cached = await get_cached_notebooks()
+    nb_title = next((n.title for n in cached if n.id == req.notebook_id), f"Notebook {req.notebook_id[:8]}")
+    return await scheduler.schedule_job(req, nb_title)
+
+@app.get("/api/scheduler/jobs", response_model=List[ScheduledJob])
+async def list_scheduled_jobs(status: Optional[str] = Query(None, description="Filter by status (queued, scheduled, in_progress, completed, failed, cancelled)")):
+    """
+    Lists all creation jobs with optional status filter.
+    """
+    return scheduler.get_jobs(status_filter=status)
+
+@app.get("/api/scheduler/status", response_model=SchedulerStatusResponse)
+async def get_scheduler_status():
+    """
+    Returns live summary of the rotating fleet queue, active workers, and job counts.
+    """
+    return scheduler.get_status()
+
+@app.post("/api/scheduler/jobs/{job_id}/run-now")
+async def run_job_now(job_id: str):
+    """
+    Forces a queued/scheduled/failed job to execute immediately.
+    """
+    success = await scheduler.run_job_now(job_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found or cannot be triggered immediately.")
+    return {"success": True, "message": f"Job '{job_id}' marked for immediate execution."}
+
+@app.post("/api/scheduler/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    """
+    Cancels a pending queued or scheduled creation job.
+    """
+    success = await scheduler.cancel_job(job_id)
+    if not success:
+        raise HTTPException(status_code=400, detail=f"Job '{job_id}' cannot be cancelled.")
+    return {"success": True, "message": f"Job '{job_id}' cancelled."}
+
+@app.delete("/api/scheduler/jobs/{job_id}")
+async def delete_job(job_id: str):
+    """
+    Deletes a job from history.
+    """
+    success = await scheduler.delete_job(job_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
+    return {"success": True, "message": f"Job '{job_id}' deleted."}
+
+@app.get("/api/scheduler/downloads/{filename}")
+async def download_file(filename: str):
+    """
+    Serves a downloaded studio artifact file from the local downloads/ directory.
+    """
+    file_path = DOWNLOADS_DIR / filename
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"File '{filename}' not found in downloads.")
+    return FileResponse(file_path, filename=filename)
 
 # ----------------- STATIC FRONTEND -----------------
 

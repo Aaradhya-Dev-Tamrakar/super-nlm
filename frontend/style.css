@@ -165,6 +165,8 @@ body {
               box-shadow 0.2s ease;
   position: relative;
   overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .m3-card:hover {
@@ -808,3 +810,243 @@ html.dark .m3-menu-item.active {
   border-color: var(--google-blue);
   color: var(--google-blue);
 }
+
+/* ==========================================================================
+   Google Calendar Agenda & Study Copilot
+   ========================================================================== */
+.agenda-card {
+  transition: transform 0.2s var(--ease-m3), border-color 0.2s ease, box-shadow 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.agenda-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background-color: var(--google-blue);
+  border-radius: 4px 0 0 4px;
+  transition: background-color 0.2s ease;
+}
+
+.agenda-card[data-type="exam"]::before {
+  background-color: var(--google-red);
+}
+
+.agenda-card[data-type="lab"]::before {
+  background-color: var(--google-green);
+}
+
+.agenda-card[data-type="class"]::before {
+  background-color: var(--google-blue);
+}
+
+.agenda-card[data-type="general"]::before {
+  background-color: #c58af9;
+}
+
+.agenda-card:hover {
+  border-color: rgba(138, 180, 248, 0.4);
+  transform: translateY(-1px);
+}
+
+.agenda-type-tag {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.agenda-type-tag.exam {
+  background-color: var(--google-red-container);
+  color: var(--google-red);
+  border: 1px solid rgba(234, 67, 53, 0.3);
+}
+
+.agenda-type-tag.lab {
+  background-color: var(--google-green-container);
+  color: var(--google-green);
+  border: 1px solid rgba(52, 168, 83, 0.3);
+}
+
+.agenda-type-tag.class {
+  background-color: var(--google-blue-container);
+  color: var(--google-blue);
+  border: 1px solid rgba(66, 133, 244, 0.3);
+}
+
+.agenda-type-tag.general {
+  background-color: rgba(197, 138, 249, 0.18);
+  color: #c58af9;
+  border: 1px solid rgba(197, 138, 249, 0.3);
+}
+
+.agenda-matched-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 12px;
+  background-color: var(--m3-surface-container-high);
+  border: 1px solid var(--m3-outline-variant);
+  transition: all 0.2s ease;
+}
+
+.agenda-matched-chip:hover {
+  border-color: var(--google-blue);
+  background-color: var(--m3-surface-container-highest);
+}
+
+/* ==========================================================================
+   Collapsible Left Panel (Space Reclamation)
+   ========================================================================== */
+#workspace-sidebar {
+  transition: width 0.28s var(--ease-m3), opacity 0.2s var(--ease-m3), margin 0.28s var(--ease-m3), transform 0.28s var(--ease-m3);
+}
+
+#workspace-sidebar.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  opacity: 0 !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+  display: none !important;
+}
+
+@media (min-width: 1024px) {
+  #workspace-sidebar.collapsed {
+    display: none !important;
+  }
+}
+
+/* ==========================================================================
+   Account Quota & Usage Limits Styling
+   ========================================================================== */
+.quota-meter-track {
+  height: 6px;
+  width: 100%;
+  border-radius: 9999px;
+  background-color: var(--m3-surface-container-highest);
+  overflow: hidden;
+  position: relative;
+}
+
+.quota-meter-fill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.5s var(--ease-m3);
+}
+
+.quota-meter-fill.healthy {
+  background-color: var(--google-green);
+}
+
+.quota-meter-fill.warning {
+  background-color: var(--google-yellow);
+}
+
+.quota-meter-fill.critical {
+  background-color: var(--google-red);
+}
+
+.quota-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.quota-dot:hover {
+  transform: scale(1.4);
+}
+
+/* ==========================================================================
+   Hybrid Folder Mapping & 300-Source Capacity Meter Styling
+   ========================================================================== */
+.capacity-meter-track {
+  height: 8px;
+  width: 100%;
+  border-radius: 9999px;
+  background-color: var(--m3-surface-container-highest);
+  overflow: hidden;
+  position: relative;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.capacity-meter-fill {
+  height: 100%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, var(--google-blue), var(--google-green));
+  transition: width 0.6s var(--ease-m3);
+}
+
+.capacity-meter-fill.near-limit {
+  background: linear-gradient(90deg, var(--google-yellow), var(--google-red));
+}
+
+.folder-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.folder-badge-new {
+  background-color: rgba(138, 180, 248, 0.18);
+  color: var(--google-blue);
+  border-color: rgba(138, 180, 248, 0.35);
+}
+
+.folder-badge-stale {
+  background-color: rgba(253, 214, 99, 0.18);
+  color: var(--google-yellow);
+  border-color: rgba(253, 214, 99, 0.35);
+}
+
+.folder-badge-ingested {
+  background-color: rgba(129, 201, 149, 0.18);
+  color: var(--google-green);
+  border-color: rgba(129, 201, 149, 0.35);
+}
+
+.folder-badge-skipped {
+  background-color: var(--m3-surface-container-high);
+  color: var(--m3-on-surface-subtle);
+  border-color: var(--m3-outline-variant);
+}
+
+.folder-card-pill {
+  transition: all 0.2s ease;
+}
+
+.folder-card-pill:hover {
+  background-color: var(--m3-surface-container-highest);
+}
+
+.folder-card-pill.has-new {
+  border-color: rgba(138, 180, 248, 0.5);
+  background-color: rgba(138, 180, 248, 0.1);
+}
+
+.folder-card-pill.has-stale {
+  border-color: rgba(253, 214, 99, 0.5);
+  background-color: rgba(253, 214, 99, 0.1);
+}
+
+

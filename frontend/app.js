@@ -8,23 +8,48 @@ let state = {
   activeCategoryFilter: 'all', // 'all' | 'study' | 'projects'
   searchQuery: '',
   selectedNotebooks: new Map(), // key: notebookId, value: { notebookId, profileId, title }
+  lastSelectedNotebookId: null, // anchor notebook ID for Shift + click range selection (Windows Explorer pattern)
   activeChat: null, // { notebookId, profileId, title }
   chatHistories: new Map(), // key: notebookId, value: array of message objects
   conversationIds: new Map(), // key: notebookId, value: conversationId
   activeQueries: new Map(), // key: notebookId, value: { notebookId, profileId, title, question, startTime }
+  calendarAgenda: null,
+  fleetUsage: null,
+  fleetUsageTimestamp: 0,
+  isUsageLoading: false,
   isLoading: false,
   editingProfileId: null,
+  folderMappings: {}, // key: notebookId, value: FolderMapping
+  activeFolderNotebookId: null,
+  activeFolderStatus: null,
+  isFolderSyncing: false,
 };
 
 // ----------------- COURSE & STUDY CLASSIFICATION -----------------
 const COURSE_NOTEBOOK_IDS = new Set([
   '96a12a04-073e-43ca-9f6d-ca0048d63486', // CT653 - Artificial Intelligence
   'c627a211-552e-496b-9ebb-42d22ac05a95', // EX751 - Wireless Communications
-  'bc8653c3-a1d3-42b7-bca1-cd8e4effc038', // CT704 - Digital Signal Analysis and Processing
+  '66c34505-a60d-4a24-98df-446d8df12a24', // CT704 - Digital Signal Analysis and Processing
   'c3c8ecd4-2884-42a1-aa49-c4de168c1ec7', // EX752 - RF and Microwave Engineering
   '94cd4e14-802d-4231-b27d-6a4f4a2e6182', // ME708 - Organization and Management
   '56cdad30-13d3-4621-a0b7-8f841858476b', // EX725 04 - Aeronautical Telecommunication
 ]);
+
+const DEFAULT_COURSE_NOTEBOOK_MAP = {
+  'CT653': '96a12a04-073e-43ca-9f6d-ca0048d63486',
+  'AI': '96a12a04-073e-43ca-9f6d-ca0048d63486',
+  'EX751': 'c627a211-552e-496b-9ebb-42d22ac05a95',
+  'WC': 'c627a211-552e-496b-9ebb-42d22ac05a95',
+  'CT704': '66c34505-a60d-4a24-98df-446d8df12a24',
+  'DSAP': '66c34505-a60d-4a24-98df-446d8df12a24',
+  'EX752': 'c3c8ecd4-2884-42a1-aa49-c4de168c1ec7',
+  'RF': 'c3c8ecd4-2884-42a1-aa49-c4de168c1ec7',
+  'ME708': '94cd4e14-802d-4231-b27d-6a4f4a2e6182',
+  'OM': '94cd4e14-802d-4231-b27d-6a4f4a2e6182',
+  'O&M': '94cd4e14-802d-4231-b27d-6a4f4a2e6182',
+  'EX725': '56cdad30-13d3-4621-a0b7-8f841858476b',
+  'AERO': '56cdad30-13d3-4621-a0b7-8f841858476b',
+};
 
 const COURSE_CODE_REGEX = /^([A-Z]{2,4}\s*\d{3}(?:\s*\d{2})?)\s*[-:]\s*(.+)/i;
 
@@ -48,9 +73,47 @@ function getCourseCode(notebook) {
   return null;
 }
 
+// ----------------- SIDEBAR COLLAPSE CONTROLLER -----------------
+const SIDEBAR_COLLAPSED_KEY = 'supernlm_sidebar_collapsed';
+
+function initSidebarState() {
+  const isCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+  applySidebarCollapsed(isCollapsed, false);
+}
+
+function toggleSidebarCollapse() {
+  const sidebar = document.getElementById('workspace-sidebar');
+  if (!sidebar) return;
+  const willCollapse = !sidebar.classList.contains('collapsed');
+  applySidebarCollapsed(willCollapse, true);
+  showToast(willCollapse ? 'Left panel collapsed (shortcut: [)' : 'Left panel expanded (shortcut: [)', 'info');
+}
+
+function applySidebarCollapsed(collapsed, save = true) {
+  const sidebar = document.getElementById('workspace-sidebar');
+  const toggleBtn = document.getElementById('btn-toggle-sidebar');
+  const toggleIcon = document.getElementById('sidebar-toggle-icon');
+  if (save) {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? 'true' : 'false');
+  }
+  if (!sidebar) return;
+
+  if (collapsed) {
+    sidebar.classList.add('collapsed');
+    if (toggleBtn) toggleBtn.classList.add('active');
+    if (toggleIcon) toggleIcon.setAttribute('data-lucide', 'panel-left-open');
+  } else {
+    sidebar.classList.remove('collapsed');
+    if (toggleBtn) toggleBtn.classList.remove('active');
+    if (toggleIcon) toggleIcon.setAttribute('data-lucide', 'panel-left');
+  }
+  if (window.lucide) lucide.createIcons();
+}
+
 // Initialize Application
 document.addEventListener('DOMContentLoaded', async () => {
   initTheme();
+  initSidebarState();
   initGoogleRipple();
   loadAllChatHistories();
   setupEventListeners();
@@ -59,6 +122,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   showSkeletons(true);
   await loadProfiles();
   await loadNotebooks();
+  await loadCalendarAgenda();
+  loadFleetUsage(false);
   showSkeletons(false);
   if (window.lucide) lucide.createIcons();
 });
@@ -189,6 +254,12 @@ function setupEventListeners() {
         }
         return;
       }
+      // Ctrl + A / Cmd + A: Select all visible notebooks (Windows File Explorer pattern)
+      if (e.key.toLowerCase() === 'a' && !isInputActive) {
+        e.preventDefault();
+        toggleSelectAllVisible();
+        return;
+      }
       return;
     }
 
@@ -197,7 +268,7 @@ function setupEventListeners() {
 
     // 2. Escape: Closes open modal / clears search input / clears selection
     if (e.key === 'Escape') {
-      const openModalIds = ['modal-shortcuts', 'modal-chat', 'modal-accounts', 'modal-cross'];
+      const openModalIds = ['modal-shortcuts', 'modal-chat', 'modal-accounts', 'modal-cross', 'modal-batch-share', 'modal-usage', 'modal-scheduler', 'modal-folder-mapping'];
       const openModalId = openModalIds.find(id => isModalOpen(id));
       if (openModalId) {
         closeModal(openModalId);
@@ -236,7 +307,7 @@ function setupEventListeners() {
     }
 
     // If an interactive modal is open, don't trigger background navigation or actions
-    const anyModalOpen = ['modal-chat', 'modal-accounts', 'modal-cross', 'modal-shortcuts'].some(id => isModalOpen(id));
+    const anyModalOpen = ['modal-chat', 'modal-accounts', 'modal-cross', 'modal-shortcuts', 'modal-batch-share', 'modal-usage'].some(id => isModalOpen(id));
     if (anyModalOpen) return;
 
     // Shortcut '/': Focus search input
@@ -285,6 +356,31 @@ function setupEventListeners() {
       return;
     }
 
+    // Shortcut 'q' or 'l': Toggle Account Usage & Quota Limits
+    if ((e.key.toLowerCase() === 'q' || e.key.toLowerCase() === 'l') && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      if (isModalOpen('modal-usage')) {
+        closeModal('modal-usage');
+      } else {
+        openUsageLimitsModal();
+      }
+      return;
+    }
+
+    // Shortcut 'g' (without Shift/Ctrl): Toggle Today's Agenda strip collapse
+    if (e.key.toLowerCase() === 'g' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      toggleAgendaCollapse();
+      return;
+    }
+
+    // Shortcut '[' (without Shift/Ctrl): Toggle Left Sidebar
+    if (e.key === '[' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      toggleSidebarCollapse();
+      return;
+    }
+
     // Shortcut '1' to '9': Profile / Account filter switching
     if (e.key >= '1' && e.key <= '9') {
       e.preventDefault();
@@ -310,7 +406,7 @@ function setupEventListeners() {
   });
 
   // Dismiss modals on backdrop click
-  ['modal-shortcuts', 'modal-chat', 'modal-accounts', 'modal-cross'].forEach(id => {
+  ['modal-shortcuts', 'modal-chat', 'modal-accounts', 'modal-cross', 'modal-batch-share'].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       el.addEventListener('click', (e) => {
@@ -401,6 +497,17 @@ function setupEventListeners() {
   const emptySyncBtn = document.getElementById('btn-empty-sync');
   if (emptySyncBtn) emptySyncBtn.addEventListener('click', handleSyncAll);
 
+  // Sidebar toggle buttons
+  const sidebarToggleBtn = document.getElementById('btn-toggle-sidebar');
+  if (sidebarToggleBtn) {
+    sidebarToggleBtn.addEventListener('click', toggleSidebarCollapse);
+  }
+
+  const sidebarCollapseChevron = document.getElementById('btn-sidebar-collapse-chevron');
+  if (sidebarCollapseChevron) {
+    sidebarCollapseChevron.addEventListener('click', toggleSidebarCollapse);
+  }
+
   // Sidebar add account button
   const sidebarAddBtn = document.getElementById('btn-sidebar-add-account');
   if (sidebarAddBtn) {
@@ -444,6 +551,22 @@ function setupEventListeners() {
   }
   const closeAccountsBtn = document.getElementById('close-modal-accounts');
   if (closeAccountsBtn) closeAccountsBtn.addEventListener('click', () => closeModal('modal-accounts'));
+
+  // Account Usage Limits Modal triggers
+  const openUsageBtn = document.getElementById('btn-open-usage-modal');
+  if (openUsageBtn) openUsageBtn.addEventListener('click', openUsageLimitsModal);
+
+  const sidebarFleetQuotaCard = document.getElementById('sidebar-fleet-quota-card');
+  if (sidebarFleetQuotaCard) sidebarFleetQuotaCard.addEventListener('click', openUsageLimitsModal);
+
+  const refreshUsageBtn = document.getElementById('btn-refresh-usage');
+  if (refreshUsageBtn) refreshUsageBtn.addEventListener('click', () => loadFleetUsage(true));
+
+  const closeUsageBtn = document.getElementById('close-modal-usage');
+  if (closeUsageBtn) closeUsageBtn.addEventListener('click', () => closeModal('modal-usage'));
+
+  const closeUsageFooterBtn = document.getElementById('btn-close-usage-footer');
+  if (closeUsageFooterBtn) closeUsageFooterBtn.addEventListener('click', () => closeModal('modal-usage'));
 
   // Keyboard Shortcuts Modal triggers
   const shortcutsBtn = document.getElementById('btn-shortcuts-toggle');
@@ -499,6 +622,93 @@ function setupEventListeners() {
     });
   }
 
+  // Batch Share Modal Listeners
+  const openBatchShareBtn = document.getElementById('btn-open-batch-share-modal');
+  if (openBatchShareBtn) openBatchShareBtn.addEventListener('click', openBatchShareModal);
+  const shareSelectedBtn = document.getElementById('btn-share-selected');
+  if (shareSelectedBtn) shareSelectedBtn.addEventListener('click', openBatchShareModal);
+  const closeBatchShareBtn = document.getElementById('close-modal-batch-share');
+  if (closeBatchShareBtn) closeBatchShareBtn.addEventListener('click', () => closeModal('modal-batch-share'));
+  const cancelBatchShareBtn = document.getElementById('btn-cancel-batch-share');
+  if (cancelBatchShareBtn) cancelBatchShareBtn.addEventListener('click', () => closeModal('modal-batch-share'));
+  const execBatchShareBtn = document.getElementById('btn-execute-batch-share');
+  if (execBatchShareBtn) execBatchShareBtn.addEventListener('click', handleExecuteBatchShare);
+
+  const presetStudyBtn = document.getElementById('btn-batch-share-preset-study');
+  if (presetStudyBtn) {
+    presetStudyBtn.addEventListener('click', () => {
+      batchShareSelectedNotebookIds.clear();
+      state.notebooks.forEach(nb => {
+        if (isStudyNotebook(nb)) batchShareSelectedNotebookIds.add(nb.id);
+      });
+      renderBatchShareNotebooksList();
+      updateBatchShareCounts();
+    });
+  }
+
+  const selectAllNbBtn = document.getElementById('btn-batch-share-select-all-nb');
+  if (selectAllNbBtn) {
+    selectAllNbBtn.addEventListener('click', () => {
+      state.notebooks.forEach(nb => batchShareSelectedNotebookIds.add(nb.id));
+      renderBatchShareNotebooksList();
+      updateBatchShareCounts();
+    });
+  }
+
+  const clearNbBtn = document.getElementById('btn-batch-share-clear-nb');
+  if (clearNbBtn) {
+    clearNbBtn.addEventListener('click', () => {
+      batchShareSelectedNotebookIds.clear();
+      renderBatchShareNotebooksList();
+      updateBatchShareCounts();
+    });
+  }
+
+  const toggleAllAccountsBtn = document.getElementById('btn-batch-share-toggle-all-accounts');
+  if (toggleAllAccountsBtn) {
+    toggleAllAccountsBtn.addEventListener('click', () => {
+      const nonMainProfiles = state.profiles.filter(p => p.id !== 'main');
+      const allSelected = nonMainProfiles.every(p => batchShareSelectedProfileIds.has(p.id));
+      if (allSelected) {
+        batchShareSelectedProfileIds.clear();
+      } else {
+        nonMainProfiles.forEach(p => batchShareSelectedProfileIds.add(p.id));
+      }
+      renderBatchShareAccountsList();
+      updateBatchShareCounts();
+    });
+  }
+
+  // Google Calendar Agenda Listeners
+  const refreshAgendaBtn = document.getElementById('btn-refresh-agenda');
+  if (refreshAgendaBtn) {
+    refreshAgendaBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      loadCalendarAgenda(true);
+    });
+  }
+
+  const collapseAgendaBtn = document.getElementById('btn-toggle-agenda-collapse');
+  if (collapseAgendaBtn) {
+    collapseAgendaBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleAgendaCollapse();
+    });
+  }
+
+  const headerToggle = document.getElementById('agenda-header-toggle');
+  if (headerToggle) {
+    headerToggle.addEventListener('click', () => toggleAgendaCollapse());
+  }
+
+  const toggleUpcomingBtn = document.getElementById('btn-toggle-upcoming-events');
+  if (toggleUpcomingBtn) {
+    toggleUpcomingBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleUpcomingEvents();
+    });
+  }
+
   // Add Account Form
   const addAccountForm = document.getElementById('form-add-account');
   if (addAccountForm) addAccountForm.addEventListener('submit', handleAddAccountSubmit);
@@ -547,7 +757,7 @@ function setupEventListeners() {
   }
 
   // Close modals on outside click
-  ['modal-accounts', 'modal-chat', 'modal-cross'].forEach(id => {
+  ['modal-accounts', 'modal-chat', 'modal-cross', 'modal-shortcuts', 'modal-batch-share', 'modal-usage', 'modal-scheduler', 'modal-folder-mapping'].forEach(id => {
     const modal = document.getElementById(id);
     if (modal) {
       modal.addEventListener('click', (e) => {
@@ -642,12 +852,26 @@ async function loadProfiles() {
   }
 }
 
+async function loadFolderMappings() {
+  try {
+    const res = await fetch('/api/folders/mappings');
+    if (res.ok) {
+      state.folderMappings = await res.json();
+    }
+  } catch (err) {
+    console.warn('Failed to load folder mappings:', err);
+  }
+}
+
 async function loadNotebooks() {
   setGlobalLoading(true);
   try {
-    const res = await fetch('/api/notebooks');
-    if (res.ok) {
-      state.notebooks = await res.json();
+    const [nbRes] = await Promise.all([
+      fetch('/api/notebooks'),
+      loadFolderMappings()
+    ]);
+    if (nbRes.ok) {
+      state.notebooks = await nbRes.json();
       
       const telemetryNotebooks = document.getElementById('telemetry-notebooks');
       if (telemetryNotebooks) telemetryNotebooks.textContent = new Set(state.notebooks.map(n => n.id)).size;
@@ -1044,6 +1268,111 @@ function getVisibleNotebooks() {
   return list;
 }
 
+function syncSelectionUI() {
+  const grid = document.getElementById('notebooks-grid');
+  if (grid) {
+    const cards = grid.querySelectorAll('.m3-card');
+    cards.forEach(card => {
+      const cb = card.querySelector('.notebook-select-checkbox');
+      const id = card.getAttribute('data-id') || (cb ? cb.getAttribute('data-id') : null);
+      if (!id) return;
+      const isSelected = state.selectedNotebooks.has(id);
+      card.classList.toggle('selected', isSelected);
+      if (cb) {
+        cb.checked = isSelected;
+      }
+    });
+  }
+  updateSelectionBanner();
+}
+
+function handleNotebookSelection(clickedNotebookId, event, isDirectCheckbox = false) {
+  const visible = getVisibleNotebooks();
+  const clickedNotebook = visible.find(n => n.id === clickedNotebookId) || state.notebooks.find(n => n.id === clickedNotebookId);
+  if (!clickedNotebook) return;
+
+  const isCtrl = event.ctrlKey || event.metaKey;
+  const isShift = event.shiftKey;
+
+  // Clear any unwanted text selection highlighting triggered by Shift + click
+  if (isShift && window.getSelection) {
+    try {
+      window.getSelection().removeAllRanges();
+    } catch (_) {}
+  }
+
+  if (isShift) {
+    // Windows File Explorer Range Selection (Shift + Click)
+    const anchorId = state.lastSelectedNotebookId;
+    let anchorIdx = visible.findIndex(n => n.id === anchorId);
+    const currentIdx = visible.findIndex(n => n.id === clickedNotebookId);
+
+    // If anchor is missing or not visible in current filtered view, default to index 0
+    if (anchorIdx === -1) {
+      anchorIdx = 0;
+    }
+
+    if (currentIdx !== -1) {
+      const start = Math.min(anchorIdx, currentIdx);
+      const end = Math.max(anchorIdx, currentIdx);
+
+      // If Ctrl is not pressed, clear selection outside of this range (standard Windows Explorer behavior)
+      if (!isCtrl) {
+        state.selectedNotebooks.clear();
+      }
+
+      for (let i = start; i <= end; i++) {
+        const item = visible[i];
+        state.selectedNotebooks.set(item.id, {
+          notebookId: item.id,
+          profileId: item.profileId,
+          title: item.title || 'Untitled Notebook'
+        });
+      }
+
+      // In Windows Explorer, the anchor remains at the original item during Shift-click
+      if (!state.lastSelectedNotebookId) {
+        state.lastSelectedNotebookId = visible[anchorIdx]?.id || clickedNotebookId;
+      }
+    }
+  } else if (isCtrl) {
+    // Ctrl + Click: Toggle individual notebook selection
+    if (state.selectedNotebooks.has(clickedNotebookId)) {
+      state.selectedNotebooks.delete(clickedNotebookId);
+    } else {
+      state.selectedNotebooks.set(clickedNotebookId, {
+        notebookId: clickedNotebook.id,
+        profileId: clickedNotebook.profileId,
+        title: clickedNotebook.title || 'Untitled Notebook'
+      });
+    }
+    state.lastSelectedNotebookId = clickedNotebookId;
+  } else if (isDirectCheckbox) {
+    // Direct checkbox click without Ctrl or Shift: toggle this item
+    if (state.selectedNotebooks.has(clickedNotebookId)) {
+      state.selectedNotebooks.delete(clickedNotebookId);
+    } else {
+      state.selectedNotebooks.set(clickedNotebookId, {
+        notebookId: clickedNotebook.id,
+        profileId: clickedNotebook.profileId,
+        title: clickedNotebook.title || 'Untitled Notebook'
+      });
+    }
+    state.lastSelectedNotebookId = clickedNotebookId;
+  } else {
+    // Normal single click on card (no Ctrl, no Shift): select ONLY this notebook
+    state.selectedNotebooks.clear();
+    state.selectedNotebooks.set(clickedNotebookId, {
+      notebookId: clickedNotebook.id,
+      profileId: clickedNotebook.profileId,
+      title: clickedNotebook.title || 'Untitled Notebook'
+    });
+    state.lastSelectedNotebookId = clickedNotebookId;
+  }
+
+  syncSelectionUI();
+}
+
 function toggleSelectAllVisible() {
   const visible = getVisibleNotebooks();
   if (!visible.length) {
@@ -1053,6 +1382,7 @@ function toggleSelectAllVisible() {
   const allSelected = visible.every(n => state.selectedNotebooks.has(n.id));
   if (allSelected) {
     visible.forEach(n => state.selectedNotebooks.delete(n.id));
+    state.lastSelectedNotebookId = null;
     showToast(`Deselected ${visible.length} notebook${visible.length > 1 ? 's' : ''}`, 'info');
   } else {
     visible.forEach(n => {
@@ -1062,10 +1392,10 @@ function toggleSelectAllVisible() {
         title: n.title || 'Untitled Notebook'
       });
     });
+    state.lastSelectedNotebookId = visible[visible.length - 1]?.id || null;
     showToast(`Selected ${visible.length} notebook${visible.length > 1 ? 's' : ''}`, 'info');
   }
-  updateSelectionBanner();
-  renderNotebooksGrid();
+  syncSelectionUI();
 }
 
 function renderNotebooksGrid() {
@@ -1115,10 +1445,12 @@ function renderNotebooksGrid() {
     const isPro = notebook.tier === 'pro';
     const isStudy = isStudyNotebook(notebook);
     const courseCode = getCourseCode(notebook);
+    const mapping = (state.folderMappings && state.folderMappings[notebook.id]) || null;
 
     return `
       <div 
-        class="m3-card animate-m3-stagger p-5 flex flex-col justify-between group relative overflow-hidden ${isSelected ? 'selected' : ''}"
+        class="m3-card animate-m3-stagger p-5 flex flex-col justify-between group relative overflow-hidden cursor-pointer ${isSelected ? 'selected' : ''}"
+        data-id="${notebook.id}"
         style="animation-delay: ${Math.min(idx * 20, 200)}ms;"
       >
         
@@ -1208,17 +1540,31 @@ function renderNotebooksGrid() {
             `}
           </button>
 
-          <!-- Deep Link to Gemini Notebook Web -->
-          <a
-            href="https://notebooklm.google.com/notebook/${notebook.id}"
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Open in official Gemini Notebook web interface"
-            class="google-btn-outlined flex items-center gap-1.5 text-xs text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] py-1 px-2.5"
-          >
-            <span>Open Web</span>
-            <i data-lucide="external-link" class="w-3 h-3 text-[var(--m3-on-surface-subtle)]"></i>
-          </a>
+          <div class="flex items-center gap-1.5 shrink-0">
+            <!-- Folder Sync Button -->
+            <button
+              type="button"
+              data-id="${notebook.id}"
+              data-title="${escapeHtml(notebook.title)}"
+              title="${mapping ? `Mapped to ${escapeHtml(mapping.display_name || mapping.target_path)}` : 'Map Course Folder or Google Drive'}"
+              class="btn-open-folder-modal google-btn-outlined flex items-center gap-1 text-xs py-1 px-2.5 cursor-pointer ${mapping ? 'text-[var(--google-blue)] border-[var(--google-blue)]/40 bg-[var(--google-blue-container)]/10 font-medium' : 'text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)]'}"
+            >
+              <i data-lucide="${mapping ? (mapping.folder_type === 'drive_web' ? 'cloud' : 'folder-check') : 'folder'}" class="w-3 h-3"></i>
+              <span>${mapping ? 'Folder' : 'Map'}</span>
+            </button>
+
+            <!-- Deep Link to Gemini Notebook Web -->
+            <a
+              href="https://notebooklm.google.com/notebook/${notebook.id}"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open in official Gemini Notebook web interface"
+              class="google-btn-outlined flex items-center gap-1.5 text-xs text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] py-1 px-2.5"
+            >
+              <span>Open Web</span>
+              <i data-lucide="external-link" class="w-3 h-3 text-[var(--m3-on-surface-subtle)]"></i>
+            </a>
+          </div>
         </div>
 
       </div>
@@ -1237,32 +1583,45 @@ function renderNotebooksGrid() {
     });
   });
 
-  // Wire up checkbox listeners
-  grid.querySelectorAll('.notebook-select-checkbox').forEach(cb => {
-    cb.addEventListener('change', (e) => {
-      const id = e.target.getAttribute('data-id');
-      const profile = e.target.getAttribute('data-profile');
-      const title = e.target.getAttribute('data-title');
-      const card = e.target.closest('.m3-card');
-      if (e.target.checked) {
-        state.selectedNotebooks.set(id, { notebookId: id, profileId: profile, title: title });
-        if (card) card.classList.add('selected');
-      } else {
-        state.selectedNotebooks.delete(id);
-        if (card) card.classList.remove('selected');
+  // Wire up Folder modal button listeners
+  grid.querySelectorAll('.btn-open-folder-modal').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = e.currentTarget.getAttribute('data-id');
+      const title = e.currentTarget.getAttribute('data-title');
+      if (window.openFolderMappingModal) {
+        window.openFolderMappingModal(id, title);
       }
-      updateSelectionBanner();
     });
   });
 
-  // Card click to toggle selection & double-click to query (Google Drive / Photos fluid pattern)
+  // Wire up checkbox click listeners (Windows Explorer checkbox toggling + Shift-click support)
+  grid.querySelectorAll('.notebook-select-checkbox').forEach(cb => {
+    cb.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = cb.getAttribute('data-id');
+      handleNotebookSelection(id, e, true);
+    });
+  });
+
+  // Card click: Windows File Explorer selection paradigm
+  // - Click: Selects only this item (clears other selections)
+  // - Ctrl + Click: Toggles individual item selection (multi-select)
+  // - Shift + Click: Selects continuous range from anchor to clicked item
+  // - Double-click: Quick query
   grid.querySelectorAll('.m3-card').forEach(card => {
+    card.addEventListener('mousedown', (e) => {
+      if (e.shiftKey) {
+        // Prevent default browser text selection highlighting during Shift + click
+        e.preventDefault();
+      }
+    });
+
     card.addEventListener('click', (e) => {
       if (e.target.closest('button, a, input, label')) return;
-      const cb = card.querySelector('.notebook-select-checkbox');
-      if (cb) {
-        cb.checked = !cb.checked;
-        cb.dispatchEvent(new Event('change'));
+      const id = card.getAttribute('data-id');
+      if (id) {
+        handleNotebookSelection(id, e, false);
       }
     });
 
@@ -1293,8 +1652,8 @@ function updateSelectionBanner() {
 
 function clearSelection() {
   state.selectedNotebooks.clear();
-  updateSelectionBanner();
-  renderNotebooksGrid();
+  state.lastSelectedNotebookId = null;
+  syncSelectionUI();
 }
 
 // ----------------- ACCOUNTS MANAGER MODAL -----------------
@@ -3213,5 +3572,1898 @@ function fallbackCopyText(text, callback) {
     if (successful && callback) callback();
   } catch (err) {
     console.warn('Fallback copy failed:', err);
+  }
+}
+
+// ----------------- BATCH SHARE NOTEBOOKS MODAL -----------------
+
+let batchShareSelectedNotebookIds = new Set();
+let batchShareSelectedProfileIds = new Set();
+
+function openBatchShareModal() {
+  const modal = document.getElementById('modal-batch-share');
+  if (!modal) {
+    showToast('Batch Share modal dialog not found', 'error');
+    return;
+  }
+
+  // Initialize selected notebooks from state.selectedNotebooks if any, else default to all study notebooks
+  batchShareSelectedNotebookIds.clear();
+  if (state.selectedNotebooks.size > 0) {
+    state.selectedNotebooks.forEach((val, id) => batchShareSelectedNotebookIds.add(id));
+  } else {
+    // Default preset: select study course notebooks
+    let studyCount = 0;
+    state.notebooks.forEach(nb => {
+      if (isStudyNotebook(nb)) {
+        batchShareSelectedNotebookIds.add(nb.id);
+        studyCount++;
+      }
+    });
+    // If no study notebooks found, select all notebooks
+    if (studyCount === 0) {
+      state.notebooks.forEach(nb => batchShareSelectedNotebookIds.add(nb.id));
+    }
+  }
+
+  // Initialize selected target accounts: all profiles except 'main' (or the primary owner)
+  batchShareSelectedProfileIds.clear();
+  const nonMainProfiles = state.profiles.filter(p => p.id !== 'main');
+  if (nonMainProfiles.length > 0) {
+    nonMainProfiles.forEach(p => batchShareSelectedProfileIds.add(p.id));
+  } else if (state.profiles.length > 1) {
+    state.profiles.slice(1).forEach(p => batchShareSelectedProfileIds.add(p.id));
+  }
+
+  // Reset progress section & button
+  const progSection = document.getElementById('batch-share-progress-section');
+  if (progSection) progSection.classList.add('hidden');
+  const execBtn = document.getElementById('btn-execute-batch-share');
+  if (execBtn) {
+    execBtn.disabled = false;
+    execBtn.innerHTML = '<i data-lucide="share-2" class="w-3.5 h-3.5"></i><span>Execute Batch Share</span>';
+  }
+
+  renderBatchShareNotebooksList();
+  renderBatchShareAccountsList();
+  updateBatchShareCounts();
+
+  openModal('modal-batch-share');
+  if (window.lucide) lucide.createIcons({ root: modal });
+
+  const nbCount = batchShareSelectedNotebookIds.size;
+  const accCount = batchShareSelectedProfileIds.size;
+  showToast(`Batch Share: ${nbCount} notebook${nbCount === 1 ? '' : 's'} ready to share with ${accCount} account${accCount === 1 ? '' : 's'}`, 'info');
+}
+
+function updateBatchShareCounts() {
+  const nbCountEl = document.getElementById('batch-share-selected-nb-count');
+  if (nbCountEl) nbCountEl.textContent = batchShareSelectedNotebookIds.size;
+  const accCountEl = document.getElementById('batch-share-selected-acc-count');
+  if (accCountEl) accCountEl.textContent = batchShareSelectedProfileIds.size;
+}
+
+function renderBatchShareNotebooksList() {
+  const container = document.getElementById('batch-share-notebooks-list');
+  if (!container) return;
+
+  // Deduplicate notebooks by ID
+  const seenIds = new Set();
+  const uniqueNotebooks = [];
+  state.notebooks.forEach(nb => {
+    if (!seenIds.has(nb.id)) {
+      seenIds.add(nb.id);
+      uniqueNotebooks.push(nb);
+    }
+  });
+
+  // Sort so study courses are at the top
+  uniqueNotebooks.sort((a, b) => {
+    const aStudy = isStudyNotebook(a) ? 1 : 0;
+    const bStudy = isStudyNotebook(b) ? 1 : 0;
+    if (aStudy !== bStudy) return bStudy - aStudy;
+    return (a.title || '').localeCompare(b.title || '');
+  });
+
+  container.innerHTML = uniqueNotebooks.map(nb => {
+    const isChecked = batchShareSelectedNotebookIds.has(nb.id);
+    const isStudy = isStudyNotebook(nb);
+    const code = getCourseCode(nb);
+    const ownerProfile = state.profiles.find(p => p.id === nb.profileId);
+    const ownerLabel = ownerProfile ? ownerProfile.displayName : nb.profileName || 'Personal';
+
+    return `
+      <label class="flex items-center justify-between p-2 rounded-lg hover:bg-[var(--m3-surface-container-high)] cursor-pointer transition border border-transparent ${isChecked ? 'bg-[var(--m3-surface-container-high)] border-[var(--google-blue)]/30' : ''}">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <input type="checkbox" value="${nb.id}" class="batch-share-nb-check rounded bg-[var(--m3-surface)] border-[var(--m3-outline)] text-[var(--google-blue)] focus:ring-0 cursor-pointer" ${isChecked ? 'checked' : ''}>
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="text-xs font-medium text-[var(--m3-on-surface)] truncate max-w-xs sm:max-w-md">${escapeHtml(nb.title)}</span>
+              ${code ? `<span class="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-[var(--google-blue-container)] text-[var(--google-blue)] font-medium">${escapeHtml(code)}</span>` : ''}
+              ${isStudy ? `<span class="text-[9px] px-1.5 py-0.2 rounded-full bg-[var(--google-yellow-container)]/80 text-[var(--google-yellow)] font-medium">Study Course</span>` : ''}
+            </div>
+            <div class="text-[10px] text-[var(--m3-on-surface-subtle)] flex items-center gap-2 mt-0.5">
+              <span>${nb.source_count || 0} sources</span>
+              <span>•</span>
+              <span>Owner: ${escapeHtml(ownerLabel)}</span>
+            </div>
+          </div>
+        </div>
+      </label>
+    `;
+  }).join('');
+
+  container.querySelectorAll('.batch-share-nb-check').forEach(chk => {
+    chk.addEventListener('change', (e) => {
+      const id = e.target.value;
+      if (e.target.checked) {
+        batchShareSelectedNotebookIds.add(id);
+      } else {
+        batchShareSelectedNotebookIds.delete(id);
+      }
+      const parent = e.target.closest('label');
+      if (parent) {
+        if (e.target.checked) {
+          parent.classList.add('bg-[var(--m3-surface-container-high)]', 'border-[var(--google-blue)]/30');
+        } else {
+          parent.classList.remove('bg-[var(--m3-surface-container-high)]', 'border-[var(--google-blue)]/30');
+        }
+      }
+      updateBatchShareCounts();
+    });
+  });
+}
+
+function renderBatchShareAccountsList() {
+  const container = document.getElementById('batch-share-accounts-list');
+  if (!container) return;
+
+  container.innerHTML = state.profiles.map(p => {
+    const isChecked = batchShareSelectedProfileIds.has(p.id);
+    const isOwnerCandidate = p.id === 'main';
+
+    return `
+      <label class="flex items-center justify-between p-2.5 rounded-lg border border-[var(--m3-outline-variant)]/60 hover:border-[var(--google-blue)]/50 bg-[var(--m3-surface)] cursor-pointer transition ${isChecked ? 'border-[var(--google-blue)] bg-[var(--google-blue-container)]/10' : ''}">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <input type="checkbox" value="${p.id}" class="batch-share-acc-check rounded bg-[var(--m3-surface-container)] border-[var(--m3-outline)] text-[var(--google-blue)] focus:ring-0 cursor-pointer" ${isChecked ? 'checked' : ''}>
+          <div class="w-3 h-3 rounded-full shrink-0" style="background-color: ${p.color || '#8ab4f8'};"></div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-xs font-medium text-[var(--m3-on-surface)] truncate">${escapeHtml(p.displayName)}</span>
+              ${p.tier === 'pro' ? `<span class="text-[9px] px-1 py-0.1 rounded-full bg-[var(--google-yellow-container)]/80 text-[var(--google-yellow)] font-medium">PRO AI</span>` : ''}
+              ${isOwnerCandidate ? `<span class="text-[9px] px-1 py-0.1 rounded-full bg-[var(--google-blue-container)] text-[var(--google-blue)] font-medium">Manager</span>` : ''}
+            </div>
+            <div class="text-[10px] text-[var(--m3-on-surface-subtle)] truncate font-mono">${escapeHtml(p.email || 'No email')}</div>
+          </div>
+        </div>
+      </label>
+    `;
+  }).join('');
+
+  container.querySelectorAll('.batch-share-acc-check').forEach(chk => {
+    chk.addEventListener('change', (e) => {
+      const pid = e.target.value;
+      if (e.target.checked) {
+        batchShareSelectedProfileIds.add(pid);
+      } else {
+        batchShareSelectedProfileIds.delete(pid);
+      }
+      const parent = e.target.closest('label');
+      if (parent) {
+        if (e.target.checked) {
+          parent.classList.add('border-[var(--google-blue)]', 'bg-[var(--google-blue-container)]/10');
+        } else {
+          parent.classList.remove('border-[var(--google-blue)]', 'bg-[var(--google-blue-container)]/10');
+        }
+      }
+      updateBatchShareCounts();
+    });
+  });
+}
+
+async function handleExecuteBatchShare() {
+  if (batchShareSelectedNotebookIds.size === 0) {
+    showToast('Please select at least 1 notebook to share.', 'warning');
+    return;
+  }
+  if (batchShareSelectedProfileIds.size === 0) {
+    showToast('Please select at least 1 target Google account.', 'warning');
+    return;
+  }
+
+  const roleEl = document.querySelector('input[name="batch-share-role"]:checked');
+  const role = roleEl ? roleEl.value : 'editor';
+  const autoSyncEl = document.getElementById('check-batch-share-autosync');
+  const autoSync = autoSyncEl ? autoSyncEl.checked : true;
+
+  const notebookIds = Array.from(batchShareSelectedNotebookIds);
+  const targetProfileIds = Array.from(batchShareSelectedProfileIds);
+
+  const execBtn = document.getElementById('btn-execute-batch-share');
+  execBtn.disabled = true;
+  execBtn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i><span>Inviting Accounts...</span>';
+  if (window.lucide) lucide.createIcons({ root: execBtn });
+
+  const progSection = document.getElementById('batch-share-progress-section');
+  const progBar = document.getElementById('batch-share-progress-bar');
+  const progCounter = document.getElementById('batch-share-progress-counter');
+  const statusTitle = document.getElementById('batch-share-status-title');
+  const logsEl = document.getElementById('batch-share-logs');
+
+  if (progSection) progSection.classList.remove('hidden');
+  if (progBar) progBar.style.width = '30%';
+  if (progCounter) progCounter.textContent = `0 / ${notebookIds.length * targetProfileIds.length}`;
+  if (logsEl) {
+    logsEl.innerHTML = `<div>[Init] Preparing batch share for ${notebookIds.length} notebook(s) to ${targetProfileIds.length} account(s) with role: ${role.toUpperCase()}...</div>`;
+  }
+
+  try {
+    const res = await fetch('/api/notebooks/batch-share', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        notebookIds: notebookIds,
+        targetProfileIds: targetProfileIds,
+        role: role,
+        autoSync: autoSync
+      })
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || `Server returned error ${res.status}`);
+    }
+
+    const data = await res.json();
+    if (progBar) progBar.style.width = '100%';
+    if (progCounter) progCounter.textContent = `${data.totalOperations || 0} / ${data.totalOperations || 0}`;
+
+    if (logsEl) {
+      const details = data.details || [];
+      const logHtml = details.map(d => {
+        const icon = d.status === 'shared' ? '✅' : (d.status === 'already_shared' ? 'ℹ️' : (d.status === 'owner' ? '👑' : '❌'));
+        return `<div>${icon} <strong>${escapeHtml(d.notebookTitle || d.notebookId)}</strong> &rarr; ${escapeHtml(d.targetEmail)}: <em>${escapeHtml(d.message)}</em></div>`;
+      }).join('');
+      logsEl.innerHTML = logHtml + `
+        <div class="pt-1 font-semibold text-[var(--google-green)]">
+          🎉 Completed! Shared: ${data.shared}, Already Access: ${data.alreadyShared}, Skipped Owner: ${data.skippedOwner}, Failed: ${data.failed}
+        </div>
+      `;
+      logsEl.scrollTop = logsEl.scrollHeight;
+    }
+
+    if (statusTitle) {
+      statusTitle.innerHTML = `
+        <i data-lucide="check-circle-2" class="w-4 h-4 text-[var(--google-green)]"></i>
+        <span class="text-[var(--google-green)] font-medium">Batch sharing completed successfully!</span>
+      `;
+      if (window.lucide) lucide.createIcons({ root: statusTitle });
+    }
+
+    execBtn.innerHTML = '<i data-lucide="check" class="w-3.5 h-3.5"></i><span>Shared!</span>';
+    if (window.lucide) lucide.createIcons({ root: execBtn });
+
+    showToast(`Batch sharing complete: ${data.shared} accounts invited, ${data.alreadyShared} had access.`, 'success');
+
+    if (autoSync) {
+      setTimeout(async () => {
+        await loadNotebooks();
+      }, 1500);
+    }
+
+  } catch (err) {
+    console.error('Batch share failed:', err);
+    if (progBar) progBar.style.width = '100%';
+    if (logsEl) {
+      logsEl.innerHTML += `<div class="text-[var(--google-red)]">❌ Error: ${escapeHtml(err.message)}</div>`;
+    }
+    showToast(`Batch sharing error: ${err.message}`, 'error');
+    execBtn.disabled = false;
+    execBtn.innerHTML = '<i data-lucide="share-2" class="w-3.5 h-3.5"></i><span>Retry Batch Share</span>';
+    if (window.lucide) lucide.createIcons({ root: execBtn });
+  }
+}
+
+// ==========================================================================
+// Google Calendar Agenda & Study Copilot Controller
+// ==========================================================================
+
+const AGENDA_COLLAPSED_KEY = 'supernlm_agenda_collapsed';
+const UPCOMING_OPEN_KEY = 'supernlm_upcoming_open';
+
+async function loadCalendarAgenda(forceRefresh = false) {
+  const section = document.getElementById('calendar-agenda-section');
+  if (!section) return;
+
+  const refreshIcon = document.getElementById('agenda-refresh-icon');
+  if (refreshIcon) refreshIcon.classList.add('animate-spin');
+
+  try {
+    const endpoint = forceRefresh ? '/api/calendar/refresh?days=14' : '/api/calendar/agenda?days=14';
+    const method = forceRefresh ? 'POST' : 'GET';
+    const res = await fetch(endpoint, { method });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    state.calendarAgenda = data;
+    renderCalendarAgenda();
+    if (forceRefresh) {
+      showToast('Google Calendar agenda refreshed', 'success');
+    }
+  } catch (err) {
+    console.warn('Could not load Google Calendar agenda:', err);
+    if (section && (!state.calendarAgenda || !state.calendarAgenda.configured)) {
+      section.classList.add('hidden');
+    }
+  } finally {
+    if (refreshIcon) refreshIcon.classList.remove('animate-spin');
+  }
+}
+
+function toggleAgendaCollapse(forceState = null) {
+  const body = document.getElementById('agenda-content-body');
+  const chevron = document.getElementById('agenda-chevron-icon');
+  if (!body) return;
+
+  const isCurrentlyCollapsed = body.classList.contains('hidden');
+  const shouldCollapse = forceState !== null ? forceState : !isCurrentlyCollapsed;
+
+  if (shouldCollapse) {
+    body.classList.add('hidden');
+    if (chevron) chevron.style.transform = 'rotate(180deg)';
+    localStorage.setItem(AGENDA_COLLAPSED_KEY, 'true');
+  } else {
+    body.classList.remove('hidden');
+    if (chevron) chevron.style.transform = 'rotate(0deg)';
+    localStorage.setItem(AGENDA_COLLAPSED_KEY, 'false');
+  }
+}
+
+function toggleUpcomingEvents() {
+  const container = document.getElementById('agenda-upcoming-container');
+  const chevron = document.getElementById('upcoming-chevron');
+  if (!container) return;
+
+  const isHidden = container.classList.contains('hidden');
+  if (isHidden) {
+    container.classList.remove('hidden');
+    if (chevron) chevron.style.transform = 'rotate(180deg)';
+    localStorage.setItem(UPCOMING_OPEN_KEY, 'true');
+  } else {
+    container.classList.add('hidden');
+    if (chevron) chevron.style.transform = 'rotate(0deg)';
+    localStorage.setItem(UPCOMING_OPEN_KEY, 'false');
+  }
+}
+
+function renderCalendarAgenda() {
+  const agenda = state.calendarAgenda;
+  const section = document.getElementById('calendar-agenda-section');
+  if (!section) return;
+
+  if (!agenda || !agenda.configured) {
+    section.classList.add('hidden');
+    return;
+  }
+
+  section.classList.remove('hidden');
+
+  // Subtitle & badges
+  const subtitleEl = document.getElementById('agenda-subtitle');
+  const badgeCountEl = document.getElementById('agenda-badge-count');
+  
+  if (subtitleEl) {
+    const email = agenda.calendar_email ? `${escapeHtml(agenda.calendar_email)} • ` : '';
+    subtitleEl.textContent = `${email}${agenda.today_count} scheduled today, ${agenda.upcoming_count} upcoming this week`;
+  }
+  if (badgeCountEl) {
+    badgeCountEl.textContent = `${agenda.today_count} Today`;
+  }
+
+  // Render Today's Events
+  const todayContainer = document.getElementById('agenda-today-container');
+  if (todayContainer) {
+    if (!agenda.today_events || agenda.today_events.length === 0) {
+      todayContainer.innerHTML = `
+        <div class="p-3.5 rounded-xl m3-subcard text-xs text-[var(--m3-on-surface-subtle)] flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i data-lucide="check-circle-2" class="w-4 h-4 text-[var(--google-green)]"></i>
+            <span>No lectures or exams scheduled for today.</span>
+          </div>
+          ${agenda.upcoming_count > 0 ? `<span class="text-[11px] text-[var(--google-blue)] font-medium">${agenda.upcoming_count} upcoming events this week</span>` : ''}
+        </div>
+      `;
+    } else {
+      todayContainer.innerHTML = agenda.today_events.map(e => renderAgendaEventItem(e, true)).join('');
+    }
+  }
+
+  // Render Upcoming Events
+  const upcomingSection = document.getElementById('agenda-upcoming-section');
+  const upcomingContainer = document.getElementById('agenda-upcoming-container');
+  const upcomingToggleText = document.getElementById('upcoming-events-toggle-text');
+
+  if (upcomingSection && upcomingContainer) {
+    if (!agenda.upcoming_events || agenda.upcoming_events.length === 0) {
+      upcomingSection.classList.add('hidden');
+    } else {
+      upcomingSection.classList.remove('hidden');
+      if (upcomingToggleText) {
+        upcomingToggleText.textContent = `Show ${agenda.upcoming_count} Upcoming Events this Week`;
+      }
+      upcomingContainer.innerHTML = agenda.upcoming_events.map(e => renderAgendaEventItem(e, false)).join('');
+
+      // Restore upcoming open state
+      const wasOpen = localStorage.getItem(UPCOMING_OPEN_KEY) === 'true';
+      const upcomingChevron = document.getElementById('upcoming-chevron');
+      if (wasOpen) {
+        upcomingContainer.classList.remove('hidden');
+        if (upcomingChevron) upcomingChevron.style.transform = 'rotate(180deg)';
+      } else {
+        upcomingContainer.classList.add('hidden');
+        if (upcomingChevron) upcomingChevron.style.transform = 'rotate(0deg)';
+      }
+    }
+  }
+
+  // Restore collapsed state (default expanded if today has events)
+  const savedCollapsed = localStorage.getItem(AGENDA_COLLAPSED_KEY);
+  const isCollapsed = savedCollapsed !== null ? (savedCollapsed === 'true') : false;
+  toggleAgendaCollapse(isCollapsed);
+
+  // Hook up event action buttons
+  section.querySelectorAll('.btn-agenda-chat').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const nbId = btn.getAttribute('data-id');
+      const pId = btn.getAttribute('data-profile');
+      const title = btn.getAttribute('data-title');
+      if (window.openChatModal) {
+        window.openChatModal(nbId, pId, title);
+      }
+    };
+  });
+
+  if (window.lucide) lucide.createIcons({ root: section });
+}
+
+function renderAgendaEventItem(event, isToday) {
+  const typeTag = `<span class="agenda-type-tag ${event.event_type}">${event.event_type}</span>`;
+  const timeStr = event.time_label || 'All Day';
+  const dateStr = isToday ? 'Today' : (event.date_label || '');
+
+  let matchedHtml = '';
+  if (event.matched_notebook) {
+    const nb = event.matched_notebook;
+    const courseCodeBadge = nb.course_code ? `
+      <span class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md bg-[var(--google-green-container)] text-[var(--google-green)] border border-[var(--google-green)]/30">
+        ${escapeHtml(nb.course_code)}
+      </span>
+    ` : '';
+
+    matchedHtml = `
+      <div class="agenda-matched-chip">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <i data-lucide="book-marked" class="w-3.5 h-3.5 text-[var(--google-blue)] shrink-0"></i>
+          ${courseCodeBadge}
+          <span class="text-xs font-medium text-[var(--m3-on-surface)] truncate max-w-[200px] sm:max-w-xs" title="${escapeHtml(nb.title)}">
+            ${escapeHtml(nb.title)}
+          </span>
+        </div>
+        <div class="flex items-center gap-1 shrink-0 ml-auto">
+          <button
+            type="button"
+            class="btn-agenda-chat google-btn-tonal text-xs px-2.5 py-1 flex items-center gap-1 cursor-pointer"
+            data-id="${escapeHtml(nb.id)}"
+            data-profile="${escapeHtml(nb.profile_id)}"
+            data-title="${escapeHtml(nb.title)}"
+            title="Ask AI questions about this course notebook"
+          >
+            <i data-lucide="message-square" class="w-3 h-3"></i>
+            <span>Chat</span>
+          </button>
+          <a
+            href="https://notebooklm.google.com/notebook/${escapeHtml(nb.id)}"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="google-btn-outlined p-1 text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-blue)] transition flex items-center justify-center rounded-lg"
+            title="Open in NotebookLM (new tab)"
+          >
+            <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+          </a>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="agenda-card p-3 rounded-2xl m3-subcard flex flex-col sm:flex-row sm:items-center justify-between gap-2.5" data-type="${event.event_type}">
+      <div class="min-w-0 space-y-1 pl-1">
+        <div class="flex items-center gap-2 flex-wrap">
+          ${typeTag}
+          <span class="text-[11px] font-mono text-[var(--google-blue)] font-medium bg-[var(--google-blue-container)]/40 px-2 py-0.5 rounded-full">
+            ${escapeHtml(dateStr)} • ${escapeHtml(timeStr)}
+          </span>
+          ${event.location ? `<span class="text-[10px] text-[var(--m3-on-surface-subtle)] truncate max-w-[160px] flex items-center gap-1"><i data-lucide="map-pin" class="w-3 h-3"></i> ${escapeHtml(event.location)}</span>` : ''}
+        </div>
+        <h4 class="text-xs font-semibold text-[var(--m3-on-surface)] leading-snug break-words">
+          ${escapeHtml(event.summary)}
+        </h4>
+      </div>
+      <div class="shrink-0">
+        ${matchedHtml}
+      </div>
+    </div>
+  `;
+}
+
+// ==========================================================================
+// Google Account Fleet Usage & Quota Limits Controller
+// ==========================================================================
+
+function formatResetCountdown(isoDate) {
+  if (!isoDate) return 'Reset time pending';
+  try {
+    const target = new Date(isoDate).getTime();
+    const now = Date.now();
+    const diffMs = target - now;
+    if (diffMs <= 0) return 'Resets momentarily';
+    const totalMins = Math.floor(diffMs / 60000);
+    const hours = Math.floor(totalMins / 60);
+    const mins = totalMins % 60;
+    const days = Math.floor(hours / 24);
+    if (days >= 2) {
+      return `Resets in ${days} days`;
+    } else if (days === 1) {
+      return `Resets in 1d ${hours % 24}h`;
+    } else if (hours > 0) {
+      return `Resets in ${hours}h ${mins}m`;
+    } else {
+      return `Resets in ${Math.max(1, mins)}m`;
+    }
+  } catch (e) {
+    return 'Resets on cycle';
+  }
+}
+
+async function openUsageLimitsModal() {
+  openModal('modal-usage');
+  if (!state.fleetUsage || (Date.now() - (state.fleetUsageTimestamp || 0) > 45000)) {
+    await loadFleetUsage(false);
+  } else {
+    renderUsageModal();
+  }
+}
+
+async function loadFleetUsage(forceRefresh = false) {
+  state.isUsageLoading = true;
+  const refreshIcon = document.getElementById('usage-refresh-icon');
+  const refreshBtn = document.getElementById('btn-refresh-usage');
+  if (refreshIcon) refreshIcon.classList.add('animate-spin');
+  if (refreshBtn) refreshBtn.disabled = true;
+
+  if (isModalOpen('modal-usage') && !state.fleetUsage) {
+    renderUsageSkeletons();
+  }
+
+  try {
+    const endpoint = forceRefresh ? '/api/usage?force_refresh=true' : '/api/usage';
+    const res = await fetch(endpoint);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    state.fleetUsage = data;
+    state.fleetUsageTimestamp = Date.now();
+    renderUsageModal();
+    renderSidebarFleetQuota();
+    if (forceRefresh) {
+      showToast('Fleet quota & plan limits refreshed', 'success');
+    }
+  } catch (err) {
+    console.error('Failed to load fleet usage:', err);
+    showToast('Failed to load quota limits: ' + err.message, 'error');
+  } finally {
+    state.isUsageLoading = false;
+    if (refreshIcon) refreshIcon.classList.remove('animate-spin');
+    if (refreshBtn) refreshBtn.disabled = false;
+  }
+}
+
+async function refreshProfileUsage(profileId) {
+  const btn = document.querySelector(`.btn-refresh-single-usage[data-profile="${profileId}"]`);
+  const icon = btn ? btn.querySelector('i') : null;
+  if (icon) icon.classList.add('animate-spin');
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await fetch(`/api/profiles/${encodeURIComponent(profileId)}/usage`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const updated = await res.json();
+
+    if (state.fleetUsage && state.fleetUsage.profiles) {
+      const idx = state.fleetUsage.profiles.findIndex(p => p.profile_id === profileId);
+      if (idx !== -1) {
+        state.fleetUsage.profiles[idx] = updated;
+      }
+    }
+    renderUsageModal();
+    renderSidebarFleetQuota();
+    showToast(`Quota refreshed for ${updated.display_name || profileId}`, 'success');
+  } catch (err) {
+    showToast(`Failed to refresh quota for ${profileId}: ${err.message}`, 'error');
+  } finally {
+    if (icon) icon.classList.remove('animate-spin');
+    if (btn) btn.disabled = false;
+  }
+}
+
+function renderSidebarFleetQuota() {
+  const card = document.getElementById('sidebar-fleet-quota-card');
+  const headroomBadge = document.getElementById('sidebar-quota-headroom-badge');
+  const dotsContainer = document.getElementById('sidebar-quota-dots');
+  const statusText = document.getElementById('sidebar-quota-status-text');
+  if (!card) return;
+
+  if (!state.fleetUsage || !state.fleetUsage.profiles) {
+    if (statusText) statusText.textContent = `${state.profiles.length || 6} Accounts Loaded`;
+    return;
+  }
+
+  const data = state.fleetUsage;
+  const avgUsed = data.average_rolling_used || 0;
+  const headroom = Math.max(0, 100 - avgUsed);
+
+  if (headroomBadge) {
+    headroomBadge.textContent = `${headroom.toFixed(0)}% Headroom`;
+    if (headroom >= 40) {
+      headroomBadge.className = 'text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-[var(--google-green-container)] text-[var(--google-green)] font-semibold';
+    } else if (headroom >= 15) {
+      headroomBadge.className = 'text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-[var(--google-yellow-container)] text-[var(--google-yellow)] font-semibold';
+    } else {
+      headroomBadge.className = 'text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-[var(--google-red-container)] text-[var(--google-red)] font-semibold';
+    }
+  }
+
+  if (dotsContainer) {
+    dotsContainer.innerHTML = data.profiles.map(p => {
+      const rolling = (p.windows || []).find(w => w.window === 'rolling');
+      const used = rolling ? rolling.percent_used : 0;
+      let statusColor = 'var(--google-green)';
+      if (used >= 90) statusColor = 'var(--google-red)';
+      else if (used >= 70) statusColor = 'var(--google-yellow)';
+
+      return `<div class="quota-dot shrink-0 cursor-pointer" style="background-color: ${statusColor};" title="${escapeHtml(p.display_name)} (${escapeHtml(p.profile_id)}): ${used.toFixed(1)}% used"></div>`;
+    }).join('');
+  }
+
+  if (statusText) {
+    if (data.critical_count > 0) {
+      statusText.textContent = `${data.critical_count} account${data.critical_count > 1 ? 's' : ''} near limit`;
+    } else if (data.warning_count > 0) {
+      statusText.textContent = `${data.warning_count} account${data.warning_count > 1 ? 's' : ''} in use`;
+    } else {
+      statusText.textContent = `All ${data.total_accounts} accounts optimal`;
+    }
+  }
+}
+
+function renderUsageModal() {
+  const data = state.fleetUsage;
+  if (!data) return;
+
+  const healthEl = document.getElementById('usage-kpi-health');
+  const healthSubEl = document.getElementById('usage-kpi-health-sub');
+  const healthIconEl = document.getElementById('usage-kpi-health-icon');
+  const rollingEl = document.getElementById('usage-kpi-rolling');
+  const rollingSubEl = document.getElementById('usage-kpi-rolling-sub');
+  const accountsEl = document.getElementById('usage-kpi-accounts');
+  const accountsSubEl = document.getElementById('usage-kpi-accounts-sub');
+  const lastUpdatedEl = document.getElementById('usage-last-updated-label');
+
+  const avgUsed = data.average_rolling_used || 0;
+  const headroom = Math.max(0, 100 - avgUsed);
+
+  if (healthEl) {
+    if (data.critical_count > 0) {
+      healthEl.textContent = `${data.critical_count} Critical`;
+      healthEl.className = 'text-base font-bold text-[var(--google-red)]';
+      if (healthSubEl) healthSubEl.textContent = `${data.healthy_count} optimal, ${data.warning_count} warning`;
+      if (healthIconEl) {
+        healthIconEl.className = 'w-10 h-10 rounded-2xl bg-[var(--google-red-container)] text-[var(--google-red)] flex items-center justify-center shrink-0';
+        healthIconEl.innerHTML = '<i data-lucide="alert-triangle" class="w-5 h-5"></i>';
+      }
+    } else if (data.warning_count > 0) {
+      healthEl.textContent = `${data.warning_count} Warning`;
+      healthEl.className = 'text-base font-bold text-[var(--google-yellow)]';
+      if (healthSubEl) healthSubEl.textContent = `${data.healthy_count} accounts optimal headroom`;
+      if (healthIconEl) {
+        healthIconEl.className = 'w-10 h-10 rounded-2xl bg-[var(--google-yellow-container)] text-[var(--google-yellow)] flex items-center justify-center shrink-0';
+        healthIconEl.innerHTML = '<i data-lucide="shield-alert" class="w-5 h-5"></i>';
+      }
+    } else {
+      healthEl.textContent = 'All Optimal';
+      healthEl.className = 'text-base font-bold text-[var(--google-green)]';
+      if (healthSubEl) healthSubEl.textContent = 'Full capacity across fleet';
+      if (healthIconEl) {
+        healthIconEl.className = 'w-10 h-10 rounded-2xl bg-[var(--google-green-container)] text-[var(--google-green)] flex items-center justify-center shrink-0';
+        healthIconEl.innerHTML = '<i data-lucide="shield-check" class="w-5 h-5"></i>';
+      }
+    }
+  }
+
+  if (rollingEl) {
+    rollingEl.textContent = `${headroom.toFixed(1)}% Headroom`;
+  }
+  if (rollingSubEl) {
+    rollingSubEl.textContent = `Fleet average: ${avgUsed.toFixed(1)}% used`;
+  }
+
+  if (accountsEl) {
+    accountsEl.textContent = `${data.connected_accounts} / ${data.total_accounts} Ready`;
+  }
+  if (accountsSubEl) {
+    accountsSubEl.textContent = 'Round-robin query pool active';
+  }
+
+  if (lastUpdatedEl && data.fetched_at) {
+    const time = new Date(data.fetched_at).toLocaleTimeString();
+    lastUpdatedEl.textContent = `Synced at ${time}`;
+  }
+
+  // Render 6-Account Cards
+  const container = document.getElementById('usage-accounts-grid');
+  if (!container) return;
+
+  container.innerHTML = (data.profiles || []).map(p => {
+    const rolling = (p.windows || []).find(w => w.window === 'rolling') || { percent_used: 0, percent_remaining: 100 };
+    const weekly = (p.windows || []).find(w => w.window === 'weekly') || { percent_used: 0, percent_remaining: 100 };
+    const isDefaultPro = p.is_default_pro;
+
+    const rollingUsed = rolling.percent_used;
+    const rollingRemaining = rolling.percent_remaining;
+    const rollingCountdown = formatResetCountdown(rolling.resets_at);
+
+    const weeklyUsed = weekly.percent_used;
+    const weeklyRemaining = weekly.percent_remaining;
+    const weeklyCountdown = formatResetCountdown(weekly.resets_at);
+
+    let rollingColorClass = 'healthy';
+    let statusBadge = '<span class="text-[10px] font-medium text-[var(--google-green)] bg-[var(--google-green-container)]/50 px-2 py-0.5 rounded-full flex items-center gap-1 border border-[var(--google-green)]/20"><span class="w-1.5 h-1.5 rounded-full bg-[var(--google-green)]"></span>Ready</span>';
+    if (rollingUsed >= 90) {
+      rollingColorClass = 'critical';
+      statusBadge = '<span class="text-[10px] font-medium text-[var(--google-red)] bg-[var(--google-red-container)]/50 px-2 py-0.5 rounded-full flex items-center gap-1 border border-[var(--google-red)]/20"><span class="w-1.5 h-1.5 rounded-full bg-[var(--google-red)]"></span>Throttled</span>';
+    } else if (rollingUsed >= 70) {
+      rollingColorClass = 'warning';
+      statusBadge = '<span class="text-[10px] font-medium text-[var(--google-yellow)] bg-[var(--google-yellow-container)]/50 px-2 py-0.5 rounded-full flex items-center gap-1 border border-[var(--google-yellow)]/20"><span class="w-1.5 h-1.5 rounded-full bg-[var(--google-yellow)]"></span>Moderate</span>';
+    }
+
+    return `
+      <div class="m3-card p-4 rounded-2xl flex flex-col justify-between space-y-3.5 hover:border-[var(--m3-outline)] transition-all animate-m3-enter relative overflow-hidden" data-profile-card="${escapeHtml(p.profile_id)}">
+        
+        <!-- Account Header Row -->
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex items-center gap-2.5 min-w-0 flex-1">
+            <div class="w-3.5 h-3.5 rounded-full shrink-0 shadow-xs" style="background-color: ${p.color || '#8ab4f8'};"></div>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <h5 class="text-xs font-bold text-[var(--m3-on-surface)] truncate" title="${escapeHtml(p.display_name)}">
+                  ${escapeHtml(p.display_name)}
+                </h5>
+                <span class="text-[9px] font-mono px-1.5 py-0.2 rounded bg-[var(--m3-surface-container)] text-[var(--m3-on-surface-subtle)] border border-[var(--m3-outline-variant)]">
+                  ${escapeHtml(p.profile_id)}
+                </span>
+                ${isDefaultPro ? `
+                  <span class="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-[var(--google-yellow-container)] text-[var(--google-yellow)] border border-[var(--google-yellow)]/30 flex items-center gap-0.5">
+                    <i data-lucide="star" class="w-2.5 h-2.5 fill-current"></i> Default Pro
+                  </span>
+                ` : ''}
+              </div>
+              <p class="text-[10px] text-[var(--m3-on-surface-subtle)] font-mono truncate max-w-[210px] mt-0.5" title="${escapeHtml(p.email)}">
+                ${escapeHtml(p.email || 'No email associated')}
+              </p>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-1 shrink-0">
+            ${statusBadge}
+            <button
+              type="button"
+              class="btn-refresh-single-usage p-1 rounded-lg text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-blue)] hover:bg-[var(--m3-surface-container-high)] transition cursor-pointer"
+              data-profile="${escapeHtml(p.profile_id)}"
+              title="Refresh quota for ${escapeHtml(p.display_name)}"
+            >
+              <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- 24-Hour Rolling Quota Section -->
+        <div class="p-3 rounded-xl bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)]/60 space-y-2">
+          <div class="flex items-center justify-between text-xs">
+            <span class="font-medium text-[var(--m3-on-surface)] flex items-center gap-1.5">
+              <i data-lucide="clock" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
+              24h Rolling Quota
+            </span>
+            <span class="font-mono text-xs font-semibold ${rollingUsed >= 90 ? 'text-[var(--google-red)]' : (rollingUsed >= 70 ? 'text-[var(--google-yellow)]' : 'text-[var(--google-green)]')}">
+              ${rollingUsed.toFixed(1)}% used
+            </span>
+          </div>
+
+          <!-- Progress Bar -->
+          <div class="quota-meter-track">
+            <div class="quota-meter-fill ${rollingColorClass}" style="width: ${Math.min(100, Math.max(0, rollingUsed))}%;"></div>
+          </div>
+
+          <div class="flex items-center justify-between text-[11px] text-[var(--m3-on-surface-variant)] pt-0.5">
+            <span class="font-mono text-[10px]">${rollingRemaining.toFixed(1)}% headroom left</span>
+            <span class="text-[10px] text-[var(--m3-on-surface-subtle)] flex items-center gap-1" title="UTC Reset: ${escapeHtml(rolling.resets_at || 'N/A')}">
+              <i data-lucide="history" class="w-3 h-3 text-[var(--google-blue)]"></i>
+              ${escapeHtml(rollingCountdown)}
+            </span>
+          </div>
+        </div>
+
+        <!-- Weekly Plan Allocation Section -->
+        <div class="space-y-1.5 px-1">
+          <div class="flex items-center justify-between text-[11px]">
+            <span class="text-[var(--m3-on-surface-subtle)] flex items-center gap-1">
+              <i data-lucide="calendar" class="w-3 h-3"></i>
+              Weekly Plan
+            </span>
+            <span class="font-mono text-[10px] text-[var(--m3-on-surface)] font-medium">
+              ${weeklyUsed.toFixed(1)}% (${weeklyRemaining.toFixed(1)}% left)
+            </span>
+          </div>
+          <div class="quota-meter-track" style="height: 4px;">
+            <div class="quota-meter-fill ${weeklyUsed >= 90 ? 'critical' : 'healthy'}" style="width: ${Math.min(100, Math.max(0, weeklyUsed))}%;"></div>
+          </div>
+          <div class="flex items-center justify-between text-[10px] text-[var(--m3-on-surface-subtle)]">
+            <span>Tier: <span class="uppercase font-mono font-medium text-[var(--m3-on-surface-variant)]">${escapeHtml(p.tier)}</span></span>
+            <span>${escapeHtml(weeklyCountdown)}</span>
+          </div>
+        </div>
+
+        <!-- Quick Action Row -->
+        <div class="pt-2 border-t border-[var(--m3-outline-variant)]/60 flex items-center justify-between">
+          <button
+            type="button"
+            class="btn-usage-filter-notebooks text-[11px] text-[var(--google-blue)] hover:underline font-medium cursor-pointer flex items-center gap-1"
+            data-profile="${escapeHtml(p.profile_id)}"
+          >
+            <i data-lucide="filter" class="w-3 h-3"></i>
+            <span>View Notebooks</span>
+          </button>
+          ${!isDefaultPro ? `
+            <button
+              type="button"
+              class="btn-usage-set-pro text-[11px] text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-yellow)] font-medium cursor-pointer flex items-center gap-1"
+              data-profile="${escapeHtml(p.profile_id)}"
+            >
+              <i data-lucide="sparkles" class="w-3 h-3"></i>
+              <span>Make Primary Pro</span>
+            </button>
+          ` : `
+            <span class="text-[10px] text-[var(--google-yellow)] font-medium flex items-center gap-1">
+              <i data-lucide="check-circle" class="w-3 h-3"></i> Primary AI
+            </span>
+          `}
+        </div>
+
+      </div>
+    `;
+  }).join('');
+
+  container.querySelectorAll('.btn-refresh-single-usage').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const pid = btn.getAttribute('data-profile');
+      if (pid) refreshProfileUsage(pid);
+    });
+  });
+
+  container.querySelectorAll('.btn-usage-filter-notebooks').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const pid = btn.getAttribute('data-profile');
+      if (pid) {
+        state.activeProfileFilter = pid;
+        renderAccountPills();
+        renderNotebooksGrid();
+        closeModal('modal-usage');
+        showToast(`Filtered notebooks for ${pid}`, 'info');
+      }
+    });
+  });
+
+  container.querySelectorAll('.btn-usage-set-pro').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const pid = btn.getAttribute('data-profile');
+      if (pid) {
+        await handleSetPro(pid);
+        await loadFleetUsage(false);
+      }
+    });
+  });
+
+  if (window.lucide) lucide.createIcons({ root: container });
+}
+
+function renderUsageSkeletons() {
+  const container = document.getElementById('usage-accounts-grid');
+  if (!container) return;
+  container.innerHTML = Array(6).fill(0).map(() => `
+    <div class="m3-card p-4 rounded-2xl space-y-4">
+      <div class="flex items-center gap-3">
+        <div class="w-3.5 h-3.5 rounded-full google-skeleton"></div>
+        <div class="space-y-1.5 flex-1">
+          <div class="h-4 w-28 rounded google-skeleton"></div>
+          <div class="h-3 w-40 rounded google-skeleton"></div>
+        </div>
+      </div>
+      <div class="p-3 rounded-xl m3-subcard space-y-2">
+        <div class="h-3.5 w-full rounded google-skeleton"></div>
+        <div class="h-2 w-full rounded-full google-skeleton"></div>
+        <div class="h-3 w-2/3 rounded google-skeleton"></div>
+      </div>
+      <div class="h-8 w-full rounded-xl google-skeleton"></div>
+    </div>
+  `).join('');
+}
+
+// ==========================================================================
+// Batch Creation & Fleet Rotation Queue Controller
+// ==========================================================================
+
+let schedulerPollTimer = null;
+let schedulerSelectedNotebooks = new Set();
+
+function initSchedulerController() {
+  const btnOpen = document.getElementById('btn-open-scheduler-modal');
+  const btnClose = document.getElementById('close-modal-scheduler');
+  const btnCancel = document.getElementById('btn-cancel-scheduler');
+  const tabCreate = document.getElementById('tab-scheduler-create');
+  const tabQueue = document.getElementById('tab-scheduler-queue');
+  const btnRefresh = document.getElementById('btn-refresh-queue');
+  const btnExecute = document.getElementById('btn-execute-scheduler-batch');
+  const btnSelectStudy = document.getElementById('btn-select-all-study-scheduler');
+  const btnSelectAll = document.getElementById('btn-select-all-scheduler');
+  const btnClearAll = document.getElementById('btn-clear-all-scheduler');
+  const btnClearCompleted = document.getElementById('btn-clear-completed-jobs');
+  const artifactRadios = document.querySelectorAll('input[name="scheduler-artifact-type"]');
+  const triggerRadios = document.querySelectorAll('input[name="scheduler-trigger-type"]');
+
+  if (btnOpen) {
+    btnOpen.addEventListener('click', () => openSchedulerModal());
+  }
+
+  if (btnClose) {
+    btnClose.addEventListener('click', () => closeSchedulerModal());
+  }
+
+  if (btnCancel) {
+    btnCancel.addEventListener('click', () => closeSchedulerModal());
+  }
+
+  if (btnRefresh) {
+    btnRefresh.addEventListener('click', () => loadSchedulerQueue(true));
+  }
+
+  if (tabCreate && tabQueue) {
+    tabCreate.addEventListener('click', () => switchSchedulerTab('create'));
+    tabQueue.addEventListener('click', () => switchSchedulerTab('queue'));
+  }
+
+  if (btnSelectStudy) {
+    btnSelectStudy.addEventListener('click', () => {
+      schedulerSelectedNotebooks.clear();
+      state.notebooks.forEach(nb => {
+        if (isStudyNotebook(nb)) schedulerSelectedNotebooks.add(nb.id);
+      });
+      renderSchedulerNotebooksList();
+    });
+  }
+
+  if (btnSelectAll) {
+    btnSelectAll.addEventListener('click', () => {
+      state.notebooks.forEach(nb => schedulerSelectedNotebooks.add(nb.id));
+      renderSchedulerNotebooksList();
+    });
+  }
+
+  if (btnClearAll) {
+    btnClearAll.addEventListener('click', () => {
+      schedulerSelectedNotebooks.clear();
+      renderSchedulerNotebooksList();
+    });
+  }
+
+  if (btnClearCompleted) {
+    btnClearCompleted.addEventListener('click', handleClearCompletedJobs);
+  }
+
+  if (btnExecute) {
+    btnExecute.addEventListener('click', handleExecuteBatchSchedule);
+  }
+
+  // Artifact selection dynamic controls
+  artifactRadios.forEach(radio => {
+    radio.addEventListener('change', () => {
+      const val = radio.value;
+      const formatSelect = document.getElementById('scheduler-format-select');
+      const styleSelect = document.getElementById('scheduler-style-select');
+      if (!formatSelect) return;
+
+      if (val === 'video') {
+        formatSelect.innerHTML = `
+          <option value="cinematic">Cinematic (Dramatic Narrative)</option>
+          <option value="explainer">Explainer (Detailed Overview)</option>
+          <option value="brief">Brief (Quick 2-minute summary)</option>
+          <option value="short">Short (Bite-sized clip)</option>
+        `;
+        if (styleSelect) styleSelect.parentElement.style.display = 'block';
+      } else if (val === 'audio') {
+        formatSelect.innerHTML = `
+          <option value="deep_dive">Deep Dive (Comprehensive Podcast)</option>
+          <option value="brief">Brief (5-minute summary)</option>
+          <option value="critique">Critique (Analytical evaluation)</option>
+          <option value="debate">Debate (Two opposing viewpoints)</option>
+        `;
+        if (styleSelect) styleSelect.parentElement.style.display = 'none';
+      } else if (val === 'report') {
+        formatSelect.innerHTML = `
+          <option value="Study Guide">Study Guide</option>
+          <option value="Briefing Doc">Briefing Doc</option>
+          <option value="FAQ">FAQ Document</option>
+          <option value="Timeline">Chronological Timeline</option>
+        `;
+        if (styleSelect) styleSelect.parentElement.style.display = 'none';
+      } else if (val === 'quiz') {
+        formatSelect.innerHTML = `
+          <option value="quiz">Interactive Quiz (10 questions)</option>
+          <option value="flashcards">Flashcards (Key concepts)</option>
+        `;
+        if (styleSelect) styleSelect.parentElement.style.display = 'none';
+      }
+    });
+  });
+
+  // Trigger timing dynamic controls
+  triggerRadios.forEach(radio => {
+    radio.addEventListener('change', () => {
+      const dtContainer = document.getElementById('scheduler-datetime-container');
+      if (dtContainer) {
+        dtContainer.classList.toggle('hidden', radio.value !== 'custom_time');
+      }
+    });
+  });
+
+  // Start background queue polling
+  loadSchedulerQueue(false);
+  startSchedulerPolling();
+}
+
+function openSchedulerModal() {
+  const modal = document.getElementById('modal-scheduler');
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+
+  // Preselect currently selected notebooks if any
+  if (state.selectedNotebooks && state.selectedNotebooks.size > 0) {
+    schedulerSelectedNotebooks.clear();
+    state.selectedNotebooks.forEach((val, key) => schedulerSelectedNotebooks.add(key));
+  } else if (schedulerSelectedNotebooks.size === 0) {
+    // Default to all study notebooks
+    state.notebooks.forEach(nb => {
+      if (isStudyNotebook(nb)) schedulerSelectedNotebooks.add(nb.id);
+    });
+  }
+
+  renderSchedulerNotebooksList();
+  loadSchedulerQueue(true);
+  if (window.lucide) lucide.createIcons({ root: modal });
+}
+
+function closeSchedulerModal() {
+  const modal = document.getElementById('modal-scheduler');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+}
+
+function switchSchedulerTab(tab) {
+  const tabCreate = document.getElementById('tab-scheduler-create');
+  const tabQueue = document.getElementById('tab-scheduler-queue');
+  const panelCreate = document.getElementById('panel-scheduler-create');
+  const panelQueue = document.getElementById('panel-scheduler-queue');
+  const btnExecute = document.getElementById('btn-execute-scheduler-batch');
+
+  if (tab === 'create') {
+    tabCreate.className = 'pb-2.5 text-xs font-semibold text-[var(--google-blue)] border-b-2 border-[var(--google-blue)] flex items-center gap-1.5 cursor-pointer';
+    tabQueue.className = 'pb-2.5 text-xs font-medium text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] border-b-2 border-transparent flex items-center gap-1.5 cursor-pointer';
+    panelCreate.classList.remove('hidden');
+    panelQueue.classList.add('hidden');
+    if (btnExecute) btnExecute.style.display = 'flex';
+  } else {
+    tabQueue.className = 'pb-2.5 text-xs font-semibold text-[var(--google-blue)] border-b-2 border-[var(--google-blue)] flex items-center gap-1.5 cursor-pointer';
+    tabCreate.className = 'pb-2.5 text-xs font-medium text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] border-b-2 border-transparent flex items-center gap-1.5 cursor-pointer';
+    panelQueue.classList.remove('hidden');
+    panelCreate.classList.add('hidden');
+    if (btnExecute) btnExecute.style.display = 'none';
+    loadSchedulerQueue(true);
+  }
+}
+
+function renderSchedulerNotebooksList() {
+  const container = document.getElementById('scheduler-notebooks-list');
+  const countLabel = document.getElementById('scheduler-selected-count-label');
+  if (!container) return;
+
+  if (!state.notebooks || state.notebooks.length === 0) {
+    container.innerHTML = '<p class="text-xs text-[var(--m3-on-surface-subtle)] p-2">No notebooks available. Run sync first.</p>';
+    return;
+  }
+
+  // Sort: study notebooks first, then alphabetical
+  const sorted = [...state.notebooks].sort((a, b) => {
+    const aStudy = isStudyNotebook(a);
+    const bStudy = isStudyNotebook(b);
+    if (aStudy && !bStudy) return -1;
+    if (!aStudy && bStudy) return 1;
+    return (a.title || '').localeCompare(b.title || '');
+  });
+
+  container.innerHTML = sorted.map(nb => {
+    const isChecked = schedulerSelectedNotebooks.has(nb.id);
+    const isStudy = isStudyNotebook(nb);
+    const code = getCourseCode(nb);
+    const badge = code ? `<span class="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[var(--google-green-container)] text-[var(--google-green)] font-semibold">${escapeHtml(code)}</span>` : '';
+
+    return `
+      <label class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-[var(--m3-surface-container-high)] cursor-pointer transition select-none ${isChecked ? 'bg-[var(--google-blue-container)]/15' : ''}">
+        <input
+          type="checkbox"
+          class="scheduler-nb-checkbox rounded bg-[var(--m3-surface-container)] border-[var(--m3-outline)] text-[var(--google-blue)] focus:ring-0"
+          value="${escapeHtml(nb.id)}"
+          ${isChecked ? 'checked' : ''}
+        >
+        <div class="flex items-center gap-2 min-w-0 flex-1">
+          ${badge}
+          <span class="text-xs font-medium text-[var(--m3-on-surface)] truncate" title="${escapeHtml(nb.title)}">
+            ${escapeHtml(nb.title)}
+          </span>
+          <span class="text-[10px] text-[var(--m3-on-surface-subtle)] font-mono shrink-0 ml-auto">
+            ${escapeHtml(nb.profileName || nb.profileId)}
+          </span>
+        </div>
+      </label>
+    `;
+  }).join('');
+
+  if (countLabel) {
+    countLabel.textContent = `${schedulerSelectedNotebooks.size} of ${state.notebooks.length} notebooks selected`;
+  }
+
+  container.querySelectorAll('.scheduler-nb-checkbox').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const id = cb.value;
+      if (cb.checked) {
+        schedulerSelectedNotebooks.add(id);
+      } else {
+        schedulerSelectedNotebooks.delete(id);
+      }
+      renderSchedulerNotebooksList();
+    });
+  });
+
+  if (window.lucide) lucide.createIcons({ root: container });
+}
+
+async function loadSchedulerQueue(showAnimation = false) {
+  const refreshIcon = document.getElementById('queue-refresh-icon');
+  if (showAnimation && refreshIcon) refreshIcon.classList.add('animate-spin');
+
+  try {
+    const res = await fetch('/api/scheduler/status');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderSchedulerQueueData(data);
+    updateQueueBadge(data);
+  } catch (e) {
+    console.warn('Could not fetch scheduler status:', e);
+  } finally {
+    if (showAnimation && refreshIcon) {
+      setTimeout(() => refreshIcon.classList.remove('animate-spin'), 400);
+    }
+  }
+}
+
+function updateQueueBadge(data) {
+  const badge = document.getElementById('queue-active-badge');
+  const tabBadge = document.getElementById('tab-queue-count');
+  if (!data) return;
+
+  const activeCount = (data.in_progress_count || 0) + (data.queued_count || 0);
+  if (badge) {
+    if (activeCount > 0) {
+      badge.textContent = activeCount;
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+  }
+  if (tabBadge) {
+    tabBadge.textContent = (data.jobs || []).length;
+  }
+}
+
+function renderSchedulerQueueData(data) {
+  const statRendering = document.getElementById('queue-stat-rendering');
+  const statQueued = document.getElementById('queue-stat-queued');
+  const statCompleted = document.getElementById('queue-stat-completed');
+  const statWorkers = document.getElementById('queue-stat-workers');
+  const container = document.getElementById('scheduler-jobs-container');
+
+  if (statRendering) statRendering.textContent = data.in_progress_count || 0;
+  if (statQueued) statQueued.textContent = data.queued_count || 0;
+  if (statCompleted) statCompleted.textContent = data.completed_count || 0;
+
+  if (statWorkers && data.active_workers) {
+    const busy = Object.values(data.active_workers).filter(Boolean).length;
+    const total = Object.keys(data.active_workers).length || (state.profiles ? state.profiles.length : 1);
+    statWorkers.textContent = `${busy}/${total} Busy`;
+  }
+
+  if (!container) return;
+
+  const jobs = data.jobs || [];
+  if (jobs.length === 0) {
+    container.innerHTML = `
+      <div class="p-8 rounded-2xl m3-subcard text-center space-y-2">
+        <i data-lucide="inbox" class="w-8 h-8 text-[var(--m3-on-surface-subtle)] mx-auto"></i>
+        <h4 class="text-xs font-semibold text-[var(--m3-on-surface)]">Queue is empty</h4>
+        <p class="text-[11px] text-[var(--m3-on-surface-subtle)]">Schedule video or study generations to start background fleet rendering.</p>
+      </div>
+    `;
+    if (window.lucide) lucide.createIcons({ root: container });
+    return;
+  }
+
+  container.innerHTML = jobs.map(job => {
+    const isRendering = job.status === 'in_progress';
+    const isQueued = job.status === 'queued' || job.status === 'scheduled';
+    const isCompleted = job.status === 'completed';
+    const isFailed = job.status === 'failed';
+
+    let statusBadge = '';
+    if (isRendering) {
+      statusBadge = `
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[var(--google-blue-container)] text-[var(--google-blue)] text-[10px] font-mono font-semibold border border-[var(--google-blue)]/30 animate-pulse">
+          <i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i>
+          Rendering on ${escapeHtml(job.assigned_profile_id || 'Fleet')}
+        </span>
+      `;
+    } else if (isQueued) {
+      statusBadge = `
+        <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#fdd663]/20 text-[#fdd663] text-[10px] font-mono font-semibold border border-[#fdd663]/30">
+          <i data-lucide="clock" class="w-3 h-3"></i>
+          Wave ${job.rotation_wave || 1} • Queued
+        </span>
+      `;
+    } else if (isCompleted) {
+      statusBadge = `
+        <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#81c995]/20 text-[#81c995] text-[10px] font-mono font-semibold border border-[#81c995]/30">
+          <i data-lucide="check-circle" class="w-3 h-3"></i>
+          Completed & Cached
+        </span>
+      `;
+    } else if (isFailed) {
+      statusBadge = `
+        <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#f28b82]/20 text-[#f28b82] text-[10px] font-mono font-semibold border border-[#f28b82]/30" title="${escapeHtml(job.error_message || '')}">
+          <i data-lucide="alert-circle" class="w-3 h-3"></i>
+          Failed
+        </span>
+      `;
+    } else {
+      statusBadge = `<span class="text-[10px] font-mono text-[var(--m3-on-surface-subtle)]">${escapeHtml(job.status)}</span>`;
+    }
+
+    let actionButtons = '';
+    if (isCompleted && job.download_filename) {
+      actionButtons = `
+        <a
+          href="/api/scheduler/downloads/${encodeURIComponent(job.download_filename)}"
+          download="${escapeHtml(job.download_filename)}"
+          class="google-btn-primary px-3 py-1 text-[11px] flex items-center gap-1 shadow-xs cursor-pointer"
+        >
+          <i data-lucide="download" class="w-3 h-3"></i>
+          <span>Download ${escapeHtml(job.artifact_type)}</span>
+        </a>
+      `;
+    } else if (isQueued || isFailed) {
+      actionButtons = `
+        <button
+          type="button"
+          class="btn-run-job-now google-btn-tonal px-2.5 py-1 text-[11px] flex items-center gap-1 cursor-pointer"
+          data-id="${escapeHtml(job.id)}"
+          title="Force Run Immediately"
+        >
+          <i data-lucide="play" class="w-3 h-3"></i>
+          <span>Run Now</span>
+        </button>
+        <button
+          type="button"
+          class="btn-cancel-job google-btn-outlined px-2 py-1 text-[11px] text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-red)] cursor-pointer"
+          data-id="${escapeHtml(job.id)}"
+          title="Cancel/Delete Job"
+        >
+          <i data-lucide="trash-2" class="w-3 h-3"></i>
+        </button>
+      `;
+    }
+
+    const typeIcons = {
+      video: 'clapperboard',
+      audio: 'headphones',
+      report: 'file-text',
+      quiz: 'help-circle',
+      flashcards: 'layers',
+      mindmap: 'network',
+      slides: 'presentation'
+    };
+    const iconName = typeIcons[job.artifact_type] || 'file';
+
+    return `
+      <div class="p-3.5 rounded-2xl m3-subcard border border-[var(--m3-outline-variant)]/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${isRendering ? 'ring-1 ring-[var(--google-blue)]/50' : ''}">
+        <div class="flex items-start gap-3 min-w-0">
+          <div class="p-2 rounded-xl bg-[var(--m3-surface-container)] text-[var(--google-blue)] shrink-0 mt-0.5">
+            <i data-lucide="${iconName}" class="w-4 h-4"></i>
+          </div>
+          <div class="min-w-0 space-y-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <h4 class="text-xs font-semibold text-[var(--m3-on-surface)] truncate max-w-xs sm:max-w-md" title="${escapeHtml(job.notebook_title)}">
+                ${escapeHtml(job.notebook_title)}
+              </h4>
+              ${statusBadge}
+            </div>
+            <div class="flex items-center gap-2 text-[10px] text-[var(--m3-on-surface-subtle)] font-mono flex-wrap">
+              <span class="uppercase font-semibold text-[var(--google-blue)]">${escapeHtml(job.artifact_type)}</span>
+              <span>•</span>
+              <span>Format: ${escapeHtml(job.format_option || 'default')}</span>
+              ${job.assigned_profile_id ? `<span>•</span><span>Account: ${escapeHtml(job.assigned_profile_id)}</span>` : ''}
+              ${job.download_filename ? `<span>•</span><span class="text-[var(--google-green)]">${escapeHtml(job.download_filename)}</span>` : ''}
+            </div>
+            ${job.error_message ? `<p class="text-[10px] text-[var(--google-red)] truncate max-w-md">${escapeHtml(job.error_message)}</p>` : ''}
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+          ${actionButtons}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  container.querySelectorAll('.btn-run-job-now').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-id');
+      if (id) {
+        try {
+          await fetch(`/api/scheduler/jobs/${id}/run-now`, { method: 'POST' });
+          showToast('Job queued for immediate dispatch', 'success');
+          loadSchedulerQueue(true);
+        } catch (e) {
+          showToast(`Error: ${e.message}`, 'error');
+        }
+      }
+    });
+  });
+
+  container.querySelectorAll('.btn-cancel-job').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-id');
+      if (id) {
+        try {
+          await fetch(`/api/scheduler/jobs/${id}`, { method: 'DELETE' });
+          showToast('Job removed from queue', 'info');
+          loadSchedulerQueue(true);
+        } catch (e) {
+          showToast(`Error: ${e.message}`, 'error');
+        }
+      }
+    });
+  });
+
+  if (window.lucide) lucide.createIcons({ root: container });
+}
+
+async function handleExecuteBatchSchedule() {
+  if (schedulerSelectedNotebooks.size === 0) {
+    showToast('Please select at least 1 notebook for generation.', 'warning');
+    return;
+  }
+
+  const selectedArtifact = document.querySelector('input[name="scheduler-artifact-type"]:checked')?.value || 'video';
+  const formatSelect = document.getElementById('scheduler-format-select');
+  const styleSelect = document.getElementById('scheduler-style-select');
+  const customPromptInput = document.getElementById('scheduler-custom-prompt');
+  const triggerType = document.querySelector('input[name="scheduler-trigger-type"]:checked')?.value || 'immediate';
+  const customDtInput = document.getElementById('scheduler-custom-datetime');
+
+  let scheduledTime = null;
+  if (triggerType === 'custom_time' && customDtInput && customDtInput.value) {
+    scheduledTime = new Date(customDtInput.value).toISOString();
+  }
+
+  const payload = {
+    notebook_ids: Array.from(schedulerSelectedNotebooks),
+    artifact_type: selectedArtifact,
+    format_option: formatSelect ? formatSelect.value : 'cinematic',
+    style: styleSelect ? styleSelect.value : 'auto_select',
+    custom_prompt: customPromptInput ? customPromptInput.value.trim() || null : null,
+    trigger_type: triggerType,
+    scheduled_time: scheduledTime
+  };
+
+  const btnExecute = document.getElementById('btn-execute-scheduler-batch');
+  const btnLabel = document.getElementById('btn-execute-scheduler-label');
+  if (btnExecute) btnExecute.disabled = true;
+  if (btnLabel) btnLabel.textContent = 'Queueing across fleet...';
+
+  try {
+    const res = await fetch('/api/scheduler/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    showToast(`✅ Successfully queued ${data.total_queued} generation job(s) across fleet accounts!`, 'success');
+    switchSchedulerTab('queue');
+    loadSchedulerQueue(true);
+  } catch (e) {
+    showToast(`Failed to schedule batch: ${e.message}`, 'error');
+  } finally {
+    if (btnExecute) btnExecute.disabled = false;
+    if (btnLabel) btnLabel.textContent = 'Queue Batch Creation';
+  }
+}
+
+async function handleClearCompletedJobs() {
+  try {
+    const res = await fetch('/api/scheduler/jobs?status=completed');
+    if (!res.ok) return;
+    const completed = await res.json();
+    for (const job of completed) {
+      await fetch(`/api/scheduler/jobs/${job.id}`, { method: 'DELETE' });
+    }
+    showToast('Cleared completed jobs from history', 'info');
+    loadSchedulerQueue(true);
+  } catch (e) {
+    console.warn('Error clearing jobs:', e);
+  }
+}
+
+function startSchedulerPolling() {
+  if (schedulerPollTimer) clearInterval(schedulerPollTimer);
+  schedulerPollTimer = setInterval(() => {
+    loadSchedulerQueue(false);
+  }, 12000);
+}
+
+// Auto-initialize on load
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    initSchedulerController();
+    initFolderMappingController();
+  });
+} else {
+  initSchedulerController();
+  initFolderMappingController();
+}
+
+// ==========================================================================
+// Hybrid Folder Mapping & Auto-Sync Controller
+// ==========================================================================
+
+function initFolderMappingController() {
+  const modal = document.getElementById('modal-folder-mapping');
+  const btnClose = document.getElementById('close-modal-folder');
+  const btnCancel = document.getElementById('btn-close-folder-modal');
+  const btnSave = document.getElementById('btn-save-folder-mapping');
+  const btnUnlink = document.getElementById('btn-unlink-folder-mapping');
+  const btnIngest = document.getElementById('btn-ingest-folder-files');
+  const btnSyncStale = document.getElementById('btn-sync-stale-docs');
+  const btnSelectAll = document.getElementById('btn-select-all-new');
+  const btnClearSel = document.getElementById('btn-deselect-all-files');
+
+  if (btnClose) btnClose.addEventListener('click', closeFolderMappingModal);
+  if (btnCancel) btnCancel.addEventListener('click', closeFolderMappingModal);
+  if (btnSave) btnSave.addEventListener('click', handleSaveOrScanFolder);
+  if (btnUnlink) btnUnlink.addEventListener('click', handleUnlinkFolder);
+  if (btnIngest) btnIngest.addEventListener('click', () => handleSyncFolderAction('ingest_new'));
+  if (btnSyncStale) btnSyncStale.addEventListener('click', () => handleSyncFolderAction('sync_stale'));
+
+  if (btnSelectAll) {
+    btnSelectAll.addEventListener('click', () => {
+      document.querySelectorAll('.folder-file-cb[data-status="new"]').forEach(cb => {
+        cb.checked = true;
+      });
+      updateIngestButtonCount();
+    });
+  }
+
+  if (btnClearSel) {
+    btnClearSel.addEventListener('click', () => {
+      document.querySelectorAll('.folder-file-cb').forEach(cb => {
+        cb.checked = false;
+      });
+      updateIngestButtonCount();
+    });
+  }
+}
+
+window.openFolderMappingModal = async function(notebookId, title) {
+  state.activeFolderNotebookId = notebookId;
+  const modal = document.getElementById('modal-folder-mapping');
+  const nbTitleEl = document.getElementById('folder-modal-nb-title');
+  if (nbTitleEl) nbTitleEl.textContent = title || `Notebook ${notebookId.slice(0, 8)}`;
+
+  openModal('modal-folder-mapping');
+  if (modal && window.lucide) {
+    lucide.createIcons({ root: modal });
+  }
+
+  await loadFolderMappingStatus(notebookId);
+};
+
+function closeFolderMappingModal() {
+  closeModal('modal-folder-mapping');
+  state.activeFolderNotebookId = null;
+  state.activeFolderStatus = null;
+}
+
+async function loadFolderMappingStatus(notebookId) {
+  const filesList = document.getElementById('folder-files-list');
+  const targetInput = document.getElementById('folder-target-input');
+  const recursiveToggle = document.getElementById('folder-recursive-toggle');
+  const typeBadge = document.getElementById('folder-type-badge');
+  const btnUnlink = document.getElementById('btn-unlink-folder-mapping');
+  const lastScannedEl = document.getElementById('folder-last-scanned');
+
+  if (filesList) {
+    filesList.innerHTML = `
+      <div class="p-8 text-center text-xs text-[var(--m3-on-surface-subtle)] flex flex-col items-center gap-2">
+        <div class="google-quad-dots">
+          <span class="google-quad-dot"></span>
+          <span class="google-quad-dot"></span>
+          <span class="google-quad-dot"></span>
+          <span class="google-quad-dot"></span>
+        </div>
+        <span>Comparing folder files against NotebookLM sources...</span>
+      </div>
+    `;
+  }
+
+  try {
+    const res = await fetch(`/api/notebooks/${notebookId}/folder`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    state.activeFolderStatus = data;
+
+    // Populate inputs
+    if (data.mapping) {
+      if (targetInput) targetInput.value = data.mapping.target_path || '';
+      if (recursiveToggle) recursiveToggle.checked = Boolean(data.mapping.recursive);
+      if (btnUnlink) btnUnlink.classList.remove('hidden');
+      if (typeBadge) {
+        typeBadge.classList.remove('hidden');
+        typeBadge.textContent = data.mapping.folder_type === 'drive_web' ? '☁️ Google Drive Web' : '📁 Local Folder';
+        typeBadge.className = data.mapping.folder_type === 'drive_web'
+          ? 'text-[10px] font-mono px-2 py-0.5 rounded-full border border-[var(--google-blue)]/40 bg-[var(--google-blue-container)]/20 text-[var(--google-blue)]'
+          : 'text-[10px] font-mono px-2 py-0.5 rounded-full border border-[var(--google-green)]/40 bg-[var(--google-green-container)]/20 text-[var(--google-green)]';
+      }
+      if (lastScannedEl && data.mapping.last_scanned) {
+        const d = new Date(data.mapping.last_scanned);
+        lastScannedEl.textContent = `Scanned ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      }
+    } else {
+      if (targetInput) targetInput.value = '';
+      if (btnUnlink) btnUnlink.classList.add('hidden');
+      if (typeBadge) typeBadge.classList.add('hidden');
+      if (lastScannedEl) lastScannedEl.textContent = '';
+    }
+
+    renderFolderStatusUI(data);
+  } catch (err) {
+    console.error('Error loading folder status:', err);
+    if (filesList) {
+      filesList.innerHTML = `
+        <div class="p-6 text-center text-xs text-[var(--google-red)]">
+          Could not load folder status. Please check path or network.
+        </div>
+      `;
+    }
+  }
+}
+
+function renderFolderStatusUI(data) {
+  // Update capacity meter
+  const capLabel = document.getElementById('folder-capacity-label');
+  const capBar = document.getElementById('folder-capacity-bar');
+  const tierBadge = document.getElementById('folder-modal-tier-badge');
+
+  const used = data.current_source_count || 0;
+  const max = data.max_capacity || 300;
+  const pct = Math.min(Math.round((used / max) * 100), 100);
+
+  if (capLabel) {
+    capLabel.textContent = `${used} / ${max} sources (${max - used} slots free)`;
+  }
+  if (capBar) {
+    capBar.style.width = `${pct}%`;
+    if (pct >= 85) {
+      capBar.classList.add('near-limit');
+    } else {
+      capBar.classList.remove('near-limit');
+    }
+  }
+  if (tierBadge) {
+    tierBadge.textContent = `${data.tier === 'pro' ? 'Pro 300' : 'Standard 50'}`;
+  }
+
+  // Update badge counts
+  const badgeNew = document.getElementById('folder-badge-new-count');
+  const badgeStale = document.getElementById('folder-badge-stale-count');
+  const badgeIngested = document.getElementById('folder-badge-ingested-count');
+  const badgeSkipped = document.getElementById('folder-badge-skipped-count');
+
+  if (badgeNew) badgeNew.textContent = data.new_count || 0;
+  if (badgeStale) badgeStale.textContent = data.stale_count || 0;
+  if (badgeIngested) badgeIngested.textContent = data.ingested_count || 0;
+  if (badgeSkipped) badgeSkipped.textContent = data.unsupported_count || 0;
+
+  // Sync stale button visibility
+  const btnSyncStale = document.getElementById('btn-sync-stale-docs');
+  if (btnSyncStale) {
+    if (data.stale_count > 0) {
+      btnSyncStale.classList.remove('hidden');
+      btnSyncStale.classList.add('inline-flex');
+    } else {
+      btnSyncStale.classList.add('hidden');
+      btnSyncStale.classList.remove('inline-flex');
+    }
+  }
+
+  // Render file list
+  const filesList = document.getElementById('folder-files-list');
+  if (!filesList) return;
+
+  if (!data.files || data.files.length === 0) {
+    filesList.innerHTML = `
+      <div class="p-8 text-center text-xs text-[var(--m3-on-surface-subtle)]">
+        ${data.mapping ? 'No supported files found in this folder.' : 'No folder mapped yet. Paste a local folder path or Google Drive link above.'}
+      </div>
+    `;
+    updateIngestButtonCount();
+    return;
+  }
+
+  filesList.innerHTML = data.files.map((file) => {
+    const isNew = file.status === 'new';
+    const isStale = file.status === 'stale';
+    const isIngested = file.status === 'ingested';
+    const isUnsupported = file.status === 'unsupported';
+
+    let iconName = 'file-text';
+    if (file.category === 'code') iconName = 'code';
+    else if (file.category === 'media') iconName = 'music';
+    else if (file.category === 'spreadsheet') iconName = 'table';
+    else if (file.extension === '.pdf') iconName = 'file-type-2';
+
+    let badgeHtml = '';
+    if (isNew) {
+      badgeHtml = `<span class="folder-badge-pill folder-badge-new text-[10px] py-0.5">📥 New</span>`;
+    } else if (isStale) {
+      badgeHtml = `<span class="folder-badge-pill folder-badge-stale text-[10px] py-0.5">⚡ Stale</span>`;
+    } else if (isIngested) {
+      badgeHtml = `<span class="folder-badge-pill folder-badge-ingested text-[10px] py-0.5">✅ Ingested</span>`;
+    } else {
+      badgeHtml = `<span class="folder-badge-pill folder-badge-skipped text-[10px] py-0.5">⏭️ Skipped</span>`;
+    }
+
+    const sizeStr = file.size_bytes ? `${Math.round(file.size_bytes / 1024)} KB` : '';
+
+    return `
+      <div class="p-3 flex items-center justify-between gap-3 hover:bg-[var(--m3-surface-container-high)]/60 transition ${isNew ? 'bg-[var(--google-blue-container)]/5' : ''}">
+        <div class="flex items-center gap-3 min-w-0 flex-1">
+          <input
+            type="checkbox"
+            class="folder-file-cb rounded bg-[var(--m3-surface)] border-[var(--m3-outline)] text-[var(--google-blue)] focus:ring-0 cursor-pointer w-4 h-4 shrink-0"
+            data-path="${escapeHtml(file.path_or_id)}"
+            data-name="${escapeHtml(file.name)}"
+            data-status="${file.status}"
+            ${isNew ? 'checked' : ''}
+            ${isUnsupported ? 'disabled' : ''}
+          >
+          <div class="p-1.5 rounded-lg bg-[var(--m3-surface-container-highest)] text-[var(--m3-on-surface-variant)] shrink-0">
+            <i data-lucide="${iconName}" class="w-3.5 h-3.5"></i>
+          </div>
+          <div class="min-w-0 flex-1">
+            <p class="text-xs font-medium text-[var(--m3-on-surface)] truncate" title="${escapeHtml(file.name)}">
+              ${escapeHtml(file.name)}
+            </p>
+            <div class="flex items-center gap-2 text-[10px] text-[var(--m3-on-surface-subtle)] font-mono mt-0.5">
+              ${sizeStr ? `<span>${sizeStr}</span> • ` : ''}
+              <span>${escapeHtml(file.extension.toUpperCase())}</span>
+              ${file.requires_code_adapter ? `<span class="text-[var(--google-blue)] font-sans">• Markdown Adapter</span>` : ''}
+            </div>
+          </div>
+        </div>
+
+        <div class="shrink-0 flex items-center gap-2">
+          ${badgeHtml}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  if (window.lucide) lucide.createIcons({ root: filesList });
+
+  // Attach change listener to checkboxes
+  filesList.querySelectorAll('.folder-file-cb').forEach(cb => {
+    cb.addEventListener('change', updateIngestButtonCount);
+  });
+
+  updateIngestButtonCount();
+}
+
+function updateIngestButtonCount() {
+  const btnIngest = document.getElementById('btn-ingest-folder-files');
+  const btnLabel = document.getElementById('btn-ingest-folder-label');
+  if (!btnIngest || !btnLabel) return;
+
+  const checkedCount = document.querySelectorAll('.folder-file-cb:checked').length;
+  if (checkedCount > 0) {
+    btnIngest.disabled = false;
+    btnLabel.textContent = `Ingest ${checkedCount} File${checkedCount === 1 ? '' : 's'}`;
+  } else {
+    btnIngest.disabled = true;
+    btnLabel.textContent = 'No Files Selected';
+  }
+}
+
+async function handleSaveOrScanFolder() {
+  if (!state.activeFolderNotebookId) return;
+  const targetInput = document.getElementById('folder-target-input');
+  const recursiveToggle = document.getElementById('folder-recursive-toggle');
+  const btnSave = document.getElementById('btn-save-folder-mapping');
+
+  const path = targetInput ? targetInput.value.trim() : '';
+  if (!path) {
+    showToast('Please enter a folder path or Google Drive link', 'error');
+    return;
+  }
+
+  if (btnSave) {
+    btnSave.disabled = true;
+    btnSave.innerHTML = '<i data-lucide="refresh-cw" class="w-3.5 h-3.5 animate-spin"></i> Scanning...';
+    if (window.lucide) lucide.createIcons({ root: btnSave });
+  }
+
+  try {
+    const res = await fetch(`/api/notebooks/${state.activeFolderNotebookId}/folder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        target_path: path,
+        recursive: recursiveToggle ? recursiveToggle.checked : false
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'Failed to save mapping');
+    }
+
+    const data = await res.json();
+    state.activeFolderStatus = data;
+    if (data.mapping) {
+      state.folderMappings[state.activeFolderNotebookId] = data.mapping;
+    }
+    renderFolderStatusUI(data);
+    renderNotebooksGrid();
+    showToast(`Folder scanned: ${data.new_count} new, ${data.ingested_count} ingested`, 'success');
+  } catch (e) {
+    showToast(`Scan error: ${e.message}`, 'error');
+  } finally {
+    if (btnSave) {
+      btnSave.disabled = false;
+      btnSave.innerHTML = '<i data-lucide="search" class="w-3.5 h-3.5"></i> Scan Folder';
+      if (window.lucide) lucide.createIcons({ root: btnSave });
+    }
+  }
+}
+
+async function handleUnlinkFolder() {
+  if (!state.activeFolderNotebookId) return;
+  if (!confirm('Unlink this folder from the notebook? No files will be deleted from your drive.')) return;
+
+  try {
+    const res = await fetch(`/api/notebooks/${state.activeFolderNotebookId}/folder`, {
+      method: 'DELETE'
+    });
+    if (!res.ok) throw new Error('Failed to unlink');
+
+    delete state.folderMappings[state.activeFolderNotebookId];
+    renderNotebooksGrid();
+    closeFolderMappingModal();
+    showToast('Folder unlinked from notebook', 'info');
+  } catch (e) {
+    showToast(`Unlink error: ${e.message}`, 'error');
+  }
+}
+
+async function handleSyncFolderAction(action) {
+  if (!state.activeFolderNotebookId || state.isFolderSyncing) return;
+
+  const btnIngest = document.getElementById('btn-ingest-folder-files');
+  const btnSyncStale = document.getElementById('btn-sync-stale-docs');
+  const progressBanner = document.getElementById('folder-sync-progress-banner');
+  const progressText = document.getElementById('folder-sync-progress-text');
+
+  // Collect selected files
+  const selected = [];
+  document.querySelectorAll('.folder-file-cb:checked').forEach(cb => {
+    selected.push(cb.getAttribute('data-path'));
+  });
+
+  if (action === 'ingest_new' && selected.length === 0) {
+    showToast('Please select at least one file to ingest', 'warning');
+    return;
+  }
+
+  state.isFolderSyncing = true;
+  if (btnIngest) btnIngest.disabled = true;
+  if (btnSyncStale) btnSyncStale.disabled = true;
+  if (progressBanner) progressBanner.classList.remove('hidden');
+  if (progressText) {
+    progressText.textContent = action === 'sync_stale'
+      ? 'Syncing stale Google Drive sources...'
+      : `Sequentially ingesting ${selected.length} file(s) with 1.5s rate-limit delay...`;
+  }
+
+  try {
+    const res = await fetch(`/api/notebooks/${state.activeFolderNotebookId}/folder/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: action,
+        selected_files: selected.length > 0 ? selected : null
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'Sync failed');
+    }
+
+    const data = await res.json();
+    showToast(data.message || 'Folder sync completed!', data.success ? 'success' : 'warning');
+
+    // Reload status and notebooks grid
+    await loadFolderMappingStatus(state.activeFolderNotebookId);
+    await loadNotebooks();
+  } catch (e) {
+    showToast(`Sync error: ${e.message}`, 'error');
+  } finally {
+    state.isFolderSyncing = false;
+    if (progressBanner) progressBanner.classList.add('hidden');
+    if (btnIngest) btnIngest.disabled = false;
+    if (btnSyncStale) btnSyncStale.disabled = false;
   }
 }

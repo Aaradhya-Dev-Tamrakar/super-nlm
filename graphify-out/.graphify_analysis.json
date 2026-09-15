@@ -1,0 +1,506 @@
+{
+  "communities": {
+    "0": [
+      "backend_calendar_service",
+      "backend_calendar_service_calendarservice",
+      "backend_calendar_service_calendarservice_determine_event_type",
+      "backend_calendar_service_calendarservice_fetch_raw_ics",
+      "backend_calendar_service_calendarservice_get_agenda",
+      "backend_calendar_service_calendarservice_get_calendar_email",
+      "backend_calendar_service_calendarservice_init",
+      "backend_calendar_service_calendarservice_is_configured",
+      "backend_calendar_service_calendarservice_match_event_to_notebook",
+      "backend_calendar_service_rationale_178",
+      "backend_calendar_service_rationale_41",
+      "backend_calendar_service_rationale_56",
+      "backend_calendar_service_rationale_79",
+      "backend_models",
+      "backend_models_batchsharerequest",
+      "backend_models_calendaragendaevent",
+      "backend_models_calendaragendaresponse",
+      "backend_models_crossqueryrequest",
+      "backend_models_matchednotebooksummary",
+      "backend_models_profilecreaterequest",
+      "backend_models_profileupdaterequest",
+      "backend_models_queryrequest",
+      "backend_models_studiorequest",
+      "backend_nlm_client_launch_cli_login",
+      "backend_nlm_client_rationale_745",
+      "basemodel",
+      "tests_test_bugs_regression",
+      "tests_test_bugs_regression_test_regression_cache_sync",
+      "tests_test_bugs_regression_test_regression_qrcode",
+      "tests_test_bugs_regression_test_regression_query_conversation_support",
+      "tests_test_bugs_regression_test_regression_query_error_extraction",
+      "tests_test_bugs_regression_test_regression_query_profile_selection",
+      "tests_test_bugs_regression_test_regression_security",
+      "tests_test_bugs_regression_test_regression_tunnel_stdout",
+      "tests_test_bugs_regression_test_regression_unique_notebook_aggregation",
+      "tests_test_calendar_service",
+      "tests_test_calendar_service_test_calendar_api_endpoints",
+      "tests_test_calendar_service_test_calendar_service_matching",
+      "tests_test_calendar_service_test_event_type_classification"
+    ],
+    "1": [
+      "frontend_app",
+      "frontend_app_activethinkingtimers",
+      "frontend_app_appendchatmessagetothread",
+      "frontend_app_batchshareselectednotebookids",
+      "frontend_app_batchshareselectedprofileids",
+      "frontend_app_clearnotebookchathistory",
+      "frontend_app_closemodal",
+      "frontend_app_course_notebook_ids",
+      "frontend_app_getconversationidfornotebook",
+      "frontend_app_handlechatsubmit",
+      "frontend_app_handleclearcurrentchat",
+      "frontend_app_handlequeryfailure",
+      "frontend_app_handlequerysuccess",
+      "frontend_app_initgoogleripple",
+      "frontend_app_ismodalopen",
+      "frontend_app_loadallchathistories",
+      "frontend_app_profile_color_presets",
+      "frontend_app_renderloaderbubble",
+      "frontend_app_resetchatinputstate",
+      "frontend_app_savenotebookchathistory",
+      "frontend_app_startthinkingtimer",
+      "frontend_app_state",
+      "frontend_app_stopthinkingtimer",
+      "frontend_app_updateallnotebookcardbuttons",
+      "frontend_app_updatebackgroundquerystatus"
+    ],
+    "2": [
+      "mcp_server_rotator_accountrotator",
+      "mcp_server_rotator_accountrotator_ensure_profile_has_access",
+      "mcp_server_rotator_accountrotator_ensure_stats_entry",
+      "mcp_server_rotator_accountrotator_execute_query_rotated",
+      "mcp_server_rotator_accountrotator_get_active_profiles",
+      "mcp_server_rotator_accountrotator_get_default_pro_profile",
+      "mcp_server_rotator_accountrotator_get_status",
+      "mcp_server_rotator_accountrotator_init",
+      "mcp_server_rotator_accountrotator_mark_quota_exhausted",
+      "mcp_server_rotator_accountrotator_pick_next_profile",
+      "mcp_server_rotator_accountrotator_record_error",
+      "mcp_server_rotator_accountrotator_record_success",
+      "mcp_server_rotator_get_seconds_until_next_utc_midnight",
+      "mcp_server_rotator_py_any",
+      "mcp_server_rotator_rationale_138",
+      "mcp_server_rotator_rationale_166",
+      "mcp_server_rotator_rationale_172",
+      "mcp_server_rotator_rationale_177",
+      "mcp_server_rotator_rationale_20",
+      "mcp_server_rotator_rationale_221",
+      "mcp_server_rotator_rationale_242",
+      "mcp_server_rotator_rationale_27",
+      "mcp_server_rotator_rationale_419",
+      "mcp_server_rotator_rationale_61",
+      "mcp_server_rotator_rationale_79"
+    ],
+    "3": [
+      "backend_app_create_profile",
+      "backend_app_remove_profile",
+      "backend_app_trigger_profile_login",
+      "backend_app_update_profile",
+      "backend_app_validate_profile_id",
+      "backend_models_accountprofile",
+      "backend_storage",
+      "backend_storage_atomic_write_json",
+      "backend_storage_delete_profile",
+      "backend_storage_get_profile",
+      "backend_storage_get_profiles",
+      "backend_storage_load_profiles_sync",
+      "backend_storage_py_any",
+      "backend_storage_py_path",
+      "backend_storage_rationale_18",
+      "backend_storage_save_cache_sync",
+      "backend_storage_save_profile",
+      "backend_storage_save_profiles_sync",
+      "delete",
+      "put"
+    ],
+    "4": [
+      "backend_app_ask_notebook",
+      "backend_nlm_client",
+      "backend_nlm_client_check_or_share_with_pro",
+      "backend_nlm_client_delete_cli_profile",
+      "backend_nlm_client_ensure_notebook_shared",
+      "backend_nlm_client_fetch_all_notebooks_concurrently",
+      "backend_nlm_client_fetch_notebooks_for_profile",
+      "backend_nlm_client_py_any",
+      "backend_nlm_client_query_notebook",
+      "backend_nlm_client_query_notebook_with_pro_fallback",
+      "backend_nlm_client_rationale_135",
+      "backend_nlm_client_rationale_168",
+      "backend_nlm_client_rationale_217",
+      "backend_nlm_client_rationale_346",
+      "backend_nlm_client_rationale_523",
+      "backend_nlm_client_rationale_534",
+      "backend_nlm_client_rename_cli_profile",
+      "backend_nlm_client_run_nlm_cmd",
+      "backend_nlm_client_run_subprocess_sync"
+    ],
+    "5": [
+      "backend_app",
+      "backend_app_ask_cross_notebook",
+      "backend_app_ask_notebook_rotated",
+      "backend_app_batch_share_endpoint",
+      "backend_app_lifespan",
+      "backend_app_list_profiles",
+      "backend_app_rationale_274",
+      "backend_app_rationale_363",
+      "backend_app_rationale_391",
+      "backend_app_rationale_75",
+      "backend_app_refresh_calendar_agenda",
+      "backend_app_sync_all_notebooks",
+      "backend_app_sync_notebooks",
+      "backend_nlm_client_get_cli_profiles",
+      "backend_nlm_client_rationale_114",
+      "backgroundtasks",
+      "fastapi",
+      "post"
+    ],
+    "6": [
+      "backend_tunnel",
+      "backend_tunnel_cleanup_tunnel_proc",
+      "backend_tunnel_copy_to_clipboard",
+      "backend_tunnel_ensure_cloudflared",
+      "backend_tunnel_print_qr_code",
+      "backend_tunnel_py_path",
+      "backend_tunnel_rationale_18",
+      "backend_tunnel_rationale_41",
+      "backend_tunnel_rationale_50",
+      "backend_tunnel_rationale_74",
+      "backend_tunnel_start_cloudflare_tunnel",
+      "popen",
+      "run",
+      "run_find_available_port",
+      "run_open_browser",
+      "run_rationale_27",
+      "run_rationale_42",
+      "run_upgrade_notebooklm_cli"
+    ],
+    "7": [
+      "backend_app_favicon",
+      "backend_app_get_calendar_agenda",
+      "backend_app_get_rotation_diagnostics",
+      "backend_app_list_notebooks",
+      "backend_app_rationale_350",
+      "backend_app_rationale_382",
+      "backend_app_serve_index",
+      "backend_models_detect_course_info",
+      "backend_models_notebook_model_post_init",
+      "backend_models_rationale_49",
+      "get",
+      "tests_test_study_filter",
+      "tests_test_study_filter_test_api_category_filter",
+      "tests_test_study_filter_test_course_detection_logic",
+      "tests_test_study_filter_test_frontend_markup_and_scripts",
+      "tests_test_study_filter_test_notebook_model_post_init"
+    ],
+    "8": [
+      "frontend_app_handleaddaccountsubmit",
+      "frontend_app_handledeleteaccount",
+      "frontend_app_handleeditprofilesubmit",
+      "frontend_app_handlesetpro",
+      "frontend_app_handlesyncall",
+      "frontend_app_handletriggerlogin",
+      "frontend_app_loadnotebooks",
+      "frontend_app_loadprofiles",
+      "frontend_app_renderaccountpills",
+      "frontend_app_renderaccountsmodallist",
+      "frontend_app_rendercategorychips",
+      "frontend_app_setgloballoading",
+      "frontend_app_setsyncstatus",
+      "frontend_app_showskeletons",
+      "frontend_app_showtoast",
+      "frontend_app_togglestudyfilter"
+    ],
+    "9": [
+      "frontend_app_applytheme",
+      "frontend_app_fallbackcopytext",
+      "frontend_app_inittheme",
+      "frontend_app_isstudynotebook",
+      "frontend_app_openbatchsharemodal",
+      "frontend_app_opencrosssynthesismodal",
+      "frontend_app_openmodal",
+      "frontend_app_renderbatchshareaccountslist",
+      "frontend_app_renderbatchsharenotebookslist",
+      "frontend_app_setupeventlisteners",
+      "frontend_app_togglethememode",
+      "frontend_app_toggleupcomingevents",
+      "frontend_app_updatebatchsharecounts"
+    ],
+    "10": [
+      "frontend_app_createpill",
+      "frontend_app_escapehtml",
+      "frontend_app_exportsynthesispdf",
+      "frontend_app_handleexecutebatchshare",
+      "frontend_app_handleruncrosssynthesis",
+      "frontend_app_highlightmatch",
+      "frontend_app_loadcalendaragenda",
+      "frontend_app_renderagendaeventitem",
+      "frontend_app_rendercalendaragenda",
+      "frontend_app_renderchatmessagebubble",
+      "frontend_app_rendercitationshtml",
+      "frontend_app_rendermarkdown",
+      "frontend_app_toggleagendacollapse"
+    ],
+    "11": [
+      "sync",
+      "sync_ensure_remoteconfigured",
+      "sync_find_stagedsecrets",
+      "sync_get_autocommitmessage",
+      "sync_invoke_notebooksync",
+      "sync_invoke_testrunner",
+      "sync_show_repostatus",
+      "sync_switch_tobranch",
+      "sync_write_fail",
+      "sync_write_notice",
+      "sync_write_status",
+      "sync_write_success"
+    ],
+    "12": [
+      "backend_models_notebookref",
+      "backend_nlm_client_batch_share_notebooks_to_accounts",
+      "backend_nlm_client_rationale_381",
+      "backend_nlm_client_rationale_697",
+      "backend_nlm_client_synthesize_cross_notebook",
+      "backend_storage_save_cached_notebooks",
+      "mcp_server_tools",
+      "mcp_server_tools_py_mcpserver",
+      "mcp_server_tools_rationale_23",
+      "mcp_server_tools_register_tools"
+    ],
+    "13": [
+      "frontend_app_clearselection",
+      "frontend_app_getcoursecode",
+      "frontend_app_getvisiblenotebooks",
+      "frontend_app_handlenotebookselection",
+      "frontend_app_rendernotebooksgrid",
+      "frontend_app_rendersidebaraccounts",
+      "frontend_app_syncselectionui",
+      "frontend_app_toggleselectallvisible",
+      "frontend_app_updateselectionbanner"
+    ],
+    "14": [
+      "backend_models_notebook",
+      "backend_nlm_client_classify_quota_error",
+      "backend_nlm_client_is_rate_limit_or_quota_error",
+      "backend_nlm_client_rationale_307",
+      "backend_nlm_client_rationale_342",
+      "backend_storage_get_cached_notebooks",
+      "backend_storage_load_cache_sync",
+      "mcp_server_rotator"
+    ],
+    "15": [
+      "mcp_server_main",
+      "mcp_server_server",
+      "mcp_server_server_create_server",
+      "mcp_server_server_main",
+      "mcp_server_server_py_mcpserver",
+      "mcp_server_server_rationale_16",
+      "mcp_server_server_rationale_31"
+    ],
+    "16": [
+      "backend_config",
+      "backend_config_load_env_file",
+      "backend_nlm_client_rationale_589",
+      "backend_nlm_client_synthesize_with_gemini",
+      "tests_test_cross_synthesis",
+      "tests_test_cross_synthesis_run_synthesis_tests"
+    ],
+    "17": [
+      "tests_test_shortcuts",
+      "tests_test_shortcuts_test_shortcuts_in_css",
+      "tests_test_shortcuts_test_shortcuts_in_html",
+      "tests_test_shortcuts_test_shortcuts_in_js",
+      "tests_test_shortcuts_test_windows_explorer_selection_algorithm"
+    ],
+    "18": [
+      "tests_test_loading_states",
+      "tests_test_loading_states_test_loading_states_in_css",
+      "tests_test_loading_states_test_loading_states_in_html",
+      "tests_test_loading_states_test_loading_states_in_js"
+    ],
+    "19": [
+      "concept_m3_design",
+      "frontend_index"
+    ],
+    "20": [
+      "mcp_server_init",
+      "mcp_server_init_rationale_1"
+    ],
+    "21": [
+      "tests_test_api",
+      "tests_test_api_test_api"
+    ],
+    "22": [
+      "backend_init"
+    ],
+    "23": [
+      "data_dsap_guide"
+    ],
+    "24": [
+      "deploy_cloud_run"
+    ],
+    "25": [
+      "launch"
+    ],
+    "26": [
+      "pkg_super_nlm"
+    ],
+    "27": [
+      "readme"
+    ],
+    "28": [
+      "requirements"
+    ],
+    "29": [
+      "setup_tailscale"
+    ]
+  },
+  "cohesion": {
+    "0": 0.09446693657219973,
+    "1": 0.15,
+    "2": 0.13,
+    "3": 0.21052631578947367,
+    "4": 0.19298245614035087,
+    "5": 0.17647058823529413,
+    "6": 0.13725490196078433,
+    "7": 0.13333333333333333,
+    "8": 0.31666666666666665,
+    "9": 0.28205128205128205,
+    "10": 0.20512820512820512,
+    "11": 0.3787878787878788,
+    "12": 0.3333333333333333,
+    "13": 0.3055555555555556,
+    "14": 0.35714285714285715,
+    "15": 0.38095238095238093,
+    "16": 0.4,
+    "17": 0.4,
+    "18": 0.5,
+    "19": 1.0,
+    "20": 1.0,
+    "21": 1.0,
+    "22": 1.0,
+    "23": 1.0,
+    "24": 1.0,
+    "25": 1.0,
+    "26": 1.0,
+    "27": 1.0,
+    "28": 1.0,
+    "29": 1.0
+  },
+  "gods": [
+    {
+      "id": "frontend_app_setupeventlisteners",
+      "label": "setupEventListeners()",
+      "degree": 30
+    },
+    {
+      "id": "backend_models_notebook",
+      "label": "Notebook",
+      "degree": 23
+    },
+    {
+      "id": "frontend_app_showtoast",
+      "label": "showToast()",
+      "degree": 23
+    },
+    {
+      "id": "backend_models_accountprofile",
+      "label": "AccountProfile",
+      "degree": 19
+    },
+    {
+      "id": "frontend_app_escapehtml",
+      "label": "escapeHtml()",
+      "degree": 19
+    },
+    {
+      "id": "backend_storage_get_cached_notebooks",
+      "label": "get_cached_notebooks()",
+      "degree": 17
+    },
+    {
+      "id": "backend_storage_get_profiles",
+      "label": "get_profiles()",
+      "degree": 16
+    },
+    {
+      "id": "frontend_app_rendernotebooksgrid",
+      "label": "renderNotebooksGrid()",
+      "degree": 16
+    },
+    {
+      "id": "backend_calendar_service_calendarservice",
+      "label": "CalendarService",
+      "degree": 15
+    },
+    {
+      "id": "mcp_server_rotator_accountrotator",
+      "label": "AccountRotator",
+      "degree": 14
+    }
+  ],
+  "surprises": [
+    {
+      "source": "AccountRotator",
+      "target": "AccountProfile",
+      "source_files": [
+        "mcp_server/rotator.py",
+        "backend/models.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "test_notebook_model_post_init()",
+      "target": "Notebook",
+      "source_files": [
+        "tests/test_study_filter.py",
+        "backend/models.py"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "connects across different repos/directories; bridges separate communities; peripheral node `test_notebook_model_post_init()` unexpectedly reaches hub `Notebook`"
+    },
+    {
+      "source": "test_regression_query_error_extraction()",
+      "target": "query_notebook()",
+      "source_files": [
+        "tests/test_bugs_regression.py",
+        "backend/nlm_client.py"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "connects across different repos/directories; bridges separate communities; peripheral node `test_regression_query_error_extraction()` unexpectedly reaches hub `query_notebook()`"
+    },
+    {
+      "source": "test_event_type_classification()",
+      "target": "CalendarService",
+      "source_files": [
+        "tests/test_calendar_service.py",
+        "backend/calendar_service.py"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "connects across different repos/directories; peripheral node `test_event_type_classification()` unexpectedly reaches hub `CalendarService`"
+    },
+    {
+      "source": "register_tools()",
+      "target": "detect_course_info()",
+      "source_files": [
+        "mcp_server/tools.py",
+        "backend/models.py"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "connects across different repos/directories; bridges separate communities"
+    }
+  ],
+  "tokens": {
+    "input": 38994,
+    "output": 1385
+  }
+}
