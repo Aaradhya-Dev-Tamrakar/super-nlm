@@ -157,7 +157,7 @@ async def fetch_notebooks_for_profile(profile: AccountProfile, retries: int = 1)
         for item in data:
             notebooks.append(Notebook(
                 id=item.get("id", ""),
-                title=item.get("title", "Untitled Notebook"),
+                title=item.get("title") or "Untitled Notebook",
                 source_count=item.get("source_count", 0),
                 updated_at=item.get("updated_at"),
                 profileId=profile.id,
