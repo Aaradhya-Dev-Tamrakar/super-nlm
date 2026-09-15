@@ -503,6 +503,31 @@ async def get_rotation_diagnostics():
     """Returns current query counter, per-profile statistics, and cooldown status."""
     return await rotator.get_status()
 
+@app.get("/api/fleet/health")
+async def get_fleet_health():
+    """Returns proactive health, auth verification, and cooldown diagnostics across all fleet nodes."""
+    return await rotator.check_all_profiles_health()
+
+@app.get("/api/fleet/metrics")
+async def get_fleet_metrics():
+    """Returns real-time fleet utilization, in-flight concurrency, and Pro capacity metrics."""
+    status = await rotator.get_status()
+    total_nodes = status.get("total_profiles_in_pool", 0)
+    total_inflight = status.get("total_inflight_queries", 0)
+    max_concurrent_capacity = total_nodes * 2  # Recommended safe concurrency = 2 per node
+    utilization_pct = round((total_inflight / max(1, max_concurrent_capacity)) * 100.0, 1)
+
+    return {
+        "total_nodes": total_nodes,
+        "pro_fleet_size": status.get("pro_fleet_size", 0),
+        "total_inflight_queries": total_inflight,
+        "max_recommended_concurrent_capacity": max_concurrent_capacity,
+        "fleet_utilization_percent": min(100.0, utilization_pct),
+        "active_cooldowns_count": len(status.get("active_cooldowns", {})),
+        "global_queries_served": status.get("global_query_counter", 0),
+        "profiles": status.get("profiles", [])
+    }
+
 @app.post("/api/query/rotated")
 async def ask_notebook_rotated(
     notebook_id: str = Query(..., description="Target notebook UUID"),

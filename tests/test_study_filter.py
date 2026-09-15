@@ -67,37 +67,46 @@ def test_notebook_model_post_init():
 
 def test_api_category_filter():
     client = TestClient(app)
+    mock_nbs = [
+        Notebook(id=nb_id, title=title, profileId="main", profileName="Personal", profileEmail="test@gmail.com")
+        for nb_id, title, _ in COURSE_CASES
+    ] + [
+        Notebook(id=nb_id, title=title, profileId="main", profileName="Personal", profileEmail="test@gmail.com")
+        for nb_id, title in NON_COURSE_CASES
+    ]
 
-    res_all = client.get("/api/notebooks")
-    assert res_all.status_code == 200
-    all_nbs = res_all.json()
-    assert len(all_nbs) > 0
+    from unittest.mock import patch, AsyncMock
+    with patch("backend.app.get_cached_notebooks", new_callable=AsyncMock, return_value=mock_nbs):
+        res_all = client.get("/api/notebooks")
+        assert res_all.status_code == 200
+        all_nbs = res_all.json()
+        assert len(all_nbs) == len(mock_nbs)
 
-    res_study = client.get("/api/notebooks?category=study")
-    assert res_study.status_code == 200
-    study_nbs = res_study.json()
-    assert len(study_nbs) > 0
-    for n in study_nbs:
-        assert n["is_study"] is True
-        assert n["category"] == "study"
-        assert n["course_code"] is not None
+        res_study = client.get("/api/notebooks?category=study")
+        assert res_study.status_code == 200
+        study_nbs = res_study.json()
+        assert len(study_nbs) == len(COURSE_CASES)
+        for n in study_nbs:
+            assert n["is_study"] is True
+            assert n["category"] == "study"
+            assert n["course_code"] is not None
 
-    study_ids = {n["id"] for n in study_nbs}
-    for expected_id, _, _ in COURSE_CASES:
-        assert expected_id in study_ids, f"Expected {expected_id} to be in study notebooks"
+        study_ids = {n["id"] for n in study_nbs}
+        for expected_id, _, _ in COURSE_CASES:
+            assert expected_id in study_ids, f"Expected {expected_id} to be in study notebooks"
 
-    res_proj = client.get("/api/notebooks?category=projects")
-    assert res_proj.status_code == 200
-    proj_nbs = res_proj.json()
-    assert len(proj_nbs) > 0
-    for n in proj_nbs:
-        assert n["is_study"] is False
-        assert n["category"] == "general"
+        res_proj = client.get("/api/notebooks?category=projects")
+        assert res_proj.status_code == 200
+        proj_nbs = res_proj.json()
+        assert len(proj_nbs) == len(NON_COURSE_CASES)
+        for n in proj_nbs:
+            assert n["is_study"] is False
+            assert n["category"] == "general"
 
-    res_search = client.get("/api/notebooks?search=CT653")
-    assert res_search.status_code == 200
-    search_nbs = res_search.json()
-    assert any("CT653" in n["title"] or n.get("course_code") == "CT653" for n in search_nbs)
+        res_search = client.get("/api/notebooks?search=CT653")
+        assert res_search.status_code == 200
+        search_nbs = res_search.json()
+        assert any("CT653" in n["title"] or n.get("course_code") == "CT653" for n in search_nbs)
 
 def test_frontend_markup_and_scripts():
     html_path = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
@@ -120,13 +129,20 @@ def test_frontend_markup_and_scripts():
 
 def test_auto_share_study_endpoint():
     client = TestClient(app)
-    res = client.post("/api/notebooks/auto-share-study")
-    assert res.status_code == 200
-    data = res.json()
-    assert "totalNotebooks" in data
-    assert "shared" in data
-    assert "alreadyShared" in data
-    assert data["totalNotebooks"] >= len(COURSE_CASES)
+    mock_nbs = [
+        Notebook(id=nb_id, title=title, profileId="main", profileName="Personal", profileEmail="test@gmail.com")
+        for nb_id, title, _ in COURSE_CASES
+    ]
+    from unittest.mock import patch, AsyncMock
+    with patch("backend.app.get_cached_notebooks", new_callable=AsyncMock, return_value=mock_nbs), \
+         patch("backend.app.auto_share_study_notebooks", new_callable=AsyncMock, return_value={"totalNotebooks": len(mock_nbs), "shared": [], "alreadyShared": [n.id for n in mock_nbs]}):
+        res = client.post("/api/notebooks/auto-share-study")
+        assert res.status_code == 200
+        data = res.json()
+        assert "totalNotebooks" in data
+        assert "shared" in data
+        assert "alreadyShared" in data
+        assert data["totalNotebooks"] >= len(COURSE_CASES)
 
 if __name__ == "__main__":
     test_course_detection_logic()

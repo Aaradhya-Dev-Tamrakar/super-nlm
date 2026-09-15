@@ -44,6 +44,8 @@ class AccountRotator:
         self._shared_cache: Set[Tuple[str, str]] = set()
         # conversation_id -> profile_id to pin multi-turn chat sessions to the same Google account
         self._conversation_owners: Dict[str, str] = {}
+        # profile_id -> current in-flight concurrent queries
+        self._inflight: Dict[str, int] = {}
         # profile_id -> stats
         self._stats: Dict[str, Dict[str, int]] = {}
 
@@ -56,6 +58,13 @@ class AccountRotator:
                 "daily_cap_hits": 0,
                 "other_errors": 0
             }
+
+    def _acquire_inflight(self, profile_id: str):
+        self._inflight[profile_id] = self._inflight.get(profile_id, 0) + 1
+
+    def _release_inflight(self, profile_id: str):
+        if profile_id in self._inflight:
+            self._inflight[profile_id] = max(0, self._inflight[profile_id] - 1)
 
     async def get_active_profiles(self) -> List[AccountProfile]:
         """
@@ -75,16 +84,34 @@ class AccountRotator:
         connected = [p for p in profiles if p.status != "expired"]
         return connected if connected else profiles
 
-    async def pick_next_profile(self, exclude_ids: Optional[Set[str]] = None) -> Tuple[AccountProfile, int]:
+    async def get_pro_profiles(self) -> List[AccountProfile]:
+        """Returns all active profiles with pro tier."""
+        profiles = await self.get_active_profiles()
+        pro_pool = [p for p in profiles if getattr(p, "tier", "").lower() == "pro"]
+        return pro_pool if pro_pool else profiles
+
+    async def pick_next_profile(
+        self,
+        exclude_ids: Optional[Set[str]] = None,
+        require_pro: bool = False
+    ) -> Tuple[AccountProfile, int]:
         """
-        Atomically selects the next account profile in round-robin order.
+        Atomically selects the next account profile using least-loaded round-robin order.
+        If require_pro is True, restricts candidates to the Pro fleet pool.
         Skips profiles that are currently under burst or daily quota cooldown.
         If all accounts are cooling down, prioritizes burst-cooldown accounts over daily-exhausted ones.
         """
         async with self._lock:
-            profiles = await self.get_active_profiles()
-            if not profiles:
+            all_profiles = await self.get_active_profiles()
+            if not all_profiles:
                 raise RuntimeError("No Google account profiles configured in Super-NLM.")
+
+            # Filter for Pro tier if requested
+            if require_pro:
+                pro_candidates = [p for p in all_profiles if getattr(p, "tier", "").lower() == "pro"]
+                candidate_pool = pro_candidates if pro_candidates else all_profiles
+            else:
+                candidate_pool = all_profiles
 
             exclude = exclude_ids or set()
             now = time.time()
@@ -95,17 +122,22 @@ class AccountRotator:
                 del self._cooldowns[pid]
 
             # Filter out explicitly excluded profiles (e.g. from current retry chain)
-            available = [p for p in profiles if p.id not in exclude]
+            available = [p for p in candidate_pool if p.id not in exclude]
             if not available:
-                # If everything excluded, fallback to any profile
-                available = profiles
+                # If everything excluded, fallback to any profile in candidate pool
+                available = candidate_pool
 
             # Identify candidates that are not in any cooldown
             active_candidates = [p for p in available if p.id not in self._cooldowns]
 
             if active_candidates:
-                idx = self._counter % len(active_candidates)
-                selected = active_candidates[idx]
+                # Find the minimum in-flight load among active candidates
+                min_inflight = min(self._inflight.get(p.id, 0) for p in active_candidates)
+                least_loaded = [p for p in active_candidates if self._inflight.get(p.id, 0) == min_inflight]
+
+                # Round-robin among the least-loaded candidates
+                idx = self._counter % len(least_loaded)
+                selected = least_loaded[idx]
                 self._counter += 1
                 curr_idx = self._counter
                 self._ensure_stats_entry(selected.id)
@@ -113,12 +145,13 @@ class AccountRotator:
                 return selected, curr_idx
 
             # If all available accounts are in cooldown:
-            # Prioritize short burst accounts (0) over daily-exhausted accounts (1), then soonest expiry
+            # Prioritize short burst accounts (0) over daily-exhausted accounts (1), then lowest in-flight, then soonest expiry
             logger.warning("All eligible profiles are currently in cooldown! Picking closest recovery candidate.")
             soonest_profile = min(
                 available,
                 key=lambda p: (
                     0 if self._cooldowns.get(p.id, {}).get("reason") == "burst" else 1,
+                    self._inflight.get(p.id, 0),
                     self._cooldowns.get(p.id, {}).get("expires_at", float("inf"))
                 )
             )
@@ -217,17 +250,6 @@ class AccountRotator:
             self._shared_cache.add(cache_key)
         return True
 
-    async def get_default_pro_profile(self) -> Optional[AccountProfile]:
-        """Returns the primary configured Pro AI profile, or first pro tier profile."""
-        profiles = await self.get_active_profiles()
-        for p in profiles:
-            if getattr(p, "isDefaultPro", False):
-                return p
-        for p in profiles:
-            if getattr(p, "tier", "") == "pro":
-                return p
-        return profiles[0] if profiles else None
-
     async def execute_query_rotated(
         self,
         notebook_id: str,
@@ -240,13 +262,8 @@ class AccountRotator:
         require_pro: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
-        Executes a query by rotating through available accounts, or routing directly
-        to the Pro account if requested or detected in the query.
-        
-        Args:
-            require_pro: If True, bypasses round-robin and uses the Pro AI account directly.
-                         If None, automatically detects mentions like 'pro', 'pro account',
-                         'use pro', or 'pro model' in the prompt/query.
+        Executes a query with intelligent multi-account load balancing, in-flight concurrency
+        tracking, Pro fleet equalization, and automatic multi-node failover.
         """
         # Detect if pro account is requested via flag or natural language in question
         if require_pro is None:
@@ -259,54 +276,6 @@ class AccountRotator:
             require_pro = any(trigger in q_lower for trigger in pro_triggers)
 
         profiles = await self.get_active_profiles()
-
-        if require_pro:
-            pro_profile = await self.get_default_pro_profile()
-            if pro_profile:
-                logger.info(
-                    f"[DIRECT PRO ROUTE] Using Pro account '{pro_profile.id}' ({pro_profile.email}) "
-                    f"for notebook '{notebook_id}'"
-                )
-                await self.ensure_profile_has_access(notebook_id, pro_profile)
-                res = await query_notebook(
-                    profile_id=pro_profile.id,
-                    notebook_id=notebook_id,
-                    question=question,
-                    conversation_id=conversation_id,
-                    source_ids=source_ids,
-                    timeout=timeout,
-                    new_conversation=new_conversation
-                )
-                if res.get("success"):
-                    self.record_success(pro_profile.id)
-                    return {
-                        "success": True,
-                        "answer": res.get("answer"),
-                        "citations": res.get("citations", []),
-                        "conversation_id": res.get("conversationId") or conversation_id,
-                        "rotation_stats": {
-                            "mode": "direct_pro",
-                            "executed_profile_id": pro_profile.id,
-                            "executed_profile_email": pro_profile.email,
-                            "executed_profile_tier": pro_profile.tier,
-                            "attempts_count": 1,
-                            "quota_fallbacks_triggered": 0
-                        }
-                    }
-                else:
-                    err_msg = str(res.get("error") or "")
-                    logger.warning(f"Direct Pro query failed on '{pro_profile.id}': {err_msg}")
-                    return {
-                        "success": False,
-                        "error": f"Direct Pro query failed on account '{pro_profile.id}' ({pro_profile.email}): {err_msg}",
-                        "conversation_id": conversation_id,
-                        "rotation_stats": {
-                            "mode": "direct_pro",
-                            "executed_profile_id": pro_profile.id,
-                            "attempts_count": 1
-                        }
-                    }
-
         limit_attempts = max_attempts or max(len(profiles), 2)
 
         # Multi-turn session pinning: if conversation_id is provided and known, pin to owner
@@ -322,30 +291,44 @@ class AccountRotator:
             if pinned_profile_id and pinned_profile_id not in excluded:
                 profile = next((p for p in profiles if p.id == pinned_profile_id), None)
                 if not profile:
-                    profile, query_number = await self.pick_next_profile(exclude_ids=excluded)
+                    profile, query_number = await self.pick_next_profile(
+                        exclude_ids=excluded,
+                        require_pro=bool(require_pro)
+                    )
                 else:
                     query_number = self._counter + 1
             else:
-                profile, query_number = await self.pick_next_profile(exclude_ids=excluded)
+                profile, query_number = await self.pick_next_profile(
+                    exclude_ids=excluded,
+                    require_pro=bool(require_pro)
+                )
 
             logger.info(
-                f"[ROTATION #{query_number}] Dispatching query to notebook '{notebook_id}' "
-                f"using profile '{profile.id}' ({profile.email or 'no email'}, tier: {profile.tier})"
+                f"[ROTATION #{query_number} | Attempt {attempt}/{limit_attempts}] Dispatching query to notebook '{notebook_id}' "
+                f"using profile '{profile.id}' ({profile.email or 'no email'}, tier: {profile.tier}, inflight: {self._inflight.get(profile.id, 0)})"
             )
 
-            # 1. Ensure access
-            await self.ensure_profile_has_access(notebook_id, profile)
+            # Track in-flight concurrency for this profile
+            async with self._lock:
+                self._acquire_inflight(profile.id)
 
-            # 2. Run query
-            res = await query_notebook(
-                profile_id=profile.id,
-                notebook_id=notebook_id,
-                question=question,
-                conversation_id=conversation_id,
-                source_ids=source_ids,
-                timeout=timeout,
-                new_conversation=new_conversation
-            )
+            try:
+                # 1. Ensure access
+                await self.ensure_profile_has_access(notebook_id, profile)
+
+                # 2. Run query
+                res = await query_notebook(
+                    profile_id=profile.id,
+                    notebook_id=notebook_id,
+                    question=question,
+                    conversation_id=conversation_id,
+                    source_ids=source_ids,
+                    timeout=timeout,
+                    new_conversation=new_conversation
+                )
+            finally:
+                async with self._lock:
+                    self._release_inflight(profile.id)
 
             # 3. Check for success
             if res.get("success"):
@@ -360,10 +343,12 @@ class AccountRotator:
                     "citations": res.get("citations", []),
                     "conversation_id": final_conv_id,
                     "rotation_stats": {
+                        "mode": "pro_fleet" if require_pro else "standard_rotation",
                         "global_query_count": query_number,
                         "executed_profile_id": profile.id,
                         "executed_profile_email": profile.email,
                         "executed_profile_tier": profile.tier,
+                        "inflight_queries": self._inflight.get(profile.id, 0),
                         "attempts_count": attempt,
                         "quota_fallbacks_triggered": len(attempt_history)
                     }
@@ -415,8 +400,78 @@ class AccountRotator:
             }
         }
 
+    async def check_all_profiles_health(self) -> Dict[str, Any]:
+        """
+        Proactively probes all configured profiles to verify authentication and CLI connectivity.
+        Returns a structured health report identifying active vs degraded accounts.
+        """
+        profiles = await get_profiles()
+        cli_profiles = {}
+        try:
+            cli_profiles = await get_cli_profiles()
+        except Exception as e:
+            logger.warning(f"Could not read CLI profile list during health check: {e}")
+
+        now = time.time()
+        health_results = []
+        healthy_count = 0
+
+        for p in profiles:
+            is_cli_known = p.id in cli_profiles or (p.email and p.email in cli_profiles.values())
+            cooldown_info = self._cooldowns.get(p.id)
+            is_cooling_down = False
+            cooldown_reason = None
+            remaining_seconds = 0.0
+
+            if cooldown_info:
+                remaining = cooldown_info["expires_at"] - now
+                if remaining > 0:
+                    is_cooling_down = True
+                    cooldown_reason = cooldown_info.get("reason", "burst")
+                    remaining_seconds = round(remaining, 1)
+                else:
+                    self._cooldowns.pop(p.id, None)
+
+            if not is_cli_known and p.status != "connected":
+                status = "auth_expired"
+            elif is_cooling_down:
+                status = "cooling_down"
+            else:
+                status = "healthy"
+                healthy_count += 1
+
+            health_results.append({
+                "id": p.id,
+                "displayName": p.displayName,
+                "email": p.email or cli_profiles.get(p.id, ""),
+                "tier": p.tier,
+                "status": status,
+                "is_cli_authenticated": is_cli_known,
+                "inflight_queries": self._inflight.get(p.id, 0),
+                "is_cooling_down": is_cooling_down,
+                "cooldown_reason": cooldown_reason,
+                "cooldown_remaining_seconds": remaining_seconds,
+                "stats": self._stats.get(p.id, {
+                    "queries_dispatched": 0,
+                    "queries_succeeded": 0,
+                    "burst_429_hits": 0,
+                    "daily_cap_hits": 0,
+                    "other_errors": 0
+                })
+            })
+
+        return {
+            "fleet_status": "optimal" if healthy_count == len(profiles) else "degraded" if healthy_count > 0 else "offline",
+            "total_nodes": len(profiles),
+            "healthy_nodes": healthy_count,
+            "cooling_down_nodes": sum(1 for r in health_results if r["status"] == "cooling_down"),
+            "auth_expired_nodes": sum(1 for r in health_results if r["status"] == "auth_expired"),
+            "total_inflight_queries": sum(self._inflight.values()),
+            "profiles": health_results
+        }
+
     async def get_status(self) -> Dict[str, Any]:
-        """Returns the current state of rotation, cooldowns, and per-profile counts."""
+        """Returns the current state of rotation, in-flight concurrency, cooldowns, and per-profile counts."""
         async with self._lock:
             now = time.time()
             profiles = await self.get_active_profiles()
@@ -434,10 +489,15 @@ class AccountRotator:
                         "details": info.get("details", "")
                     }
 
+            pro_profiles = [p for p in profiles if getattr(p, "tier", "").lower() == "pro"]
+            total_inflight = sum(self._inflight.values())
+
             return {
                 "global_query_counter": self._counter,
                 "burst_cooldown_duration_setting": self._burst_cooldown_duration,
                 "total_profiles_in_pool": len(profiles),
+                "pro_fleet_size": len(pro_profiles),
+                "total_inflight_queries": total_inflight,
                 "profiles": [
                     {
                         "id": p.id,
@@ -445,6 +505,7 @@ class AccountRotator:
                         "email": p.email,
                         "tier": p.tier,
                         "isDefaultPro": p.isDefaultPro,
+                        "inflight_queries": self._inflight.get(p.id, 0),
                         "is_cooling_down": p.id in cooldown_info,
                         "cooldown_type": cooldown_info[p.id]["reason"] if p.id in cooldown_info else None,
                         "cooldown": cooldown_info.get(p.id),

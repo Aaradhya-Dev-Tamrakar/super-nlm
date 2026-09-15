@@ -169,10 +169,19 @@ def register_tools(server: MCPServer):
         Get real-time diagnostic information on the account rotation engine, including:
         - Monotonic global query counter
         - Per-account query/success/quota exhaustion statistics
+        - In-flight active queries per node and across the fleet
         - Active cooldown timers for throttled accounts
         - Number of auto-shared notebook pairs cached
         """
         return await rotator.get_status()
+
+    @server.tool()
+    async def check_fleet_health() -> Dict[str, Any]:
+        """
+        Proactively check the operational health of all configured Google AI Pro accounts.
+        Verifies CLI credentials, active session status, in-flight loads, and cooldowns.
+        """
+        return await rotator.check_all_profiles_health()
 
     @server.tool()
     async def batch_share_notebooks(
