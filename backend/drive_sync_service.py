@@ -80,7 +80,7 @@ def categorize_file(filename: str) -> Tuple[str, str, bool]:
         return "unsupported", "unsupported", False
 
     # Default unknown files
-    return "document", "new", False
+    return "unknown", "unsupported", False
 
 def convert_ipynb_to_markdown(filepath: Path) -> str:
     """Extracts Markdown and Code cells from a Jupyter Notebook into clean Markdown text."""

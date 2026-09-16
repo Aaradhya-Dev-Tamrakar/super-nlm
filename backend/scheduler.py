@@ -70,10 +70,19 @@ class JobScheduler:
         """Persists jobs to data/scheduled_jobs.json."""
         try:
             data = [job.model_dump() for job in self._jobs.values()]
-            with open(SCHEDULED_JOBS_FILE, "w", encoding="utf-8") as f:
+            tmp_path = str(SCHEDULED_JOBS_FILE) + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, SCHEDULED_JOBS_FILE)
         except Exception as e:
             logger.error(f"Error saving scheduled jobs: {e}")
+            try:
+                if 'tmp_path' in locals() and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
 
     async def start(self):
         """Starts the background worker daemon."""
@@ -399,6 +408,7 @@ class JobScheduler:
             output_filepath = str(DOWNLOADS_DIR / filename)
 
             # 6. Stream Download the artifact
+            download_ok = False
             try:
                 dl_res = await download_studio_artifact(
                     profile_id=profile.id,
@@ -410,14 +420,20 @@ class JobScheduler:
                 if dl_res.get("success") and os.path.exists(output_filepath):
                     job.local_filepath = output_filepath
                     job.download_filename = filename
+                    download_ok = True
             except Exception as dl_err:
                 logger.warning(f"[Scheduler Download Error] Could not download {filename}: {dl_err}")
 
-            # 7. Mark Job Completed
-            job.status = "completed"
-            job.completed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            # 7. Mark Job based on actual download outcome
             job.artifact_id = art_id
-            logger.info(f"[Scheduler Success] Job {job.id} ({job.artifact_type}) finished on '{profile.id}'!")
+            job.completed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            if download_ok:
+                job.status = "completed"
+                logger.info(f"[Scheduler Success] Job {job.id} ({job.artifact_type}) finished on '{profile.id}'!")
+            else:
+                job.status = "download_failed"
+                job.error_message = f"Artifact {art_id} generated but download did not complete successfully"
+                logger.warning(f"[Scheduler Partial] Job {job.id}: artifact created but download failed on '{profile.id}'")
 
         except Exception as e:
             logger.error(f"[Scheduler Job Error] Job {job.id} failed: {e}")
