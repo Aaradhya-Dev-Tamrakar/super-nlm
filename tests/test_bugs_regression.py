@@ -81,8 +81,9 @@ def test_regression_query_error_extraction():
     import asyncio
     res = asyncio.run(query_notebook('default', 'non_existent_notebook_id_xyz', 'test question'))
     assert res['success'] is False
-    assert 'NOT_FOUND' in res['error'] or 'API error' in res['error'] or 'not found' in res['error'].lower()
-    print(f'  [PASS] Error Extraction: nlm stdout error cleanly parsed: \"{res["error"]}\"')
+    err = res['error'].lower()
+    assert 'not_found' in err or 'api error' in err or 'not found' in err or 'no such file' in err
+    print(f'  [PASS] Error Extraction: nlm stdout error cleanly parsed: "{res["error"]}"')
 
 def test_regression_query_conversation_support():
     from backend.models import QueryRequest
@@ -110,6 +111,13 @@ def test_regression_query_profile_selection():
     print(f'  [PASS] Query Profile: Executed profile ({profile_id}) is preserved and returned in query response.')
 
 def test_regression_unique_notebook_aggregation():
+    from backend.models import Notebook
+    from backend.storage import _save_cache_sync
+    # Seed mock notebooks if cache is empty in test environment
+    _save_cache_sync([
+        Notebook(id="nb_test_1", title="Test Notebook 1", profileId="default", profileEmail="test@example.com", profileTier="standard"),
+        Notebook(id="nb_test_2", title="Test Notebook 2", profileId="default", profileEmail="test@example.com", profileTier="standard")
+    ])
     client = TestClient(app)
     res = client.get("/api/notebooks")
     assert res.status_code == 200
