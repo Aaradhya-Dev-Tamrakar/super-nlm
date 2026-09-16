@@ -115,8 +115,8 @@ def test_regression_unique_notebook_aggregation():
     from backend.storage import _save_cache_sync
     # Seed mock notebooks if cache is empty in test environment
     _save_cache_sync([
-        Notebook(id="nb_test_1", title="Test Notebook 1", profileId="default", profileEmail="test@example.com", profileTier="standard"),
-        Notebook(id="nb_test_2", title="Test Notebook 2", profileId="default", profileEmail="test@example.com", profileTier="standard")
+        Notebook(id="nb_test_1", title="Test Notebook 1", profileId="default", profileName="Default Profile", profileEmail="test@example.com", profileTier="standard"),
+        Notebook(id="nb_test_2", title="Test Notebook 2", profileId="default", profileName="Default Profile", profileEmail="test@example.com", profileTier="standard")
     ])
     client = TestClient(app)
     res = client.get("/api/notebooks")
