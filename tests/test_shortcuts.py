@@ -5,8 +5,6 @@ def test_shortcuts_in_html():
     html_path = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
     content = html_path.read_text(encoding="utf-8")
 
-    # Deliberate failure to test GitHub Ruleset CI blocking gate
-    assert "DELIBERATE_RULESET_TEST_FAILURE_STRING" in content, "Ruleset enforcement verification: this failure must block PR merge"
     assert "modal-shortcuts" in content, "modal-shortcuts must exist in index.html"
     assert "btn-shortcuts-toggle" in content, "btn-shortcuts-toggle must exist in index.html"
     assert "close-modal-shortcuts" in content, "close-modal-shortcuts must exist in index.html"
