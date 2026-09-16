@@ -91,6 +91,17 @@ Or run directly from the terminal via the installed console script:
 
 ## 🛠️ Quick Start
 
+### Verify the project
+
+Use the repository-owned verification entrypoint from any machine with
+[uv](https://docs.astral.sh/uv/) installed. It resolves the locked
+dependencies from `uv.lock`, runs the complete pytest suite, and writes
+JUnit XML plus stable JSON run metadata to `verification-results/`.
+
+```powershell
+uv run --locked --group dev python scripts/verify.py
+```
+
 ### 1. Launch Locally
 Run the launcher script:
 ```powershell

@@ -31,8 +31,10 @@ data/*.json
 data/*.tmp
 !data/.gitkeep
 
+# Verification artifacts
+verification-results/
+
 # Executables & Binaries
 tools/
 *.exe
 *.lnk
-

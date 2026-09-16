@@ -439,6 +439,13 @@ class JobScheduler:
                 job.error_message = f"Artifact {art_id} generated but download did not complete successfully"
                 logger.warning(f"[Scheduler Partial] Job {job.id}: artifact created but download failed on '{profile.id}'")
 
+        except asyncio.CancelledError:
+            # Cancellation is an interruption, not a terminal job failure. Leave
+            # the durable queue in a retryable state before propagating cancellation.
+            job.status = "queued"
+            job.started_at = None
+            job.retry_count += 1
+            raise
         except Exception as e:
             logger.error(f"[Scheduler Job Error] Job {job.id} failed: {e}")
             job.status = "failed"
