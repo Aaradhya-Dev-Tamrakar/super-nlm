@@ -206,7 +206,7 @@ class ScheduledJob(BaseModel):
     custom_prompt: Optional[str] = None
     quantity: Optional[int] = None
     difficulty: Optional[str] = None
-    status: Literal["queued", "scheduled", "in_progress", "completed", "failed", "cancelled"] = "queued"
+    status: Literal["queued", "scheduled", "in_progress", "completed", "failed", "download_failed", "cancelled"] = "queued"
     trigger_type: Literal["immediate", "next_reset_window", "custom_time", "calendar_event"] = "immediate"
     scheduled_time: Optional[str] = None
     created_at: str
@@ -256,6 +256,7 @@ class SchedulerStatusResponse(BaseModel):
     in_progress_count: int = 0
     completed_count: int = 0
     failed_count: int = 0
+    download_failed_count: int = 0
     active_workers: Dict[str, Optional[str]] = {}
     jobs: List[ScheduledJob] = []
 

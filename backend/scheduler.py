@@ -222,9 +222,11 @@ class JobScheduler:
         return False
 
     async def run_job_now(self, job_id: str) -> bool:
-        """Forces a scheduled/queued/cancelled/failed job to run immediately."""
+        """Forces a queued, scheduled, cancelled, failed, or download-failed job to run immediately."""
         async with self._lock:
-            if job_id in self._jobs and self._jobs[job_id].status in ("queued", "scheduled", "failed", "cancelled"):
+            if job_id in self._jobs and self._jobs[job_id].status in (
+                "queued", "scheduled", "failed", "download_failed", "cancelled"
+            ):
                 now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
                 self._jobs[job_id].status = "queued"
                 self._jobs[job_id].scheduled_time = now_iso
@@ -242,6 +244,7 @@ class JobScheduler:
         in_prog = sum(1 for j in jobs if j.status == "in_progress")
         comp = sum(1 for j in jobs if j.status == "completed")
         failed = sum(1 for j in jobs if j.status == "failed")
+        download_failed = sum(1 for j in jobs if j.status == "download_failed")
 
         return SchedulerStatusResponse(
             total_jobs=len(jobs),
@@ -249,6 +252,7 @@ class JobScheduler:
             in_progress_count=in_prog,
             completed_count=comp,
             failed_count=failed,
+            download_failed_count=download_failed,
             active_workers=dict(self._active_workers),
             jobs=self.get_jobs()
         )

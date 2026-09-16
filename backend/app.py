@@ -594,7 +594,7 @@ async def schedule_single_creation(req: SingleScheduleRequest):
     return await scheduler.schedule_job(req, nb_title)
 
 @app.get("/api/scheduler/jobs", response_model=List[ScheduledJob])
-async def list_scheduled_jobs(status: Optional[str] = Query(None, description="Filter by status (queued, scheduled, in_progress, completed, failed, cancelled)")):
+async def list_scheduled_jobs(status: Optional[str] = Query(None, description="Filter by status (queued, scheduled, in_progress, completed, failed, download_failed, cancelled)")):
     """
     Lists all creation jobs with optional status filter.
     """
@@ -610,7 +610,7 @@ async def get_scheduler_status():
 @app.post("/api/scheduler/jobs/{job_id}/run-now")
 async def run_job_now(job_id: str):
     """
-    Forces a queued/scheduled/failed job to execute immediately.
+    Forces a queued/scheduled/failed/download_failed job to execute immediately.
     """
     success = await scheduler.run_job_now(job_id)
     if not success:

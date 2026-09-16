@@ -87,6 +87,7 @@ def test_scheduler_api_routes():
     assert 'total_jobs' in data
     assert 'queued_count' in data
     assert 'in_progress_count' in data
+    assert 'download_failed_count' in data
 
     # 2. Test batch creation endpoint
     batch_payload = {
@@ -107,3 +108,25 @@ def test_scheduler_api_routes():
     assert jobs_res.status_code == 200
     jobs_data = jobs_res.json()
     assert len(jobs_data) >= 2
+
+def test_download_failed_is_distinct_and_retryable():
+    sched = JobScheduler()
+    job = ScheduledJob(
+        id="download-failed-job",
+        notebook_id="nb-1",
+        notebook_title="Notebook",
+        status="download_failed",
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    sched._jobs[job.id] = job
+
+    status = sched.get_status()
+    assert status.failed_count == 0
+    assert status.download_failed_count == 1
+    assert status.jobs[0].status == "download_failed"
+
+    async def _run():
+        assert await sched.run_job_now(job.id) is True
+        assert job.status == "queued"
+
+    asyncio.run(_run())

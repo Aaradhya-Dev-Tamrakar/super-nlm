@@ -4836,6 +4836,7 @@ function renderSchedulerQueueData(data) {
     const isQueued = job.status === 'queued' || job.status === 'scheduled';
     const isCompleted = job.status === 'completed';
     const isFailed = job.status === 'failed';
+    const isDownloadFailed = job.status === 'download_failed';
 
     let statusBadge = '';
     if (isRendering) {
@@ -4857,6 +4858,13 @@ function renderSchedulerQueueData(data) {
         <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#81c995]/20 text-[#81c995] text-[10px] font-mono font-semibold border border-[#81c995]/30">
           <i data-lucide="check-circle" class="w-3 h-3"></i>
           Completed & Cached
+        </span>
+      `;
+    } else if (isDownloadFailed) {
+      statusBadge = `
+        <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#fdd663]/20 text-[#fdd663] text-[10px] font-mono font-semibold border border-[#fdd663]/30" title="${escapeHtml(job.error_message || '')}">
+          <i data-lucide="download-x" class="w-3 h-3"></i>
+          Download Failed
         </span>
       `;
     } else if (isFailed) {
@@ -4882,7 +4890,7 @@ function renderSchedulerQueueData(data) {
           <span>Download ${escapeHtml(job.artifact_type)}</span>
         </a>
       `;
-    } else if (isQueued || isFailed) {
+    } else if (isQueued || isFailed || isDownloadFailed) {
       actionButtons = `
         <button
           type="button"

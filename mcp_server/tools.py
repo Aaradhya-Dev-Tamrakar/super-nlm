@@ -315,10 +315,10 @@ def register_tools(server: MCPServer):
     async def get_scheduled_queue(status_filter: Optional[str] = None) -> Dict[str, Any]:
         """
         Returns the current state of the rotating multi-account creation queue,
-        active worker accounts, and all pending, in-progress, and completed generation jobs.
+        active worker accounts, and all pending, in-progress, completed, failed, and download-failed generation jobs.
 
         Args:
-            status_filter: Optional filter ('queued', 'scheduled', 'in_progress', 'completed', 'failed', 'cancelled').
+            status_filter: Optional filter ('queued', 'scheduled', 'in_progress', 'completed', 'failed', 'download_failed', 'cancelled').
         """
         from backend.scheduler import scheduler
         status = scheduler.get_status()
@@ -420,6 +420,5 @@ def register_tools(server: MCPServer):
             selected_files=selected_files
         )
         return res.model_dump()
-
 
 
