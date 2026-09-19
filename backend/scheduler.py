@@ -434,6 +434,11 @@ class JobScheduler:
             if download_ok:
                 job.status = "completed"
                 logger.info(f"[Scheduler Success] Job {job.id} ({job.artifact_type}) finished on '{profile.id}'!")
+                try:
+                    import winsound
+                    winsound.MessageBeep(winsound.MB_ICONASTERISK)
+                except Exception:
+                    pass
             else:
                 job.status = "download_failed"
                 job.error_message = f"Artifact {art_id} generated but download did not complete successfully"

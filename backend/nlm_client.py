@@ -980,7 +980,7 @@ async def create_studio_artifact(
     if artifact_type_lower == "video":
         if format_option:
             args.extend(["--format", format_option])
-        if style:
+        if style and style != "auto_select" and format_option not in ("cinematic", "short"):
             args.extend(["--style", style])
         if custom_prompt:
             args.extend(["--focus", custom_prompt])

@@ -4761,6 +4761,69 @@ function renderSchedulerNotebooksList() {
   if (window.lucide) lucide.createIcons({ root: container });
 }
 
+// ----------------- DOWNLOAD NOTIFICATION & AUDIO ALARM -----------------
+const NOTIFIED_JOBS_STORAGE_KEY = 'supernlm_notified_download_jobs';
+
+function getNotifiedJobIds() {
+  try {
+    const raw = localStorage.getItem(NOTIFIED_JOBS_STORAGE_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function saveNotifiedJobIds(set) {
+  try {
+    localStorage.setItem(NOTIFIED_JOBS_STORAGE_KEY, JSON.stringify(Array.from(set)));
+  } catch (e) {}
+}
+
+let hasInitializedSchedulerQueue = false;
+
+function playDownloadChime() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
+    // Google-style 4-tone melodic chime: C5 (523.25Hz) -> E5 (659.25Hz) -> G5 (783.99Hz) -> C6 (1046.50Hz)
+    const notes = [
+      { freq: 523.25, time: 0, dur: 0.18, vol: 0.15 },
+      { freq: 659.25, time: 0.10, dur: 0.18, vol: 0.18 },
+      { freq: 783.99, time: 0.20, dur: 0.22, vol: 0.20 },
+      { freq: 1046.50, time: 0.32, dur: 0.45, vol: 0.25 }
+    ];
+
+    notes.forEach(({ freq, time, dur, vol }) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + time);
+
+      gain.gain.setValueAtTime(0.001, ctx.currentTime + time);
+      gain.gain.exponentialRampToValueAtTime(vol, ctx.currentTime + time + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + time + dur);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(ctx.currentTime + time);
+      osc.stop(ctx.currentTime + time + dur + 0.05);
+    });
+
+    setTimeout(() => {
+      ctx.close().catch(() => {});
+    }, 1200);
+  } catch (err) {
+    console.warn('Audio chime playback omitted:', err);
+  }
+}
+
 async function loadSchedulerQueue(showAnimation = false) {
   const refreshIcon = document.getElementById('queue-refresh-icon');
   if (showAnimation && refreshIcon) refreshIcon.classList.add('animate-spin');
@@ -4769,6 +4832,47 @@ async function loadSchedulerQueue(showAnimation = false) {
     const res = await fetch('/api/scheduler/status');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    
+    // Check for newly completed downloads to trigger toast alarm + audio chime
+    const notifiedSet = getNotifiedJobIds();
+    const completedJobs = (data.jobs || []).filter(j => j.status === 'completed' && j.download_filename);
+
+    if (!hasInitializedSchedulerQueue) {
+      // Seed existing completed jobs on first load so we don't blast historical notifications
+      completedJobs.forEach(j => notifiedSet.add(j.id));
+      saveNotifiedJobIds(notifiedSet);
+      hasInitializedSchedulerQueue = true;
+    } else {
+      let hasNewDownload = false;
+      for (const job of completedJobs) {
+        if (!notifiedSet.has(job.id)) {
+          notifiedSet.add(job.id);
+          hasNewDownload = true;
+          
+          const artLabel = (job.artifact_type || 'Artifact').toUpperCase();
+          const targetTitle = job.notebook_title || 'Notebook';
+          const filename = job.download_filename || 'download.bin';
+
+          showToast(
+            `🎬 ${artLabel} Ready: "${targetTitle}" downloaded to downloads/`,
+            'success',
+            {
+              label: 'Open File',
+              onClick: () => {
+                const dlUrl = `/api/scheduler/downloads/${encodeURIComponent(filename)}`;
+                window.open(dlUrl, '_blank');
+              }
+            }
+          );
+        }
+      }
+
+      if (hasNewDownload) {
+        playDownloadChime();
+        saveNotifiedJobIds(notifiedSet);
+      }
+    }
+
     renderSchedulerQueueData(data);
     updateQueueBadge(data);
   } catch (e) {

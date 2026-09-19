@@ -195,6 +195,10 @@ class AccountRotator:
             f"{duration:.0f}s ({duration/3600:.1f}h) until {expiry}"
         )
 
+    def record_rate_limit(self, profile_id: str, details: str = ""):
+        """Alias for mark_quota_exhausted with auto classification."""
+        self.mark_quota_exhausted(profile_id, error_type="burst", details=details)
+
     def record_success(self, profile_id: str):
         """Records a successful query on a profile and removes any lingering cooldown."""
         self._cooldowns.pop(profile_id, None)

@@ -80,7 +80,7 @@ def categorize_file(filename: str) -> Tuple[str, str, bool]:
         return "unsupported", "unsupported", False
 
     # Default unknown files
-    return "unknown", "unsupported", False
+    return "unsupported", "unsupported", False
 
 def convert_ipynb_to_markdown(filepath: Path) -> str:
     """Extracts Markdown and Code cells from a Jupyter Notebook into clean Markdown text."""
@@ -216,8 +216,25 @@ class DriveSyncService:
             if mapping.folder_type == "local_folder":
                 files = await self.scan_local_folder(mapping.target_path, recursive=mapping.recursive)
             elif mapping.folder_type == "drive_web":
-                # For Drive web folders, list known sources
-                pass
+                # For Drive web folders, display all current live notebook sources with Drive sync status
+                for s in sources:
+                    s_title = s.get("title") or "Drive Source"
+                    s_id = s.get("id") or ""
+                    s_ext = Path(s_title).suffix.lower() or ".pdf"
+                    is_stale = s_id in stale_source_indicators or s_title.strip().lower() in stale_source_indicators
+                    category, _, req_adapter = categorize_file(s_title)
+                    files.append(FolderFileItem(
+                        name=s_title,
+                        path_or_id=s_id,
+                        extension=s_ext,
+                        size_bytes=0,
+                        modified_at=datetime.now().isoformat(),
+                        status="stale" if is_stale else "ingested",
+                        category=category,
+                        source_id=s_id,
+                        requires_code_adapter=req_adapter,
+                        detail="Modified in Google Drive, refresh needed" if is_stale else "Ingested from Google Drive"
+                    ))
 
         # Diffing logic
         new_count = 0

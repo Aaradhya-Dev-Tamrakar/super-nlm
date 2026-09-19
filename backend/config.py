@@ -18,7 +18,11 @@ NOTEBOOKLM_STANDARD_SOURCE_LIMIT = 50
 
 # Canonical File Extension Categories
 NLM_NATIVE_DOCS = {".pdf", ".docx", ".pptx", ".txt", ".md", ".csv", ".epub"}
-NLM_MEDIA_FORMATS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".heic"}
+NLM_MEDIA_FORMATS = {
+    ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac",
+    ".mp4", ".mov", ".mkv", ".webm", ".avi", ".wmv",
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".heic"
+}
 CODE_ADAPTER_EXTENSIONS = {".ipynb", ".py", ".c", ".cpp", ".h", ".m", ".java", ".v", ".vhd", ".json", ".sql", ".sh", ".ts", ".js", ".html", ".css"}
 EXCEL_EXTENSIONS = {".xlsx", ".xls"}
 IGNORED_EXTENSIONS = {".zip", ".rar", ".7z", ".tar", ".gz", ".exe", ".dll", ".so", ".bin", ".iso", ".tmp", ".log"}
