@@ -308,14 +308,26 @@ class JobScheduler:
             if cooldown_info and time.time() < cooldown_info["expires_at"]:
                 continue
 
-            # Take the next eligible job
-            job = pending_jobs.pop(0)
+            # Find matching job: prefer job assigned specifically to this profile, or first unassigned/flexible job
+            matched_job_idx = None
+            for idx, job in enumerate(pending_jobs):
+                if job.assigned_profile_id == profile.id:
+                    matched_job_idx = idx
+                    break
+                elif not job.assigned_profile_id:
+                    matched_job_idx = idx
+                    break
+                else:
+                    # If job prefers another profile, check if that preferred profile is available
+                    pref = next((p for p in free_profiles if p.id == job.assigned_profile_id), None)
+                    if not pref or (pref.id in rotator._cooldowns and time.time() < rotator._cooldowns[pref.id]["expires_at"]):
+                        matched_job_idx = idx
+                        break
 
-            # If job has a preferred profile that is different and available, respect preference
-            if job.assigned_profile_id and job.assigned_profile_id != profile.id:
-                pref = next((p for p in free_profiles if p.id == job.assigned_profile_id), None)
-                if pref and pref.id not in rotator._cooldowns:
-                    continue
+            if matched_job_idx is None:
+                continue
+
+            job = pending_jobs.pop(matched_job_idx)
 
             # Mark worker busy and dispatch execution task
             self._active_workers[profile.id] = job.id
