@@ -51,6 +51,11 @@ def test_shortcuts_in_js():
     assert "toggleSelectAllVisible()" in content, "toggleSelectAllVisible called in handler"
     assert "toggleSidebarCollapse()" in content, "toggleSidebarCollapse called in handler"
     assert "e.key === '['" in content, "Key '[' handler must exist"
+    assert "e.key === ']'" in content, "Key ']' handler must exist"
+    assert "e.key.toLowerCase() === 'q'" in content, "Key 'q' handler must exist for Batch Queue & Scheduler"
+    assert "e.key.toLowerCase() === 'l'" in content, "Key 'l' handler must exist for Quota Limits"
+    assert "e.key.toLowerCase() === 'b'" in content, "Key 'b' handler must exist for Batch Share"
+    assert "e.key.toLowerCase() === 'k'" in content, "Key 'k' handler must exist for Remote Access Key"
     assert "e.key.toLowerCase() === 'a' && !isInputActive" in content, "Ctrl+A handler must select all visible notebooks"
     print("  [PASS] JS: Keyboard shortcuts and handlers verified.")
 

@@ -387,7 +387,7 @@ function setupEventListeners() {
     }
 
     // If an interactive modal is open, don't trigger background navigation or actions
-    const anyModalOpen = ['modal-chat', 'modal-accounts', 'modal-cross', 'modal-shortcuts', 'modal-batch-share', 'modal-usage'].some(id => isModalOpen(id));
+    const anyModalOpen = ['modal-chat', 'modal-accounts', 'modal-cross', 'modal-shortcuts', 'modal-batch-share', 'modal-usage', 'modal-scheduler', 'modal-folder-mapping', 'auth-key-modal'].some(id => isModalOpen(id));
     if (anyModalOpen) return;
 
     // Shortcut '/': Focus search input
@@ -436,13 +436,46 @@ function setupEventListeners() {
       return;
     }
 
-    // Shortcut 'q' or 'l': Toggle Account Usage & Quota Limits
-    if ((e.key.toLowerCase() === 'q' || e.key.toLowerCase() === 'l') && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+    // Shortcut 'q': Toggle Batch Queue & Rotation Scheduler
+    if (e.key.toLowerCase() === 'q' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      if (isModalOpen('modal-scheduler')) {
+        closeSchedulerModal();
+      } else {
+        openSchedulerModal();
+      }
+      return;
+    }
+
+    // Shortcut 'l': Toggle Account Usage & Quota Limits
+    if (e.key.toLowerCase() === 'l' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
       if (isModalOpen('modal-usage')) {
         closeModal('modal-usage');
       } else {
         openUsageLimitsModal();
+      }
+      return;
+    }
+
+    // Shortcut 'b': Toggle Batch Share Manager
+    if (e.key.toLowerCase() === 'b' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      if (isModalOpen('modal-batch-share')) {
+        closeModal('modal-batch-share');
+      } else {
+        openBatchShareModal();
+      }
+      return;
+    }
+
+    // Shortcut 'k': Toggle Remote Access Key Configuration
+    if (e.key.toLowerCase() === 'k' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      if (isModalOpen('auth-key-modal')) {
+        closeRemoteAuthModal();
+      } else {
+        openRemoteAuthModal();
       }
       return;
     }
