@@ -119,10 +119,15 @@ function getCourseCode(notebook) {
 
 // ----------------- SIDEBAR COLLAPSE CONTROLLER -----------------
 const SIDEBAR_COLLAPSED_KEY = 'supernlm_sidebar_collapsed';
+const RIGHT_SIDEBAR_COLLAPSED_KEY = 'supernlm_right_sidebar_collapsed';
 
 function initSidebarState() {
-  const isCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
-  applySidebarCollapsed(isCollapsed, false);
+  const isLeftCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+  applySidebarCollapsed(isLeftCollapsed, false);
+
+  const savedRight = localStorage.getItem(RIGHT_SIDEBAR_COLLAPSED_KEY);
+  const isRightCollapsed = savedRight !== null ? savedRight === 'true' : false;
+  applyRightSidebarCollapsed(isRightCollapsed, false);
 }
 
 function toggleSidebarCollapse() {
@@ -150,6 +155,35 @@ function applySidebarCollapsed(collapsed, save = true) {
     sidebar.classList.remove('collapsed');
     if (toggleBtn) toggleBtn.classList.remove('active');
     if (toggleIcon) toggleIcon.setAttribute('data-lucide', 'panel-left');
+  }
+  if (window.lucide) lucide.createIcons();
+}
+
+function toggleRightSidebarCollapse() {
+  const sidebar = document.getElementById('workspace-right-sidebar');
+  if (!sidebar) return;
+  const willCollapse = !sidebar.classList.contains('collapsed');
+  applyRightSidebarCollapsed(willCollapse, true);
+  showToast(willCollapse ? 'Fleet tools panel collapsed (shortcut: ])' : 'Fleet tools panel expanded (shortcut: ])', 'info');
+}
+
+function applyRightSidebarCollapsed(collapsed, save = true) {
+  const sidebar = document.getElementById('workspace-right-sidebar');
+  const toggleBtn = document.getElementById('btn-toggle-right-sidebar');
+  const toggleIcon = document.getElementById('sidebar-right-toggle-icon');
+  if (save) {
+    localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, collapsed ? 'true' : 'false');
+  }
+  if (!sidebar) return;
+
+  if (collapsed) {
+    sidebar.classList.add('collapsed');
+    if (toggleBtn) toggleBtn.classList.remove('active');
+    if (toggleIcon) toggleIcon.setAttribute('data-lucide', 'panel-right-open');
+  } else {
+    sidebar.classList.remove('collapsed');
+    if (toggleBtn) toggleBtn.classList.add('active');
+    if (toggleIcon) toggleIcon.setAttribute('data-lucide', 'panel-right');
   }
   if (window.lucide) lucide.createIcons();
 }
@@ -427,6 +461,13 @@ function setupEventListeners() {
       return;
     }
 
+    // Shortcut ']' (without Shift/Ctrl): Toggle Right Sidebar (Fleet Tools Panel)
+    if (e.key === ']' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      toggleRightSidebarCollapse();
+      return;
+    }
+
     // Shortcut '1' to '9': Profile / Account filter switching
     if (e.key >= '1' && e.key <= '9') {
       e.preventDefault();
@@ -586,6 +627,17 @@ function setupEventListeners() {
   const sidebarCollapseChevron = document.getElementById('btn-sidebar-collapse-chevron');
   if (sidebarCollapseChevron) {
     sidebarCollapseChevron.addEventListener('click', toggleSidebarCollapse);
+  }
+
+  // Right sidebar toggle buttons
+  const rightSidebarToggleBtn = document.getElementById('btn-toggle-right-sidebar');
+  if (rightSidebarToggleBtn) {
+    rightSidebarToggleBtn.addEventListener('click', toggleRightSidebarCollapse);
+  }
+
+  const rightSidebarCollapseChevron = document.getElementById('btn-right-sidebar-collapse-chevron');
+  if (rightSidebarCollapseChevron) {
+    rightSidebarCollapseChevron.addEventListener('click', toggleRightSidebarCollapse);
   }
 
   // Sidebar add account button

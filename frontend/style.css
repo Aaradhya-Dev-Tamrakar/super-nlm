@@ -907,13 +907,15 @@ html.dark .m3-menu-item.active {
 }
 
 /* ==========================================================================
-   Collapsible Left Panel (Space Reclamation)
+   Collapsible Left & Right Panels (Space Reclamation)
    ========================================================================== */
-#workspace-sidebar {
+#workspace-sidebar,
+#workspace-right-sidebar {
   transition: width 0.28s var(--ease-m3), opacity 0.2s var(--ease-m3), margin 0.28s var(--ease-m3), transform 0.28s var(--ease-m3);
 }
 
-#workspace-sidebar.collapsed {
+#workspace-sidebar.collapsed,
+#workspace-right-sidebar.collapsed {
   width: 0 !important;
   min-width: 0 !important;
   margin: 0 !important;
@@ -925,7 +927,8 @@ html.dark .m3-menu-item.active {
 }
 
 @media (min-width: 1024px) {
-  #workspace-sidebar.collapsed {
+  #workspace-sidebar.collapsed,
+  #workspace-right-sidebar.collapsed {
     display: none !important;
   }
 }
