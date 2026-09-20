@@ -195,14 +195,21 @@ async def fetch_all_notebooks_concurrently(
         for n in fallback_cached:
             cached_by_profile.setdefault(n.profileId, []).append(n)
 
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     for profile, res in zip(profiles, results):
+        profile.lastAuthCheck = now_iso
         if isinstance(res, list):
             all_notebooks.extend(res)
             profile_counts[profile.id] = len(res)
             profile.status = "connected"
             profile.notebookCount = len(res)
+            profile.lastError = None
         else:
-            logger.warning(f"Profile '{profile.id}' sync failed: {res}")
+            err_str = str(res).strip()
+            # Clean exception wrapper prefix if present
+            if err_str.startswith("Failed to fetch notebooks for profile"):
+                err_str = err_str.split(":", 1)[-1].strip()
+            logger.warning(f"Profile '{profile.id}' sync failed: {err_str}")
             # Preserve existing cache for this profile so data is not wiped out
             existing = cached_by_profile.get(profile.id, [])
             if existing:
@@ -213,6 +220,7 @@ async def fetch_all_notebooks_concurrently(
                 profile_counts[profile.id] = 0
                 profile.notebookCount = 0
             profile.status = "expired"
+            profile.lastError = err_str or "Authentication expired or session invalid"
 
     # Sort notebooks by updated_at descending (latest first)
     all_notebooks.sort(key=lambda n: n.updated_at or "", reverse=True)
@@ -220,6 +228,41 @@ async def fetch_all_notebooks_concurrently(
         "notebooks": all_notebooks,
         "profile_counts": profile_counts
     }
+
+async def check_profile_auth_status(profile: AccountProfile, timeout: int = 20) -> Dict[str, Any]:
+    """
+    Probes authentication status for a single profile using 'nlm login --check -p <id>'.
+    Updates profile status and returns diagnosis.
+    """
+    res = await run_nlm_cmd(["login", "--check", "-p", profile.id], timeout=timeout)
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    profile.lastAuthCheck = now_iso
+
+    out = (res.get("stdout") or "").strip()
+    err = (res.get("stderr") or "").strip()
+
+    is_valid = res.get("success", False) and ("Authentication valid" in out or "valid" in out.lower())
+    if is_valid:
+        profile.status = "connected"
+        profile.lastError = None
+        return {
+            "profile_id": profile.id,
+            "status": "connected",
+            "is_valid": True,
+            "message": "Authentication is valid",
+            "details": out
+        }
+    else:
+        err_msg = err or out or "Authentication session expired or missing cookies"
+        profile.status = "expired"
+        profile.lastError = err_msg
+        return {
+            "profile_id": profile.id,
+            "status": "expired",
+            "is_valid": False,
+            "message": "Authentication expired or relogin required",
+            "details": err_msg
+        }
 
 async def query_notebook(
     profile_id: str,

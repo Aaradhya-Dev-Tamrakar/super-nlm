@@ -35,7 +35,8 @@ from backend.nlm_client import (
     rename_cli_profile,
     run_nlm_cmd, ensure_notebook_shared, batch_share_notebooks_to_accounts,
     auto_share_study_notebooks,
-    fetch_profile_usage, fetch_fleet_usage
+    fetch_profile_usage, fetch_fleet_usage,
+    check_profile_auth_status
 )
 from mcp_server.rotator import rotator
 from backend.scheduler import scheduler
@@ -245,6 +246,48 @@ async def trigger_profile_login(profile_id: str, clear: bool = True):
 
     launch_cli_login(profile.id, clear=clear)
     return {"success": True, "message": f"Login window launched for '{profile.id}'"}
+
+@app.get("/api/profiles/health")
+async def get_profiles_health():
+    """
+    Returns summary of authentication and connectivity health across all account profiles.
+    """
+    profiles = await get_profiles()
+    expired = [p for p in profiles if p.status in ("expired", "not_logged_in")]
+    connected = [p for p in profiles if p.status == "connected"]
+    
+    return {
+        "healthy": len(expired) == 0,
+        "totalProfiles": len(profiles),
+        "connectedCount": len(connected),
+        "expiredCount": len(expired),
+        "expiredProfiles": [
+            {
+                "id": p.id,
+                "displayName": p.displayName,
+                "email": p.email,
+                "status": p.status,
+                "lastError": p.lastError,
+                "lastAuthCheck": p.lastAuthCheck
+            }
+            for p in expired
+        ],
+        "profiles": profiles
+    }
+
+@app.post("/api/profiles/{profile_id}/check-auth")
+async def check_single_profile_auth(profile_id: str):
+    """
+    Probes authentication status for a specific profile, updates storage, and returns diagnostic results.
+    """
+    clean_id = validate_profile_id(profile_id)
+    profile = await get_profile(clean_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail=f"Profile '{clean_id}' not found")
+
+    res = await check_profile_auth_status(profile)
+    await save_profile(profile)
+    return res
 
 # ----------------- USAGE & QUOTA LIMITS API -----------------
 

@@ -819,6 +819,79 @@ function showSkeletons(show) {
   }
 }
 
+// ----------------- AUTHENTICATION ALERT & HEALTH BANNER -----------------
+
+function renderAuthAlertBanner() {
+  const container = document.getElementById('auth-alert-container');
+  if (!container) return;
+
+  const expiredProfiles = state.profiles.filter(p => p.status === 'expired' || p.status === 'not_logged_in');
+
+  if (expiredProfiles.length === 0) {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+
+  container.classList.remove('hidden');
+  container.innerHTML = `
+    <div class="auth-alert-banner p-4 relative overflow-hidden animate-m3-enter">
+      <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+        
+        <div class="flex items-start gap-3 min-w-0">
+          <div class="p-2.5 rounded-2xl bg-[var(--google-red-container)] text-[var(--google-red)] shrink-0 mt-0.5 md:mt-0 shadow-sm">
+            <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+          </div>
+          <div class="min-w-0 space-y-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--google-red)] flex items-center gap-1.5">
+                <span>Google Session Expired</span>
+                <span class="px-2 py-0.2 rounded-full bg-[var(--google-red-container)] text-[var(--google-red-on-container)] font-mono text-[10px]">
+                  ${expiredProfiles.length} ${expiredProfiles.length === 1 ? 'Account' : 'Accounts'} Need Relogin
+                </span>
+              </h3>
+            </div>
+            <p class="text-xs text-[var(--m3-on-surface)] leading-relaxed">
+              Notebooks from <strong class="text-[var(--google-red)]">${expiredProfiles.map(p => escapeHtml(p.displayName || p.id) + (p.email ? ` (${escapeHtml(p.email)})` : '')).join(', ')}</strong> cannot be displayed or queried because Google authentication has expired.
+            </p>
+            ${expiredProfiles.some(p => p.lastError) ? `
+              <p class="text-[11px] font-mono text-[var(--m3-on-surface-subtle)] bg-[var(--m3-surface-container-low)] px-2.5 py-1 rounded-lg border border-[var(--m3-outline-variant)]/60 truncate max-w-2xl" title="${escapeHtml(expiredProfiles.map(p => `${p.displayName}: ${p.lastError || ''}`).join(' | '))}">
+                Error: ${escapeHtml(expiredProfiles.map(p => `${p.displayName}: ${p.lastError || 'Session expired or missing cookies'}`).join(' • '))}
+              </p>
+            ` : ''}
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 shrink-0 self-end md:self-center w-full md:w-auto justify-end pt-2 md:pt-0 border-t md:border-t-0 border-[var(--m3-outline-variant)]/40 flex-wrap">
+          ${expiredProfiles.map(p => `
+            <button
+              type="button"
+              onclick="handleTriggerLogin('${escapeHtml(p.id)}')"
+              class="google-btn-primary px-3.5 py-1.5 text-xs font-semibold flex items-center gap-1.5 bg-[var(--google-red)] hover:bg-[var(--google-red)]/90 text-white shadow-sm cursor-pointer"
+              title="Authenticate ${escapeHtml(p.displayName)} with Chrome"
+            >
+              <i data-lucide="log-in" class="w-3.5 h-3.5"></i>
+              <span>Relogin ${escapeHtml(p.displayName)}</span>
+            </button>
+          `).join('')}
+          <button
+            type="button"
+            onclick="handleSyncAll()"
+            class="google-btn-outlined px-3 py-1.5 text-xs font-medium flex items-center gap-1 cursor-pointer"
+            title="Re-test and sync all accounts"
+          >
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+            <span class="hidden sm:inline">Retry Sync</span>
+          </button>
+        </div>
+
+      </div>
+    </div>
+  `;
+
+  if (window.lucide) lucide.createIcons({ root: container });
+}
+
 // ----------------- API CALLS -----------------
 
 async function loadProfiles() {
@@ -843,6 +916,7 @@ async function loadProfiles() {
         const crossEngineLabel = document.getElementById('cross-engine-label');
         if (crossEngineLabel) crossEngineLabel.textContent = `Pro AI Node: ${proProfile.email}`;
       }
+      renderAuthAlertBanner();
       renderAccountPills();
     }
   } catch (err) {
@@ -876,6 +950,7 @@ async function loadNotebooks() {
       const telemetryNotebooks = document.getElementById('telemetry-notebooks');
       if (telemetryNotebooks) telemetryNotebooks.textContent = new Set(state.notebooks.map(n => n.id)).size;
 
+      renderAuthAlertBanner();
       renderAccountPills();
       renderCategoryChips();
       renderNotebooksGrid();
@@ -913,12 +988,19 @@ async function handleSyncAll() {
     const telemetryNotebooks = document.getElementById('telemetry-notebooks');
     if (telemetryNotebooks) telemetryNotebooks.textContent = new Set(state.notebooks.map(n => n.id)).size;
 
+    renderAuthAlertBanner();
     renderAccountPills();
     renderCategoryChips();
     renderNotebooksGrid();
 
     const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
-    showToast(`Synced ${synced.length} notebooks across ${state.profiles.length} accounts (${elapsed}s)`, 'success');
+    const expiredProfiles = state.profiles.filter(p => p.status === 'expired' || p.status === 'not_logged_in');
+    if (expiredProfiles.length > 0) {
+      const names = expiredProfiles.map(p => p.displayName || p.id).join(', ');
+      showToast(`⚠️ Sync notice: Auth expired for ${names}. Re-login required.`, 'error', 8000);
+    } else {
+      showToast(`Synced ${synced.length} notebooks across ${state.profiles.length} accounts (${elapsed}s)`, 'success');
+    }
   } catch (err) {
     console.error('Sync error:', err);
     showToast('Sync error: ' + err.message, 'error');
@@ -969,6 +1051,7 @@ function renderAccountPills() {
 
   // Individual Account Pills
   state.profiles.forEach(p => {
+    const isExpired = p.status === 'expired' || p.status === 'not_logged_in';
     const count = state.notebooks.filter(n => n.profileId === p.id).length;
     const pill = createPill({
       id: p.id,
@@ -976,7 +1059,10 @@ function renderAccountPills() {
       count: count,
       color: p.color,
       isActive: state.activeProfileFilter === p.id,
-      isPro: p.isDefaultPro || p.tier === 'pro'
+      isPro: p.isDefaultPro || p.tier === 'pro',
+      isExpired: isExpired,
+      email: p.email,
+      lastError: p.lastError
     });
     pill.addEventListener('click', () => {
       state.activeProfileFilter = p.id;
@@ -1035,6 +1121,7 @@ function renderSidebarAccounts() {
   `;
 
   state.profiles.forEach(p => {
+    const isExpired = p.status === 'expired' || p.status === 'not_logged_in';
     const count = state.notebooks.filter(n => n.profileId === p.id).length;
     const isActive = state.activeProfileFilter === p.id;
     const isPro = p.isDefaultPro || p.tier === 'pro';
@@ -1044,19 +1131,29 @@ function renderSidebarAccounts() {
         type="button"
         data-filter="${escapeHtml(p.id)}"
         class="sidebar-account-btn w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition cursor-pointer ${
-          isActive
-            ? 'bg-[var(--google-blue-container)] text-[var(--google-blue-on-container)] font-medium'
-            : 'hover:bg-[var(--m3-surface-container-high)] text-[var(--m3-on-surface-variant)]'
+          isExpired
+            ? 'border border-[var(--google-red)]/40 bg-[var(--google-red-container)]/10 text-[var(--m3-on-surface)]'
+            : (isActive
+              ? 'bg-[var(--google-blue-container)] text-[var(--google-blue-on-container)] font-medium'
+              : 'hover:bg-[var(--m3-surface-container-high)] text-[var(--m3-on-surface-variant)]')
         }"
       >
         <div class="flex items-center gap-2 min-w-0 flex-1">
-          <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${p.color || '#8ab4f8'};"></span>
-          <span class="truncate text-left" title="${escapeHtml(p.displayName || p.id)} (${escapeHtml(p.email || '')})">${escapeHtml(p.displayName || p.id)}</span>
-          ${isPro ? `
+          ${isExpired ? `
+            <span class="w-2.5 h-2.5 rounded-full shrink-0 bg-[var(--google-red)] pulse-dot-red"></span>
+          ` : `
+            <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: ${p.color || '#8ab4f8'};"></span>
+          `}
+          <span class="truncate text-left ${isExpired ? 'text-[var(--google-red)] font-medium' : ''}" title="${escapeHtml(p.displayName || p.id)} (${escapeHtml(p.email || '')})${isExpired ? ' - ⚠️ Auth Expired! Click to relogin' : ''}">${escapeHtml(p.displayName || p.id)}</span>
+          ${isExpired ? `
+            <span class="text-[9px] font-bold px-1.5 py-0.2 rounded bg-[var(--google-red-container)] text-[var(--google-red)] border border-[var(--google-red)]/30 shrink-0 flex items-center gap-0.5" title="Google session expired">
+              <i data-lucide="alert-triangle" class="w-2.5 h-2.5"></i> EXPIRED
+            </span>
+          ` : (isPro ? `
             <span class="text-[9px] font-medium px-1 py-0.2 rounded bg-[var(--google-yellow-container)] text-[var(--google-yellow)] border border-[var(--google-yellow)]/30 shrink-0">PRO</span>
-          ` : ''}
+          ` : '')}
         </div>
-        <span class="px-1.5 py-0.2 text-[10px] rounded-full m3-subcard font-mono shrink-0 ml-1.5 ${isActive ? 'text-[var(--google-blue-on-container)]' : 'text-[var(--m3-on-surface-subtle)]'}">${count}</span>
+        <span class="px-1.5 py-0.2 text-[10px] rounded-full m3-subcard font-mono shrink-0 ml-1.5 ${isExpired ? 'text-[var(--google-red)] font-bold' : (isActive ? 'text-[var(--google-blue-on-container)]' : 'text-[var(--m3-on-surface-subtle)]')}">${count}</span>
       </button>
     `;
   });
@@ -1165,20 +1262,28 @@ function toggleStudyFilter() {
   renderNotebooksGrid();
 }
 
-function createPill({ id, label, count, color, isActive, isPro }) {
+function createPill({ id, label, count, color, isActive, isPro, isExpired, email, lastError }) {
   const btn = document.createElement('button');
   const baseClasses = 'm3-chip flex items-center gap-2 px-3.5 py-1.5 text-xs transition whitespace-nowrap cursor-pointer';
   const activeClasses = isActive ? 'active' : 'hover:text-[var(--m3-on-surface)]';
+  const expiredClasses = isExpired ? 'auth-expired-pill border-[var(--google-red)]/50 text-[var(--google-red)]' : '';
 
-  btn.className = `${baseClasses} ${activeClasses}`;
+  btn.className = `${baseClasses} ${activeClasses} ${expiredClasses}`;
+  if (isExpired) {
+    btn.title = `⚠️ Auth Expired for ${label} (${email || ''})${lastError ? ` - ${lastError}` : ''}. Click to filter or relogin.`;
+  }
   
   let dotHtml = '';
-  if (color) {
+  if (isExpired) {
+    dotHtml = `<span class="w-2 h-2 rounded-full shrink-0 bg-[var(--google-red)] pulse-dot-red"></span>`;
+  } else if (color) {
     dotHtml = `<span class="w-2 h-2 rounded-full shrink-0" style="background-color: ${color};"></span>`;
   }
 
   let badgeHtml = '';
-  if (isPro) {
+  if (isExpired) {
+    badgeHtml = `<span class="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-[var(--google-red-container)] text-[var(--google-red)] border border-[var(--google-red)]/30 flex items-center gap-0.5"><i data-lucide="alert-circle" class="w-2.5 h-2.5"></i> EXPIRED</span>`;
+  } else if (isPro) {
     badgeHtml = `<span class="text-[9px] font-medium px-1.5 py-0.2 rounded-full bg-[var(--google-yellow-container)] text-[var(--google-yellow)] border border-[var(--google-yellow)]/30 flex items-center gap-1"><i data-lucide="sparkles" class="w-2.5 h-2.5 text-[var(--google-yellow)]"></i> PRO</span>`;
   }
 
@@ -1186,7 +1291,7 @@ function createPill({ id, label, count, color, isActive, isPro }) {
     ${dotHtml}
     <span class="tracking-tight">${escapeHtml(label)}</span>
     ${badgeHtml}
-    <span class="px-1.5 py-0.2 text-[10px] rounded-full m3-subcard text-[var(--m3-on-surface-subtle)] font-mono">${count}</span>
+    <span class="px-1.5 py-0.2 text-[10px] rounded-full m3-subcard font-mono ${isExpired ? 'text-[var(--google-red)] font-bold' : 'text-[var(--m3-on-surface-subtle)]'}">${count}</span>
   `;
   return btn;
 }
@@ -1430,6 +1535,53 @@ function renderNotebooksGrid() {
     grid.innerHTML = '';
     emptyState.classList.remove('hidden');
     emptyState.classList.add('flex');
+
+    const activeProfile = state.activeProfileFilter !== 'all' ? state.profiles.find(x => x.id === state.activeProfileFilter) : null;
+    const isFilteredExpired = activeProfile && (activeProfile.status === 'expired' || activeProfile.status === 'not_logged_in');
+
+    if (isFilteredExpired) {
+      emptyState.innerHTML = `
+        <div class="w-14 h-14 rounded-2xl bg-[var(--google-red-container)] text-[var(--google-red)] flex items-center justify-center shadow-sm">
+          <i data-lucide="alert-triangle" class="w-7 h-7"></i>
+        </div>
+        <div class="space-y-1.5 max-w-md">
+          <h3 class="text-sm font-bold text-[var(--google-red)]">Authentication Expired for ${escapeHtml(activeProfile.displayName || activeProfile.id)}</h3>
+          <p class="text-xs text-[var(--m3-on-surface-variant)] leading-relaxed">
+            Google session for <strong class="font-mono text-[var(--m3-on-surface)]">${escapeHtml(activeProfile.email || activeProfile.id)}</strong> has expired. Notebooks cannot be loaded until you re-authenticate.
+          </p>
+          ${activeProfile.lastError ? `
+            <p class="text-[11px] font-mono text-[var(--google-red)] bg-[var(--m3-surface-container)] p-2.5 rounded-xl border border-[var(--google-red)]/30 text-left">
+              ${escapeHtml(activeProfile.lastError)}
+            </p>
+          ` : ''}
+        </div>
+        <div class="flex items-center gap-2 pt-2">
+          <button onclick="handleTriggerLogin('${escapeHtml(activeProfile.id)}')" class="google-btn-primary bg-[var(--google-red)] hover:bg-[var(--google-red)]/90 text-white px-4 py-2 text-xs flex items-center gap-1.5 cursor-pointer shadow-sm">
+            <i data-lucide="log-in" class="w-3.5 h-3.5"></i>
+            <span>Re-login to ${escapeHtml(activeProfile.displayName || activeProfile.id)}</span>
+          </button>
+          <button onclick="handleSyncAll()" class="google-btn-outlined px-3.5 py-2 text-xs flex items-center gap-1.5 cursor-pointer">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+            <span>Retry Sync</span>
+          </button>
+        </div>
+      `;
+      if (window.lucide) lucide.createIcons({ root: emptyState });
+    } else {
+      emptyState.innerHTML = `
+        <div class="w-12 h-12 rounded-full m3-subcard flex items-center justify-center text-[var(--m3-on-surface-subtle)]">
+          <i data-lucide="book-open" class="w-5 h-5"></i>
+        </div>
+        <div class="space-y-1 max-w-sm">
+          <h3 class="text-sm font-medium text-[var(--m3-on-surface)]">No notebooks found</h3>
+          <p class="text-xs text-[var(--m3-on-surface-subtle)] leading-relaxed">No notebooks match your current search query or active account filter.</p>
+        </div>
+        <button id="btn-empty-sync" onclick="handleSyncAll()" class="google-btn-outlined px-4 py-1.5 text-xs cursor-pointer">
+          Sync Notebooks Now
+        </button>
+      `;
+      if (window.lucide) lucide.createIcons({ root: emptyState });
+    }
     return;
   }
 
@@ -1845,14 +1997,27 @@ function renderAccountsModalList() {
       `;
     }
 
+    const isExpired = p.status === 'expired' || p.status === 'not_logged_in';
+
     return `
-      <div class="flex items-center justify-between p-3.5 rounded-2xl m3-subcard hover:border-[var(--m3-outline)] transition-all">
-        <div class="flex items-center gap-3">
-          <span class="w-3.5 h-3.5 rounded-full shrink-0 shadow-sm" style="background-color: ${p.color};"></span>
-          <div>
-            <div class="flex items-center gap-2">
-              <span class="text-xs font-semibold text-[var(--m3-on-surface)] tracking-normal">${escapeHtml(p.displayName)}</span>
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl m3-subcard transition-all gap-3 ${
+        isExpired ? 'border-2 border-[var(--google-red)]/50 bg-[var(--google-red-container)]/10 shadow-sm' : 'hover:border-[var(--m3-outline)]'
+      }">
+        <div class="flex items-start sm:items-center gap-3 min-w-0">
+          ${isExpired ? `
+            <span class="w-3.5 h-3.5 rounded-full shrink-0 bg-[var(--google-red)] pulse-dot-red mt-1 sm:mt-0"></span>
+          ` : `
+            <span class="w-3.5 h-3.5 rounded-full shrink-0 shadow-sm mt-1 sm:mt-0" style="background-color: ${p.color};"></span>
+          `}
+          <div class="min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-xs font-semibold text-[var(--m3-on-surface)] tracking-normal ${isExpired ? 'text-[var(--google-red)] font-bold' : ''}">${escapeHtml(p.displayName)}</span>
               <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[var(--m3-surface-container)] text-[var(--m3-on-surface-subtle)] border border-[var(--m3-outline-variant)]">${escapeHtml(p.id)}</span>
+              ${isExpired ? `
+                <span class="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[var(--google-red-container)] text-[var(--google-red)] border border-[var(--google-red)]/30 flex items-center gap-1">
+                  <i data-lucide="alert-triangle" class="w-2.5 h-2.5"></i> AUTH EXPIRED
+                </span>
+              ` : ''}
               ${isPro ? `
                 <span class="text-[9px] font-medium px-2 py-0.5 rounded-full bg-[var(--google-yellow-container)]/50 text-[var(--google-yellow)] border border-[var(--google-yellow)]/30 flex items-center gap-1">
                   <i data-lucide="sparkles" class="w-2.5 h-2.5"></i> DEFAULT PRO
@@ -1863,11 +2028,16 @@ function renderAccountsModalList() {
                 </span>
               ` : '')}
             </div>
-            <p class="text-[11px] text-[var(--m3-on-surface-subtle)] font-mono mt-0.5">${escapeHtml(p.email || 'No email reported yet')}</p>
+            <p class="text-[11px] text-[var(--m3-on-surface-subtle)] font-mono mt-0.5 truncate">${escapeHtml(p.email || 'No email reported yet')}</p>
+            ${isExpired && p.lastError ? `
+              <p class="text-[10px] text-[var(--google-red)] font-mono mt-1 bg-[var(--m3-surface-container)] px-2 py-0.5 rounded border border-[var(--google-red)]/20 truncate max-w-sm" title="${escapeHtml(p.lastError)}">
+                ${escapeHtml(p.lastError)}
+              </p>
+            ` : ''}
           </div>
         </div>
 
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 shrink-0 self-end sm:self-center">
           <!-- Edit button -->
           <button
             type="button"
@@ -1886,10 +2056,14 @@ function renderAccountsModalList() {
             data-action="login"
             data-profile-id="${escapeHtml(p.id)}"
             title="Authenticate with Google Chrome"
-            class="btn-account-login google-btn-outlined px-2.5 py-1 text-xs font-medium cursor-pointer"
+            class="btn-account-login ${
+              isExpired
+                ? 'google-btn-primary bg-[var(--google-red)] hover:bg-[var(--google-red)]/90 text-white shadow-sm'
+                : 'google-btn-outlined'
+            } px-2.5 py-1 text-xs font-medium cursor-pointer flex items-center gap-1"
           >
-            <i data-lucide="log-in" class="w-3.5 h-3.5 inline text-[var(--m3-on-surface-subtle)] pointer-events-none"></i>
-            <span class="pointer-events-none">Login</span>
+            <i data-lucide="log-in" class="w-3.5 h-3.5 inline pointer-events-none ${isExpired ? 'text-white' : 'text-[var(--m3-on-surface-subtle)]'}"></i>
+            <span class="pointer-events-none">${isExpired ? 'Re-login' : 'Login'}</span>
           </button>
 
           <!-- Toggle Pro button -->
@@ -5579,3 +5753,9 @@ async function handleSyncFolderAction(action) {
     if (btnSyncStale) btnSyncStale.disabled = false;
   }
 }
+
+// Global window bindings for inline HTML event handlers
+window.handleTriggerLogin = handleTriggerLogin;
+window.handleSyncAll = handleSyncAll;
+window.renderAuthAlertBanner = renderAuthAlertBanner;
+

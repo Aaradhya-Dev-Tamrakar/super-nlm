@@ -74,12 +74,21 @@ def test_api():
     assert any(p["id"] == "test_renamed_account" for p in all_p)
     print("[OK] Verified renamed profile in profile list.")
 
-    # 6. Clean up test profile
+    # 6. Test profile health endpoint
+    res_health = client.get("/api/profiles/health")
+    assert res_health.status_code == 200, f"Expected 200, got {res_health.status_code}"
+    health_data = res_health.json()
+    assert "healthy" in health_data
+    assert "totalProfiles" in health_data
+    assert "expiredCount" in health_data
+    print(f"[OK] GET /api/profiles/health passed: healthy={health_data['healthy']}, expiredCount={health_data['expiredCount']}")
+
+    # 7. Clean up test profile
     res4 = client.delete("/api/profiles/test_renamed_account")
     assert res4.status_code == 200
     print("[OK] DELETE /api/profiles/test_renamed_account passed: Successfully removed test profile.")
 
-    # 7. Restore main profile default pro if main exists
+    # 8. Restore main profile default pro if main exists
     if any(p["id"] == "main" for p in all_p):
         client.put("/api/profiles/main", json={"isDefaultPro": True, "tier": "pro"})
 

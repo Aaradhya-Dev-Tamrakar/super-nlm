@@ -11,6 +11,8 @@ class AccountProfile(BaseModel):
     isDefaultPro: bool = Field(default=False, description="Whether this profile acts as the primary Pro AI engine")
     status: Literal["connected", "expired", "not_logged_in", "checking"] = "checking"
     notebookCount: int = Field(default=0, description="Total notebooks found in this account")
+    lastError: Optional[str] = Field(default=None, description="Last error encountered when syncing or querying this account")
+    lastAuthCheck: Optional[str] = Field(default=None, description="ISO timestamp of last authentication check")
 
 class ProfileCreateRequest(BaseModel):
     id: str = Field(..., min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_\-\s]+$', description="Alphanumeric slug or name")
