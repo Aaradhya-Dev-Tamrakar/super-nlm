@@ -53,7 +53,7 @@
     <div class="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
       
       <!-- Brand & Product Title (Gemini Notebook Style) -->
-      <div class="flex items-center gap-2 sm:gap-3">
+      <div class="flex items-center gap-2 sm:gap-2.5 shrink-0 whitespace-nowrap">
         <!-- Sidebar Toggle Button (Dock / Rail) -->
         <button
           id="btn-toggle-sidebar"
@@ -65,33 +65,31 @@
           <i data-lucide="panel-left" id="sidebar-toggle-icon" class="w-4 h-4 text-[var(--m3-on-surface-variant)]"></i>
         </button>
 
-        <div class="w-9 h-9 rounded-xl m3-subcard flex items-center justify-center shadow-sm shrink-0">
+        <div class="w-8 h-8 rounded-xl m3-subcard flex items-center justify-center shadow-xs shrink-0">
           <!-- Google 4-Color Quad Accent Dot -->
-          <div class="grid grid-cols-2 gap-1 p-1">
+          <div class="grid grid-cols-2 gap-0.5 p-1">
             <span class="w-1.5 h-1.5 rounded-full bg-[#8ab4f8]"></span>
             <span class="w-1.5 h-1.5 rounded-full bg-[#f28b82]"></span>
             <span class="w-1.5 h-1.5 rounded-full bg-[#81c995]"></span>
             <span class="w-1.5 h-1.5 rounded-full bg-[#fdd663]"></span>
           </div>
         </div>
-        <div>
-          <div class="flex items-center gap-2">
-            <span class="text-[17px] font-medium tracking-tight flex items-center gap-1.5">
-              Super-Gemini Notebook
-              <span class="text-[11px] font-normal text-[var(--google-blue)] px-2 py-0.5 rounded-full bg-[var(--google-blue-container)] border border-[var(--google-blue)]/20 font-mono hidden sm:inline-block">Hub v2.0</span>
-            </span>
-          </div>
+        <div class="flex items-center gap-1.5">
+          <span class="text-[15px] sm:text-[16px] font-semibold tracking-tight text-[var(--m3-on-surface)]">
+            Super-Gemini Notebook
+          </span>
+          <span class="text-[10px] font-medium text-[var(--google-blue)] px-2 py-0.5 rounded-full bg-[var(--google-blue-container)]/80 border border-[var(--google-blue)]/20 font-mono hidden sm:inline-block">Hub v2.0</span>
         </div>
       </div>
 
       <!-- Google Pill Search Bar -->
-      <div class="flex-1 max-w-xl relative hidden md:block">
-        <div class="google-search-pill flex items-center px-4 py-2 gap-2.5 cursor-text">
+      <div class="flex-1 max-w-md xl:max-w-lg relative hidden md:block mx-1">
+        <div class="google-search-pill flex items-center px-3.5 py-1.5 gap-2.5 cursor-text">
           <i data-lucide="search" class="w-4 h-4 text-[var(--m3-on-surface-subtle)] shrink-0"></i>
           <input
             type="text"
             id="search-input"
-            placeholder="Search notebooks, sources, accounts..."
+            placeholder="Search notebooks, sources, courses..."
             class="flex-1 min-w-0 bg-transparent text-xs text-[var(--m3-on-surface)] placeholder-[var(--m3-on-surface-subtle)] focus:outline-none font-sans"
             autocomplete="off"
             spellcheck="false"
@@ -106,19 +104,19 @@
             <i data-lucide="x" class="w-3.5 h-3.5"></i>
           </button>
           <!-- Shortcut Key Badge -->
-          <kbd id="search-shortcut-badge" class="hidden sm:inline-flex items-center gap-0.5 px-2 py-0.5 text-[10px] font-mono font-medium text-[var(--m3-on-surface-variant)] bg-[var(--m3-surface-container-lowest)] rounded-md border border-[var(--m3-outline-variant)]/70 whitespace-nowrap shrink-0 pointer-events-none select-none shadow-xs">
+          <kbd id="search-shortcut-badge" class="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-mono font-medium text-[var(--m3-on-surface-variant)] bg-[var(--m3-surface-container-lowest)] rounded-md border border-[var(--m3-outline-variant)]/70 whitespace-nowrap shrink-0 pointer-events-none select-none shadow-xs">
             Ctrl K
           </kbd>
         </div>
       </div>
 
       <!-- Header Action Buttons (Google Material Buttons) -->
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
         <!-- Sync Button -->
         <button
           id="btn-sync"
           title="Sync notebooks across all accounts"
-          class="google-btn-outlined flex items-center gap-1.5 px-3 py-1.5 text-xs"
+          class="google-btn-outlined flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs"
         >
           <i data-lucide="refresh-cw" id="sync-icon" class="w-3.5 h-3.5"></i>
           <span class="hidden sm:inline">Sync All</span>
@@ -127,58 +125,59 @@
         <!-- Cross Synthesis Button -->
         <button
           id="btn-open-cross-modal"
-          class="google-btn-tonal flex items-center gap-1.5 px-3 py-1.5 text-xs"
+          class="google-btn-tonal flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs"
+          title="Cross-Notebook Synthesis (Ctrl+Shift+S)"
         >
           <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
-          <span class="hidden sm:inline">Cross Synthesis</span>
+          <span class="hidden md:inline">Cross Synthesis</span>
         </button>
 
         <!-- Batch Share Button -->
         <button
           id="btn-open-batch-share-modal"
-          class="google-btn-outlined flex items-center gap-1.5 px-3 py-1.5 text-xs"
+          class="google-btn-outlined flex items-center gap-1.5 px-2.5 py-1.5 text-xs"
           title="Batch Share Notebooks Across Accounts"
         >
           <i data-lucide="share-2" class="w-3.5 h-3.5"></i>
-          <span class="hidden sm:inline">Batch Share</span>
+          <span class="hidden xl:inline">Batch Share</span>
         </button>
 
         <!-- Batch Creation & Scheduled Queue Button -->
         <button
           id="btn-open-scheduler-modal"
-          class="google-btn-outlined flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer relative"
+          class="google-btn-outlined flex items-center gap-1.5 px-2.5 py-1.5 text-xs cursor-pointer relative"
           title="Batch Creation & Rotation Queue (Q)"
         >
           <i data-lucide="clapperboard" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
-          <span class="hidden sm:inline">Batch Queue</span>
+          <span class="hidden xl:inline">Batch Queue</span>
           <span id="queue-active-badge" class="hidden text-[10px] font-bold font-mono px-1.5 py-0.2 rounded-full bg-[var(--google-blue-container)] text-[var(--google-blue)] border border-[var(--google-blue)]/30">0</span>
         </button>
 
         <!-- Account Usage Limits Button -->
         <button
           id="btn-open-usage-modal"
-          class="google-btn-outlined flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer"
+          class="google-btn-outlined flex items-center gap-1.5 px-2.5 py-1.5 text-xs cursor-pointer"
           title="Account Quotas & Usage Limits (U)"
         >
           <i data-lucide="gauge" class="w-3.5 h-3.5 text-[var(--google-blue)]"></i>
-          <span class="hidden sm:inline">Usage Limits</span>
+          <span class="hidden xl:inline">Usage Limits</span>
         </button>
 
         <button
           id="btn-open-auth-key-modal"
-          class="google-btn-outlined flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer"
+          class="google-btn-outlined flex items-center gap-1.5 px-2.5 py-1.5 text-xs cursor-pointer"
           title="Remote access key"
         >
           <i data-lucide="key-round" class="w-3.5 h-3.5 text-[var(--google-green)]"></i>
-          <span class="hidden sm:inline">Access Key</span>
-          <span id="auth-key-status" class="hidden sm:inline px-2 py-0.5 text-[10px] font-mono rounded-full bg-[var(--m3-surface-container)] text-[var(--m3-on-surface-subtle)]">Not set</span>
+          <span class="hidden xl:inline">Access Key</span>
+          <span id="auth-key-status" class="hidden 2xl:inline px-2 py-0.5 text-[10px] font-mono rounded-full bg-[var(--m3-surface-container)] text-[var(--m3-on-surface-subtle)]">Not set</span>
         </button>
 
         <!-- Accounts Manager -->
         <button
           id="btn-manage-accounts"
           title="Google Accounts Manager (A)"
-          class="google-btn-primary flex items-center gap-1.5 px-3.5 py-1.5 text-xs shadow-sm"
+          class="google-btn-primary flex items-center gap-1.5 px-3 py-1.5 text-xs shadow-xs"
         >
           <i data-lucide="users" class="w-3.5 h-3.5"></i>
           <span>Accounts (<span id="accounts-count">1</span>)</span>
@@ -422,35 +421,25 @@
       </section>
 
       <!-- MATERIAL 3 FILTER CONTROLS -->
-      <div class="space-y-3">
+      <div class="space-y-2.5">
         <!-- Account Filter Bar (Full width, wrapping chips - ALL accounts visible, NO scrolling) -->
-        <div class="flex items-center gap-2 flex-wrap" id="account-pills-container">
+        <div class="flex items-center gap-1.5 flex-wrap" id="account-pills-container">
           <!-- Populated with M3 chips: "All Accounts", "Personal", "Secondary", ... and "Add Account" -->
         </div>
 
         <!-- Category Filter & Workspace Metrics Bar -->
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2.5 border-t border-[var(--m3-outline-variant)]/60">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-2 border-t border-[var(--m3-outline-variant)]/60">
           <!-- Category / Study Filter Chips -->
           <div class="flex items-center gap-1.5 flex-wrap shrink-0" id="category-pills-container">
             <!-- Populated with M3 chips: "All", "🎓 Study Courses (6)", "🔬 Projects" -->
           </div>
 
-          <!-- Metrics and Tier Legend -->
-          <div class="flex items-center justify-between sm:justify-end gap-4 text-xs text-[var(--m3-on-surface-subtle)] px-1">
+          <!-- Metrics and Active Filter Label -->
+          <div class="flex items-center justify-between sm:justify-end gap-3 text-xs text-[var(--m3-on-surface-subtle)] px-1">
             <div class="flex items-center gap-2">
               <span>Showing <strong id="visible-count" class="text-[var(--m3-on-surface)] font-mono font-medium">0</strong> notebooks</span>
               <span class="text-[var(--m3-outline-variant)]">•</span>
               <span id="active-filter-label" class="text-[var(--m3-on-surface-variant)] font-medium">All Accounts</span>
-            </div>
-            <div class="hidden md:flex items-center gap-3 text-[11px]">
-              <span class="flex items-center gap-1.5">
-                <span class="w-2 h-2 rounded-full bg-[var(--google-yellow)]"></span>
-                <span class="text-[var(--m3-on-surface-variant)]">Pro AI Tier</span>
-              </span>
-              <span class="flex items-center gap-1.5">
-                <span class="w-2 h-2 rounded-full bg-[var(--m3-outline)]"></span>
-                <span class="text-[var(--m3-on-surface-subtle)]">Standard Tier</span>
-              </span>
             </div>
           </div>
         </div>

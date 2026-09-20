@@ -1425,13 +1425,15 @@ function toggleStudyFilter() {
 
 function createPill({ id, label, count, color, isActive, isPro, isExpired, email, lastError }) {
   const btn = document.createElement('button');
-  const baseClasses = 'm3-chip flex items-center gap-2 px-3.5 py-1.5 text-xs transition whitespace-nowrap cursor-pointer';
-  const activeClasses = isActive ? 'active' : 'hover:text-[var(--m3-on-surface)]';
+  const baseClasses = 'm3-chip flex items-center gap-1.5 px-3 py-1 text-xs transition whitespace-nowrap cursor-pointer';
+  const activeClasses = isActive ? 'active font-medium' : 'hover:text-[var(--m3-on-surface)]';
   const expiredClasses = isExpired ? 'auth-expired-pill border-[var(--google-red)]/50 text-[var(--google-red)]' : '';
 
   btn.className = `${baseClasses} ${activeClasses} ${expiredClasses}`;
   if (isExpired) {
     btn.title = `⚠️ Auth Expired for ${label} (${email || ''})${lastError ? ` - ${lastError}` : ''}. Click to filter or relogin.`;
+  } else if (isPro) {
+    btn.title = `${label} (${email || ''}) • Gemini Pro AI Tier`;
   }
   
   let dotHtml = '';
@@ -1444,8 +1446,8 @@ function createPill({ id, label, count, color, isActive, isPro, isExpired, email
   let badgeHtml = '';
   if (isExpired) {
     badgeHtml = `<span class="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-[var(--google-red-container)] text-[var(--google-red)] border border-[var(--google-red)]/30 flex items-center gap-0.5"><i data-lucide="alert-circle" class="w-2.5 h-2.5"></i> EXPIRED</span>`;
-  } else if (isPro) {
-    badgeHtml = `<span class="text-[9px] font-medium px-1.5 py-0.2 rounded-full bg-[var(--google-yellow-container)] text-[var(--google-yellow)] border border-[var(--google-yellow)]/30 flex items-center gap-1"><i data-lucide="sparkles" class="w-2.5 h-2.5 text-[var(--google-yellow)]"></i> PRO</span>`;
+  } else if (isPro && id !== 'all') {
+    badgeHtml = `<span class="text-[10px] text-[var(--google-yellow)] shrink-0" title="Pro AI Tier">✨</span>`;
   }
 
   btn.innerHTML = `
@@ -1768,7 +1770,7 @@ function renderNotebooksGrid() {
       >
         
         <!-- Top row: Selection Checkbox, Account Tag, Course Badge, Pro Tier Badge -->
-        <div class="flex items-center justify-between gap-2 mb-3 min-w-0">
+        <div class="flex items-center justify-between gap-2 mb-2.5 min-w-0">
           <div class="flex items-center gap-2 min-w-0 flex-1">
             <input
               type="checkbox"
@@ -1779,22 +1781,22 @@ function renderNotebooksGrid() {
               ${isSelected ? 'checked' : ''}
             >
             ${notebook.allProfiles && notebook.allProfiles.length > 1 ? `
-              <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)] min-w-0 max-w-full" title="${escapeHtml(notebook.allProfiles.map(p => p.profileName || p.profileId).join(' • '))}">
+              <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)] min-w-0 max-w-full" title="${escapeHtml(notebook.allProfiles.map(p => p.profileName || p.profileId).join(' • '))}">
                 <span class="flex items-center -space-x-1 shrink-0">
                   ${notebook.allProfiles.map(p => `<span class="w-2 h-2 rounded-full border border-[var(--m3-surface)]" style="background-color: ${p.color || '#3b82f6'}"></span>`).join('')}
                 </span>
                 <span class="truncate max-w-[85px] sm:max-w-[110px]">${escapeHtml(notebook.profileName)}</span>
-                <span class="text-[10px] text-[var(--google-blue)] font-medium font-mono bg-[var(--google-blue-container)]/50 px-1.5 py-0.2 rounded shrink-0" title="Shared across ${notebook.allProfiles.length} accounts">+${notebook.allProfiles.length - 1}</span>
+                <span class="text-[10px] text-[var(--google-blue)] font-medium font-mono bg-[var(--google-blue-container)]/50 px-1 py-0.2 rounded shrink-0" title="Shared across ${notebook.allProfiles.length} accounts">+${notebook.allProfiles.length - 1}</span>
               </span>
             ` : `
-              <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)] min-w-0 max-w-full">
+              <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)] min-w-0 max-w-full">
                 <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background-color: ${notebook.color}"></span>
                 <span class="truncate max-w-[110px] sm:max-w-[140px]">${escapeHtml(notebook.profileName)}</span>
               </span>
             `}
           </div>
 
-          <div class="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+          <div class="flex items-center gap-1.5 shrink-0 justify-end">
             ${isStudy && courseCode ? `
               <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-[var(--google-blue-container)]/70 text-[var(--google-blue)] border border-[var(--google-blue)]/30 font-mono tracking-tight shrink-0" title="Academic Course NLM: ${escapeHtml(courseCode)}">
                 <i data-lucide="graduation-cap" class="w-3 h-3 text-[var(--google-blue)] shrink-0"></i> ${escapeHtml(courseCode)}
@@ -1802,8 +1804,8 @@ function renderNotebooksGrid() {
             ` : ''}
 
             ${isPro ? `
-              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-[var(--google-yellow-container)]/50 text-[var(--google-yellow)] border border-[var(--google-yellow)]/30 shrink-0">
-                <i data-lucide="sparkles" class="w-3 h-3 text-[var(--google-yellow)] shrink-0"></i> PRO AI
+              <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium text-[var(--google-yellow)] bg-[var(--google-yellow-container)]/30 border border-[var(--google-yellow)]/20 shrink-0" title="Gemini Pro AI Tier">
+                <i data-lucide="sparkles" class="w-2.5 h-2.5 text-[var(--google-yellow)] shrink-0"></i> PRO
               </span>
             ` : `
               <span class="text-[10px] font-mono text-[var(--m3-on-surface-subtle)] shrink-0">${escapeHtml(notebook.profileId)}</span>
@@ -1812,17 +1814,17 @@ function renderNotebooksGrid() {
         </div>
 
         <!-- Notebook Title & Meta -->
-        <div class="mb-4 flex-1">
-          <h3 class="text-[15px] font-medium text-[var(--m3-on-surface)] group-hover:text-[var(--google-blue)] transition-colors line-clamp-2 leading-snug tracking-normal">
+        <div class="mb-3.5 flex-1">
+          <h3 class="text-[14px] sm:text-[15px] font-medium text-[var(--m3-on-surface)] group-hover:text-[var(--google-blue)] transition-colors line-clamp-2 leading-snug tracking-normal min-h-[38px]">
             ${highlightMatch(notebook.title, state.searchQuery)}
           </h3>
-          <div class="flex items-center gap-3 mt-2 text-xs text-[var(--m3-on-surface-subtle)]">
-            <span class="flex items-center gap-1.5">
+          <div class="flex items-center gap-2 mt-2 text-xs text-[var(--m3-on-surface-subtle)]">
+            <span class="flex items-center gap-1">
               <i data-lucide="file-text" class="w-3.5 h-3.5 text-[var(--m3-on-surface-subtle)]"></i>
               <span class="font-mono text-[var(--m3-on-surface)] font-medium">${notebook.source_count || 0}</span> sources
             </span>
             <span class="text-[var(--m3-outline-variant)]">•</span>
-            <span class="flex items-center gap-1.5">
+            <span class="flex items-center gap-1">
               <i data-lucide="clock" class="w-3.5 h-3.5 text-[var(--m3-on-surface-subtle)]"></i>
               <span>${dateFormatted}</span>
             </span>
@@ -1830,14 +1832,14 @@ function renderNotebooksGrid() {
         </div>
 
         <!-- Bottom Action Row -->
-        <div class="flex items-center justify-between pt-3 border-t border-[var(--m3-outline-variant)] gap-2">
+        <div class="flex items-center justify-between pt-2.5 border-t border-[var(--m3-outline-variant)] gap-2">
           <!-- Query Notebook Button -->
           <button
             type="button"
             data-id="${notebook.id}"
             data-profile="${notebook.profileId}"
             data-title="${escapeHtml(notebook.title)}"
-            class="btn-query-notebook google-btn-tonal flex items-center gap-1.5 px-3.5 py-1.5 text-xs shadow-sm cursor-pointer ${state.activeQueries.has(notebook.id) ? 'border-[var(--google-blue)]/50 bg-[var(--google-blue-container)]/30' : ''}"
+            class="btn-query-notebook google-btn-tonal flex items-center gap-1.5 px-3 py-1.5 text-xs shadow-xs cursor-pointer ${state.activeQueries.has(notebook.id) ? 'border-[var(--google-blue)]/50 bg-[var(--google-blue-container)]/30' : ''}"
           >
             ${state.activeQueries.has(notebook.id) ? `
               <div class="google-quad-dots scale-75 pointer-events-none">
@@ -1872,7 +1874,7 @@ function renderNotebooksGrid() {
               target="_blank"
               rel="noopener noreferrer"
               title="Open in official Gemini Notebook web interface"
-              class="google-btn-outlined flex items-center gap-1.5 text-xs text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] py-1 px-2.5"
+              class="google-btn-outlined flex items-center gap-1 text-xs text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] py-1 px-2"
             >
               <span>Open Web</span>
               <i data-lucide="external-link" class="w-3 h-3 text-[var(--m3-on-surface-subtle)]"></i>
@@ -4412,8 +4414,16 @@ function renderCalendarAgenda() {
   const badgeCountEl = document.getElementById('agenda-badge-count');
   
   if (subtitleEl) {
-    const email = agenda.calendar_email ? `${escapeHtml(agenda.calendar_email)} • ` : '';
-    subtitleEl.textContent = `${email}${agenda.today_count} scheduled today, ${agenda.upcoming_count} upcoming this week`;
+    let emailDisplay = '';
+    if (agenda.calendar_email) {
+      const email = String(agenda.calendar_email);
+      if (!email.includes('@group.calendar.google.com') && email.length <= 28) {
+        emailDisplay = `${escapeHtml(email)} • `;
+      }
+    }
+    const todayText = agenda.today_count === 1 ? '1 scheduled today' : `${agenda.today_count} scheduled today`;
+    const upcomingText = agenda.upcoming_count > 0 ? `, ${agenda.upcoming_count} upcoming this week` : '';
+    subtitleEl.textContent = `${emailDisplay}${todayText}${upcomingText}`;
   }
   if (badgeCountEl) {
     badgeCountEl.textContent = `${agenda.today_count} Today`;
@@ -4424,12 +4434,12 @@ function renderCalendarAgenda() {
   if (todayContainer) {
     if (!agenda.today_events || agenda.today_events.length === 0) {
       todayContainer.innerHTML = `
-        <div class="p-3.5 rounded-xl m3-subcard text-xs text-[var(--m3-on-surface-subtle)] flex items-center justify-between">
+        <div class="py-2.5 px-3.5 rounded-xl m3-subcard text-xs text-[var(--m3-on-surface-subtle)] flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <i data-lucide="check-circle-2" class="w-4 h-4 text-[var(--google-green)]"></i>
+            <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-[var(--google-green)]"></i>
             <span>No lectures or exams scheduled for today.</span>
           </div>
-          ${agenda.upcoming_count > 0 ? `<span class="text-[11px] text-[var(--google-blue)] font-medium">${agenda.upcoming_count} upcoming events this week</span>` : ''}
+          ${agenda.upcoming_count > 0 ? `<span class="text-[11px] text-[var(--google-blue)] font-medium">${agenda.upcoming_count} upcoming this week</span>` : ''}
         </div>
       `;
     } else {
