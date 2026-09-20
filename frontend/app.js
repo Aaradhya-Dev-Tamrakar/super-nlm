@@ -1849,14 +1849,14 @@ function renderNotebooksGrid() {
 
     return `
       <div 
-        class="m3-card animate-m3-stagger p-5 flex flex-col justify-between group relative overflow-hidden cursor-pointer ${isSelected ? 'selected' : ''}"
+        class="m3-card animate-m3-stagger p-3.5 sm:p-4.5 flex flex-col justify-between group relative overflow-hidden cursor-pointer ${isSelected ? 'selected' : ''}"
         data-id="${notebook.id}"
         style="animation-delay: ${Math.min(idx * 20, 200)}ms;"
       >
         
         <!-- Top row: Selection Checkbox, Account Tag, Course Badge, Pro Tier Badge -->
-        <div class="flex items-center justify-between gap-2 mb-2.5 min-w-0">
-          <div class="flex items-center gap-2 min-w-0 flex-1">
+        <div class="flex items-center justify-between gap-1.5 mb-2 min-w-0">
+          <div class="flex items-center gap-1.5 min-w-0 flex-1">
             <input
               type="checkbox"
               data-id="${notebook.id}"
@@ -1866,65 +1866,66 @@ function renderNotebooksGrid() {
               ${isSelected ? 'checked' : ''}
             >
             ${notebook.allProfiles && notebook.allProfiles.length > 1 ? `
-              <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)] min-w-0 max-w-full" title="${escapeHtml(notebook.allProfiles.map(p => p.profileName || p.profileId).join(' • '))}">
+              <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)] min-w-0 max-w-full" title="${escapeHtml(notebook.allProfiles.map(p => p.profileName || p.profileId).join(' • '))}">
                 <span class="flex items-center -space-x-1 shrink-0">
-                  ${notebook.allProfiles.map(p => `<span class="w-2 h-2 rounded-full border border-[var(--m3-surface)]" style="background-color: ${p.color || '#3b82f6'}"></span>`).join('')}
+                  ${notebook.allProfiles.map(p => `<span class="w-1.5 h-1.5 rounded-full border border-[var(--m3-surface)]" style="background-color: ${p.color || '#3b82f6'}"></span>`).join('')}
                 </span>
-                <span class="truncate max-w-[85px] sm:max-w-[110px]">${escapeHtml(notebook.profileName)}</span>
-                <span class="text-[10px] text-[var(--google-blue)] font-medium font-mono bg-[var(--google-blue-container)]/50 px-1 py-0.2 rounded shrink-0" title="Shared across ${notebook.allProfiles.length} accounts">+${notebook.allProfiles.length - 1}</span>
+                <span class="truncate max-w-[65px] sm:max-w-[100px]">${escapeHtml(notebook.profileName)}</span>
+                <span class="text-[9px] text-[var(--google-blue)] font-medium font-mono bg-[var(--google-blue-container)]/50 px-1 py-0.2 rounded shrink-0" title="Shared across ${notebook.allProfiles.length} accounts">+${notebook.allProfiles.length - 1}</span>
               </span>
             ` : `
-              <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)] min-w-0 max-w-full">
+              <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)] min-w-0 max-w-full">
                 <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background-color: ${notebook.color}"></span>
-                <span class="truncate max-w-[110px] sm:max-w-[140px]">${escapeHtml(notebook.profileName)}</span>
+                <span class="truncate max-w-[85px] sm:max-w-[125px]">${escapeHtml(notebook.profileName)}</span>
               </span>
             `}
           </div>
 
-          <div class="flex items-center gap-1.5 shrink-0 justify-end">
+          <div class="flex items-center gap-1 shrink-0 justify-end">
             ${isStudy && courseCode ? `
-              <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-[var(--google-blue-container)]/70 text-[var(--google-blue)] border border-[var(--google-blue)]/30 font-mono tracking-tight shrink-0" title="Academic Course NLM: ${escapeHtml(courseCode)}">
-                <i data-lucide="graduation-cap" class="w-3 h-3 text-[var(--google-blue)] shrink-0"></i> ${escapeHtml(courseCode)}
+              <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-medium bg-[var(--google-blue-container)]/70 text-[var(--google-blue)] border border-[var(--google-blue)]/30 font-mono tracking-tight shrink-0" title="Academic Course NLM: ${escapeHtml(courseCode)}">
+                <i data-lucide="graduation-cap" class="w-2.5 h-2.5 text-[var(--google-blue)] shrink-0"></i> ${escapeHtml(courseCode)}
               </span>
             ` : ''}
 
             ${isPro ? `
-              <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium text-[var(--google-yellow)] bg-[var(--google-yellow-container)]/30 border border-[var(--google-yellow)]/20 shrink-0" title="Gemini Pro AI Tier">
+              <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-medium text-[var(--google-yellow)] bg-[var(--google-yellow-container)]/30 border border-[var(--google-yellow)]/20 shrink-0" title="Gemini Pro AI Tier">
                 <i data-lucide="sparkles" class="w-2.5 h-2.5 text-[var(--google-yellow)] shrink-0"></i> PRO
               </span>
             ` : `
-              <span class="text-[10px] font-mono text-[var(--m3-on-surface-subtle)] shrink-0">${escapeHtml(notebook.profileId)}</span>
+              <span class="text-[9px] sm:text-[10px] font-mono text-[var(--m3-on-surface-subtle)] shrink-0">${escapeHtml(notebook.profileId)}</span>
             `}
           </div>
         </div>
 
         <!-- Notebook Title & Meta -->
-        <div class="mb-3.5 flex-1">
-          <h3 class="text-[14px] sm:text-[15px] font-medium text-[var(--m3-on-surface)] group-hover:text-[var(--google-blue)] transition-colors line-clamp-2 leading-snug tracking-normal min-h-[38px]">
+        <div class="mb-3 flex-1 min-w-0">
+          <h3 class="text-[13px] sm:text-[14px] font-medium text-[var(--m3-on-surface)] group-hover:text-[var(--google-blue)] transition-colors line-clamp-2 leading-snug tracking-tight min-h-[36px]">
             ${highlightMatch(notebook.title, state.searchQuery)}
           </h3>
-          <div class="flex items-center gap-2 mt-2 text-xs text-[var(--m3-on-surface-subtle)]">
-            <span class="flex items-center gap-1">
-              <i data-lucide="file-text" class="w-3.5 h-3.5 text-[var(--m3-on-surface-subtle)]"></i>
+          <div class="flex items-center gap-1.5 mt-1.5 text-[11px] text-[var(--m3-on-surface-subtle)]">
+            <span class="flex items-center gap-1 shrink-0">
+              <i data-lucide="file-text" class="w-3 h-3 text-[var(--m3-on-surface-subtle)]"></i>
               <span class="font-mono text-[var(--m3-on-surface)] font-medium">${notebook.source_count || 0}</span> sources
             </span>
-            <span class="text-[var(--m3-outline-variant)]">•</span>
-            <span class="flex items-center gap-1">
-              <i data-lucide="clock" class="w-3.5 h-3.5 text-[var(--m3-on-surface-subtle)]"></i>
-              <span>${dateFormatted}</span>
+            <span class="text-[var(--m3-outline-variant)] shrink-0">•</span>
+            <span class="flex items-center gap-1 truncate">
+              <i data-lucide="clock" class="w-3 h-3 text-[var(--m3-on-surface-subtle)] shrink-0"></i>
+              <span class="truncate">${dateFormatted}</span>
             </span>
           </div>
         </div>
 
         <!-- Bottom Action Row -->
-        <div class="flex items-center justify-between pt-2.5 border-t border-[var(--m3-outline-variant)] gap-2">
+        <div class="flex items-center justify-between pt-2 border-t border-[var(--m3-outline-variant)] gap-1.5 min-w-0">
           <!-- Query Notebook Button -->
           <button
             type="button"
             data-id="${notebook.id}"
             data-profile="${notebook.profileId}"
             data-title="${escapeHtml(notebook.title)}"
-            class="btn-query-notebook google-btn-tonal flex items-center gap-1.5 px-3 py-1.5 text-xs shadow-xs cursor-pointer ${state.activeQueries.has(notebook.id) ? 'border-[var(--google-blue)]/50 bg-[var(--google-blue-container)]/30' : ''}"
+            class="btn-query-notebook google-btn-tonal flex items-center gap-1 px-2.5 py-1 text-xs shadow-xs cursor-pointer shrink-0 ${state.activeQueries.has(notebook.id) ? 'border-[var(--google-blue)]/50 bg-[var(--google-blue-container)]/30' : ''}"
+            title="Ask or query notebook contents"
           >
             ${state.activeQueries.has(notebook.id) ? `
               <div class="google-quad-dots scale-75 pointer-events-none">
@@ -1933,21 +1934,21 @@ function renderNotebooksGrid() {
                 <span class="google-quad-dot"></span>
                 <span class="google-quad-dot"></span>
               </div>
-              <span class="pointer-events-none text-[var(--google-blue)] font-medium">Synthesizing...</span>
+              <span class="pointer-events-none text-[var(--google-blue)] font-medium text-[11px]">Synthesizing...</span>
             ` : `
-              <i data-lucide="message-square" class="w-3.5 h-3.5 pointer-events-none"></i>
-              <span class="pointer-events-none">Query</span>
+              <i data-lucide="message-square" class="w-3 h-3 pointer-events-none"></i>
+              <span class="pointer-events-none text-[11px] font-medium">Query</span>
             `}
           </button>
 
-          <div class="flex items-center gap-1.5 shrink-0">
+          <div class="flex items-center gap-1 shrink-0">
             <!-- Folder Sync Button -->
             <button
               type="button"
               data-id="${notebook.id}"
               data-title="${escapeHtml(notebook.title)}"
               title="${mapping ? `Mapped to ${escapeHtml(mapping.display_name || mapping.target_path)}` : 'Map Course Folder or Google Drive'}"
-              class="btn-open-folder-modal google-btn-outlined flex items-center gap-1 text-xs py-1 px-2.5 cursor-pointer ${mapping ? 'text-[var(--google-blue)] border-[var(--google-blue)]/40 bg-[var(--google-blue-container)]/10 font-medium' : 'text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)]'}"
+              class="btn-open-folder-modal google-btn-outlined flex items-center gap-1 text-[11px] py-1 px-2 cursor-pointer ${mapping ? 'text-[var(--google-blue)] border-[var(--google-blue)]/40 bg-[var(--google-blue-container)]/10 font-medium' : 'text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)]'}"
             >
               <i data-lucide="${mapping ? (mapping.folder_type === 'drive_web' ? 'cloud' : 'folder-check') : 'folder'}" class="w-3 h-3"></i>
               <span>${mapping ? 'Folder' : 'Map'}</span>
@@ -1959,10 +1960,11 @@ function renderNotebooksGrid() {
               target="_blank"
               rel="noopener noreferrer"
               title="Open in official Gemini Notebook web interface"
-              class="google-btn-outlined flex items-center gap-1 text-xs text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] py-1 px-2"
+              class="google-btn-outlined flex items-center gap-1 text-[11px] text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] py-1 px-2"
             >
-              <span>Open Web</span>
-              <i data-lucide="external-link" class="w-3 h-3 text-[var(--m3-on-surface-subtle)]"></i>
+              <span class="hidden sm:inline">Web</span>
+              <span class="sm:hidden">Web</span>
+              <i data-lucide="external-link" class="w-2.5 h-2.5 text-[var(--m3-on-surface-subtle)]"></i>
             </a>
           </div>
         </div>

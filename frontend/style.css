@@ -933,6 +933,21 @@ html.dark .m3-menu-item.active {
   }
 }
 
+/* Fluid adaptive layout for Notebooks Grid based on available space */
+#notebooks-grid,
+#skeleton-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+}
+
+@media (min-width: 1024px) and (max-width: 1399px) {
+  /* When both sidebars are active on standard desktops (1024px-1399px), guarantee minimum 280px card breathing room */
+  #notebooks-grid,
+  #skeleton-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  }
+}
+
+
 /* ==========================================================================
    Account Quota & Usage Limits Styling
    ========================================================================== */
