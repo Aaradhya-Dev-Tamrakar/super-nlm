@@ -29,6 +29,8 @@ Thumbs.db
 # Local data cache
 data/*.json
 data/*.tmp
+data/*.pid
+*.pid
 !data/.gitkeep
 
 # Studio Artifact Downloads
