@@ -23,7 +23,46 @@ let state = {
   activeFolderNotebookId: null,
   activeFolderStatus: null,
   isFolderSyncing: false,
+  chatDrafts: new Map(), // key: notebookId, value: draft message string
+  crossSynthesis: {
+    prompt: '',
+    inFlight: false,
+    startTime: null,
+    timerInterval: null,
+    selectedNotebooks: [],
+    data: null,
+    error: null,
+  },
 };
+
+function saveCrossSynthesisToSession() {
+  try {
+    const payload = {
+      prompt: state.crossSynthesis.prompt || '',
+      selectedNotebooks: state.crossSynthesis.selectedNotebooks || [],
+      data: state.crossSynthesis.data || null,
+      error: state.crossSynthesis.error || null
+    };
+    sessionStorage.setItem('super_nlm_cross_synthesis', JSON.stringify(payload));
+  } catch (e) {}
+}
+
+function loadCrossSynthesisFromSession() {
+  try {
+    const saved = sessionStorage.getItem('super_nlm_cross_synthesis');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed) {
+        state.crossSynthesis.prompt = parsed.prompt || '';
+        state.crossSynthesis.selectedNotebooks = parsed.selectedNotebooks || [];
+        state.crossSynthesis.data = parsed.data || null;
+        state.crossSynthesis.error = parsed.error || null;
+      }
+    }
+  } catch (e) {}
+}
+
+loadCrossSynthesisFromSession();
 
 // ----------------- COURSE & STUDY CLASSIFICATION -----------------
 const COURSE_NOTEBOOK_IDS = new Set([
@@ -415,7 +454,14 @@ function setupEventListeners() {
     const el = document.getElementById(id);
     if (el) {
       el.addEventListener('click', (e) => {
-        if (e.target === el) closeModal(id);
+        if (e.target === el) {
+          if (id === 'modal-cross' && state.crossSynthesis && state.crossSynthesis.inFlight) {
+            showToast('Cross synthesis is continuing in background. Click Cross Synthesis to reopen.', 'info');
+          } else if (id === 'modal-chat' && state.activeChat && state.activeQueries.has(state.activeChat.notebookId)) {
+            showToast('Query is generating in background. Click Query Notebook to reopen.', 'info');
+          }
+          closeModal(id);
+        }
       });
     }
   });
@@ -592,6 +638,11 @@ function setupEventListeners() {
   if (chatForm) chatForm.addEventListener('submit', handleChatSubmit);
   const chatInput = document.getElementById('chat-input');
   if (chatInput) {
+    chatInput.addEventListener('input', () => {
+      if (state.activeChat && state.activeChat.notebookId) {
+        state.chatDrafts.set(state.activeChat.notebookId, chatInput.value);
+      }
+    });
     chatInput.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
@@ -611,6 +662,8 @@ function setupEventListeners() {
   if (openCrossBtn) openCrossBtn.addEventListener('click', openCrossSynthesisModal);
   const closeCrossBtn = document.getElementById('close-modal-cross');
   if (closeCrossBtn) closeCrossBtn.addEventListener('click', () => closeModal('modal-cross'));
+  const resetCrossBtn = document.getElementById('btn-reset-cross');
+  if (resetCrossBtn) resetCrossBtn.addEventListener('click', handleResetCrossSynthesis);
   const synthSelectedBtn = document.getElementById('btn-synthesize-selected');
   if (synthSelectedBtn) synthSelectedBtn.addEventListener('click', openCrossSynthesisModal);
   const clearSelectionBtn = document.getElementById('btn-clear-selection');
@@ -619,6 +672,10 @@ function setupEventListeners() {
   if (runCrossBtn) runCrossBtn.addEventListener('click', handleRunCrossSynthesis);
   const crossPromptInput = document.getElementById('cross-prompt-input');
   if (crossPromptInput) {
+    crossPromptInput.addEventListener('input', () => {
+      state.crossSynthesis.prompt = crossPromptInput.value;
+      saveCrossSynthesisToSession();
+    });
     crossPromptInput.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
@@ -2754,6 +2811,7 @@ window.openChatModal = function(notebookId, profileId, title) {
     if (chatInput) {
       chatInput.disabled = false;
       chatInput.placeholder = "Ask a question about this notebook's sources...";
+      chatInput.value = state.chatDrafts.get(notebookId) || '';
     }
     if (sendBtn) {
       sendBtn.disabled = false;
@@ -2782,6 +2840,10 @@ function handleClearCurrentChat() {
   stopThinkingTimer(notebookId);
   clearNotebookChatHistory(notebookId);
   state.conversationIds.delete(notebookId);
+  state.chatDrafts.delete(notebookId);
+
+  const input = document.getElementById('chat-input');
+  if (input) input.value = '';
 
   const profileSelect = document.getElementById('chat-profile-select');
   const activeProf = (profileSelect && profileSelect.value) || profileId;
@@ -2816,6 +2878,9 @@ async function handleChatSubmit(e) {
   const input = document.getElementById('chat-input');
   const question = input ? input.value.trim() : '';
   if (!question) return;
+
+  state.chatDrafts.delete(notebookId);
+  if (input) input.value = '';
 
   const thread = document.getElementById('chat-thread');
   const sendBtn = document.getElementById('btn-chat-send');
@@ -3009,46 +3074,187 @@ function resetChatInputState() {
 
 let lastCrossSynthesisResult = null;
 
+function renderCrossSynthesisResults(data) {
+  const resultsBody = document.getElementById('cross-results-body');
+  if (!resultsBody || !data) return;
+
+  let renderedHtml = '';
+  if (data.isSynthesized && data.synthesizedBrief) {
+    renderedHtml = `
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-[var(--m3-outline-variant)]">
+        <div class="flex items-center gap-2">
+          <span class="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[var(--google-blue-container)] text-[var(--google-blue)] flex items-center gap-1.5 shadow-sm">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+            Pro AI Unified Synthesis
+          </span>
+          <span class="text-[10px] font-mono text-[var(--m3-on-surface-subtle)] bg-[var(--m3-surface-container-high)] px-2 py-0.5 rounded-md border border-[var(--m3-outline-variant)]">
+            ${escapeHtml(data.synthesisModel || 'gemini-2.5-flash')}
+          </span>
+        </div>
+        <span class="text-[11px] text-[var(--google-green)] flex items-center gap-1 font-medium">
+          <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> Reconciled across ${data.notebookResults?.length || 0} notebook(s)
+        </span>
+      </div>
+      <div class="nlm-markdown text-xs leading-relaxed space-y-3 font-sans text-[var(--m3-on-surface)]">
+        ${renderMarkdown(data.synthesizedBrief)}
+      </div>
+      <details class="mt-6 pt-3.5 border-t border-[var(--m3-outline-variant)]/60 group">
+        <summary class="text-[11px] font-medium text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-blue)] cursor-pointer select-none flex items-center gap-2 transition py-1">
+          <i data-lucide="chevron-right" class="w-3.5 h-3.5 transition-transform group-open:rotate-90"></i>
+          <span>Inspect Raw Source Extracts (${data.notebookResults?.length || 0} Notebooks)</span>
+        </summary>
+        <div class="mt-3 p-4 rounded-xl bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] text-xs nlm-markdown space-y-3">
+          ${renderMarkdown(data.combinedContext || 'No raw context available.')}
+        </div>
+      </details>
+    `;
+  } else {
+    const fallbackNotice = data.synthesisError 
+      ? `<div class="p-3 rounded-xl bg-[var(--google-yellow-container)]/30 border border-[var(--google-yellow)]/40 text-xs text-[var(--m3-on-surface)] mb-3 flex items-center gap-2">
+           <i data-lucide="alert-circle" class="w-4 h-4 text-[var(--google-yellow)] shrink-0"></i>
+           <span>Stage 2 LLM synthesis was skipped or unavailable (${escapeHtml(data.synthesisError)}). Displaying raw parallel extractions below.</span>
+         </div>`
+      : '';
+    renderedHtml = `
+      ${fallbackNotice}
+      <div class="nlm-markdown text-xs leading-relaxed font-sans text-[var(--m3-on-surface)]">
+        ${renderMarkdown(data.combinedContext || 'No synthesis produced.')}
+      </div>
+    `;
+  }
+
+  resultsBody.innerHTML = renderedHtml;
+  resultsBody.setAttribute('data-raw-markdown', data.synthesizedBrief || data.combinedContext || '');
+  if (window.lucide) lucide.createIcons({ root: resultsBody });
+}
+
+function handleResetCrossSynthesis() {
+  if (state.crossSynthesis.inFlight) {
+    showToast('Synthesis is currently in progress. Please wait for completion before resetting.', 'warning');
+    return;
+  }
+  state.crossSynthesis = {
+    prompt: '',
+    inFlight: false,
+    startTime: null,
+    timerInterval: null,
+    selectedNotebooks: [],
+    data: null,
+    error: null,
+  };
+  lastCrossSynthesisResult = null;
+  try {
+    sessionStorage.removeItem('super_nlm_cross_synthesis');
+  } catch (e) {}
+
+  const promptInput = document.getElementById('cross-prompt-input');
+  if (promptInput) promptInput.value = '';
+  const resultsContainer = document.getElementById('cross-results-container');
+  if (resultsContainer) resultsContainer.classList.add('hidden');
+  const resultsBody = document.getElementById('cross-results-body');
+  if (resultsBody) {
+    resultsBody.innerHTML = '';
+    resultsBody.removeAttribute('data-raw-markdown');
+  }
+  const loadingState = document.getElementById('cross-loading-state');
+  if (loadingState) loadingState.classList.add('hidden');
+
+  const btn = document.getElementById('btn-run-cross-synthesis');
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="sparkles" class="w-3.5 h-3.5"></i> <span>Execute Multi-Account Synthesis</span>';
+    if (window.lucide) lucide.createIcons({ root: btn });
+  }
+  showToast('Synthesis workspace reset.', 'info');
+}
+
 function openCrossSynthesisModal() {
   const container = document.getElementById('cross-notebooks-chips');
   const selected = Array.from(state.selectedNotebooks.values());
 
-  if (selected.length === 0) {
+  if (selected.length === 0 && (!state.crossSynthesis.selectedNotebooks || state.crossSynthesis.selectedNotebooks.length === 0)) {
     showToast('Select at least 2 notebooks from different accounts first.', 'info');
     return;
   }
 
-  container.innerHTML = selected.map(n => `
-    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs m3-subcard shadow-sm">
-      <span class="font-mono text-[var(--google-blue)] text-[10px] font-medium">${escapeHtml(n.profileId)}</span>
-      <span class="text-[var(--m3-outline-variant)]">:</span>
-      <strong class="font-medium tracking-normal text-[var(--m3-on-surface)]">${escapeHtml(n.title)}</strong>
-    </span>
-  `).join('');
+  // Use current selection if available, else keep prior saved synthesis selection
+  const activeList = selected.length > 0 ? selected : state.crossSynthesis.selectedNotebooks;
+  state.crossSynthesis.selectedNotebooks = activeList;
+
+  if (container) {
+    container.innerHTML = activeList.map(n => `
+      <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs m3-subcard shadow-sm">
+        <span class="font-mono text-[var(--google-blue)] text-[10px] font-medium">${escapeHtml(n.profileId)}</span>
+        <span class="text-[var(--m3-outline-variant)]">:</span>
+        <strong class="font-medium tracking-normal text-[var(--m3-on-surface)]">${escapeHtml(n.title)}</strong>
+      </span>
+    `).join('');
+  }
+
+  const promptInput = document.getElementById('cross-prompt-input');
+  if (promptInput && state.crossSynthesis.prompt && !promptInput.value) {
+    promptInput.value = state.crossSynthesis.prompt;
+  }
 
   const loadingState = document.getElementById('cross-loading-state');
-  if (loadingState) loadingState.classList.add('hidden');
-  document.getElementById('cross-results-container').classList.add('hidden');
-  document.getElementById('cross-results-body').textContent = '';
+  const resultsContainer = document.getElementById('cross-results-container');
+  const btn = document.getElementById('btn-run-cross-synthesis');
+
+  if (state.crossSynthesis.inFlight) {
+    if (loadingState) loadingState.classList.remove('hidden');
+    if (resultsContainer) resultsContainer.classList.add('hidden');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> <span>Synthesizing across accounts...</span>';
+      if (window.lucide) lucide.createIcons({ root: btn });
+    }
+  } else if (state.crossSynthesis.data) {
+    if (loadingState) loadingState.classList.add('hidden');
+    if (resultsContainer) resultsContainer.classList.remove('hidden');
+    renderCrossSynthesisResults(state.crossSynthesis.data);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i data-lucide="sparkles" class="w-3.5 h-3.5"></i> <span>Re-execute Multi-Account Synthesis</span>';
+      if (window.lucide) lucide.createIcons({ root: btn });
+    }
+  } else {
+    if (loadingState) loadingState.classList.add('hidden');
+    if (resultsContainer) resultsContainer.classList.add('hidden');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i data-lucide="sparkles" class="w-3.5 h-3.5"></i> <span>Execute Multi-Account Synthesis</span>';
+      if (window.lucide) lucide.createIcons({ root: btn });
+    }
+  }
+
   openModal('modal-cross');
+  if (window.lucide) lucide.createIcons();
 }
 
 async function handleRunCrossSynthesis() {
-  const prompt = document.getElementById('cross-prompt-input').value.trim();
+  const promptInput = document.getElementById('cross-prompt-input');
+  const prompt = promptInput ? promptInput.value.trim() : '';
   if (!prompt) {
     showToast('Please enter a synthesis prompt or research goal.', 'info');
     return;
   }
 
   const selected = Array.from(state.selectedNotebooks.values());
+  const targetNotebooks = selected.length > 0 ? selected : state.crossSynthesis.selectedNotebooks;
+  if (!targetNotebooks || targetNotebooks.length === 0) {
+    showToast('Please select at least 2 notebooks to synthesize.', 'warning');
+    return;
+  }
+
   const btn = document.getElementById('btn-run-cross-synthesis');
-  btn.disabled = true;
-  btn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> <span>Synthesizing across accounts...</span>';
-  if (window.lucide) lucide.createIcons({ root: btn });
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> <span>Synthesizing across accounts...</span>';
+    if (window.lucide) lucide.createIcons({ root: btn });
+  }
 
   const loadingState = document.getElementById('cross-loading-state');
   const resultsContainer = document.getElementById('cross-results-container');
-  const resultsBody = document.getElementById('cross-results-body');
   const timerEl = document.getElementById('cross-elapsed-timer');
 
   const step1 = document.getElementById('cross-step-1');
@@ -3075,8 +3281,18 @@ async function handleRunCrossSynthesis() {
 
   setGlobalLoading(true);
 
-  const startTime = Date.now();
-  const timerInterval = setInterval(() => {
+  state.crossSynthesis.inFlight = true;
+  state.crossSynthesis.prompt = prompt;
+  state.crossSynthesis.startTime = Date.now();
+  state.crossSynthesis.selectedNotebooks = targetNotebooks;
+  state.crossSynthesis.data = null;
+  state.crossSynthesis.error = null;
+  saveCrossSynthesisToSession();
+
+  const startTime = state.crossSynthesis.startTime;
+  if (state.crossSynthesis.timerInterval) clearInterval(state.crossSynthesis.timerInterval);
+
+  state.crossSynthesis.timerInterval = setInterval(() => {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     if (timerEl) timerEl.textContent = `${elapsed}s`;
 
@@ -3103,88 +3319,54 @@ async function handleRunCrossSynthesis() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        notebooks: selected,
+        notebooks: targetNotebooks,
         question: prompt
       })
     });
 
     if (res.ok) {
       const data = await res.json();
-      
-      let renderedHtml = '';
-      if (data.isSynthesized && data.synthesizedBrief) {
-        renderedHtml = `
-          <div class="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-[var(--m3-outline-variant)]">
-            <div class="flex items-center gap-2">
-              <span class="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-[var(--google-blue-container)] text-[var(--google-blue)] flex items-center gap-1.5 shadow-sm">
-                <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
-                Pro AI Unified Synthesis
-              </span>
-              <span class="text-[10px] font-mono text-[var(--m3-on-surface-subtle)] bg-[var(--m3-surface-container-high)] px-2 py-0.5 rounded-md border border-[var(--m3-outline-variant)]">
-                ${data.synthesisModel || 'gemini-2.5-flash'}
-              </span>
-            </div>
-            <span class="text-[11px] text-[var(--google-green)] flex items-center gap-1 font-medium">
-              <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> Reconciled across ${data.notebookResults?.length || 0} notebook(s)
-            </span>
-          </div>
-          <div class="nlm-markdown text-xs leading-relaxed space-y-3 font-sans text-[var(--m3-on-surface)]">
-            ${renderMarkdown(data.synthesizedBrief)}
-          </div>
-          <details class="mt-6 pt-3.5 border-t border-[var(--m3-outline-variant)]/60 group">
-            <summary class="text-[11px] font-medium text-[var(--m3-on-surface-subtle)] hover:text-[var(--google-blue)] cursor-pointer select-none flex items-center gap-2 transition py-1">
-              <i data-lucide="chevron-right" class="w-3.5 h-3.5 transition-transform group-open:rotate-90"></i>
-              <span>Inspect Raw Source Extracts (${data.notebookResults?.length || 0} Notebooks)</span>
-            </summary>
-            <div class="mt-3 p-4 rounded-xl bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] text-xs nlm-markdown space-y-3">
-              ${renderMarkdown(data.combinedContext || 'No raw context available.')}
-            </div>
-          </details>
-        `;
-      } else {
-        const fallbackNotice = data.synthesisError 
-          ? `<div class="p-3 rounded-xl bg-[var(--google-yellow-container)]/30 border border-[var(--google-yellow)]/40 text-xs text-[var(--m3-on-surface)] mb-3 flex items-center gap-2">
-               <i data-lucide="alert-circle" class="w-4 h-4 text-[var(--google-yellow)] shrink-0"></i>
-               <span>Stage 2 LLM synthesis was skipped or unavailable (${data.synthesisError}). Displaying raw parallel extractions below.</span>
-             </div>`
-          : '';
-        renderedHtml = `
-          ${fallbackNotice}
-          <div class="nlm-markdown text-xs leading-relaxed font-sans text-[var(--m3-on-surface)]">
-            ${renderMarkdown(data.combinedContext || 'No synthesis produced.')}
-          </div>
-        `;
-      }
+      state.crossSynthesis.inFlight = false;
+      state.crossSynthesis.data = data;
+      state.crossSynthesis.error = null;
 
       lastCrossSynthesisResult = {
         ...data,
         prompt: prompt,
-        notebooks: selected,
+        notebooks: targetNotebooks,
         timestamp: new Date().toLocaleString()
       };
+      saveCrossSynthesisToSession();
 
-      if (resultsBody) {
-        resultsBody.innerHTML = renderedHtml;
-        resultsBody.setAttribute('data-raw-markdown', data.synthesizedBrief || data.combinedContext || '');
-      }
       if (loadingState) loadingState.classList.add('hidden');
       if (resultsContainer) resultsContainer.classList.remove('hidden');
-      if (window.lucide) lucide.createIcons({ root: resultsBody });
+      renderCrossSynthesisResults(data);
       showToast('Cross-account synthesis completed successfully.', 'success');
     } else {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
+      state.crossSynthesis.inFlight = false;
+      state.crossSynthesis.error = err.detail || 'Failed to synthesize';
+      saveCrossSynthesisToSession();
       if (loadingState) loadingState.classList.add('hidden');
       showToast('Synthesis error: ' + (err.detail || 'Failed to synthesize'), 'error');
     }
   } catch (err) {
+    state.crossSynthesis.inFlight = false;
+    state.crossSynthesis.error = err.message;
+    saveCrossSynthesisToSession();
     if (loadingState) loadingState.classList.add('hidden');
     showToast('Error: ' + err.message, 'error');
   } finally {
-    clearInterval(timerInterval);
+    if (state.crossSynthesis.timerInterval) {
+      clearInterval(state.crossSynthesis.timerInterval);
+      state.crossSynthesis.timerInterval = null;
+    }
     setGlobalLoading(false);
-    btn.disabled = false;
-    btn.innerHTML = '<i data-lucide="sparkles" class="w-3.5 h-3.5"></i> <span>Execute Multi-Account Synthesis</span>';
-    if (window.lucide) lucide.createIcons({ root: btn });
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i data-lucide="sparkles" class="w-3.5 h-3.5"></i> <span>Re-execute Multi-Account Synthesis</span>';
+      if (window.lucide) lucide.createIcons({ root: btn });
+    }
   }
 }
 

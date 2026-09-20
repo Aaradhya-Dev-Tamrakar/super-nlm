@@ -311,6 +311,19 @@ async def query_notebook(
         if not err_msg:
             err_msg = clean_stderr or clean_stdout or "Query failed or timed out"
 
+        # If a conversational query failed due to expired/stale conversation_id, retry once fresh
+        if conversation_id and not new_conversation and any(k in err_msg.lower() for k in ["conversation", "session", "expired", "invalid", "not found"]):
+            logger.warning(f"[Query Notebook] Stale conversation_id {conversation_id} failed ({err_msg}). Retrying with fresh session...")
+            return await query_notebook(
+                profile_id=profile_id,
+                notebook_id=notebook_id,
+                question=question,
+                conversation_id=None,
+                source_ids=source_ids,
+                timeout=timeout,
+                new_conversation=True
+            )
+
         return {
             "success": False,
             "error": err_msg,
@@ -737,12 +750,16 @@ async def synthesize_with_gemini(
 
     system_instruction = (
         "You are the Super-NLM Cross-Notebook Intelligence Synthesizer. "
-        "Your role is to perform a comprehensive, unified synthesis across independent Google NotebookLM notebooks. "
+        "Your role is to perform a rigorous, deterministic, and unified synthesis across independent Google NotebookLM notebooks. "
         "Resolve overlapping or conflicting statements, de-duplicate shared insights, "
         "highlight key differences or unique findings from each notebook, and maintain strict factual grounding "
-        "with explicit attribution (e.g. `[Notebook Title]`). "
-        "Format your output cleanly in GitHub-flavored markdown with an Executive Summary, Key Reconciled Findings / Diffs, "
-        "and Actionable Takeaways."
+        "with explicit attribution (e.g. `[Notebook Title]`).\n\n"
+        "Structure your output strictly in clean GitHub-flavored Markdown using these exact section headers:\n"
+        "# 📑 Executive Synthesis Brief\n"
+        "## 🔍 1. Key Reconciled Findings & Consensus\n"
+        "## ⚖️ 2. Cross-Notebook Comparison & Matrix\n"
+        "## 💡 3. Divergences & Unique Source Insights\n"
+        "## 🎯 4. Actionable Takeaways & Next Steps"
     )
 
     user_prompt = (
@@ -752,21 +769,23 @@ async def synthesize_with_gemini(
         f"--- SYNTHESIS REQUIREMENTS ---\n"
         f"1. Directly answer the user's research goal by synthesizing insights across all provided notebooks into a unified report.\n"
         f"2. Explicitly reconcile consensus vs. distinct points between notebooks.\n"
-        f"3. Cite or attribute data points, file names, statistics, and claims to their source notebook.\n"
-        f"4. Eliminate redundant filler or repetitious boilerplate.\n"
-        f"5. Maintain high information density and professional technical rigor."
+        f"3. Include a comparative markdown table in Section 2 highlighting key parameters or positions across sources.\n"
+        f"4. Cite or attribute data points, file names, statistics, and claims to their source notebook.\n"
+        f"5. Eliminate redundant filler or repetitious boilerplate.\n"
+        f"6. Maintain high information density and professional technical rigor."
     )
 
     payload = {
         "system_instruction": {"parts": [{"text": system_instruction}]},
         "contents": [{"parts": [{"text": user_prompt}]}],
         "generationConfig": {
-            "temperature": 0.2,
+            "temperature": 0.0,
+            "topP": 0.95,
             "maxOutputTokens": 4096
         }
     }
 
-    async with httpx.AsyncClient(timeout=45.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         last_error = ""
         for model in SYNTHESIS_FALLBACK_MODELS:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={active_key}"
@@ -808,12 +827,40 @@ async def synthesize_cross_notebook(
     synthesizer_profile_id: str
 ) -> Dict[str, Any]:
     """
-    Stage 1: Queries multiple notebooks (potentially across different accounts) concurrently via nlm.
-    Stage 2: Synthesizes the retrieved knowledge into a unified comparative brief via Pro AI (Gemini).
+    Stage 1: Queries multiple notebooks concurrently via nlm with quota fallback, retries, and deterministic ordering.
+    Stage 2: Synthesizes the retrieved knowledge into a stable, unified comparative brief via Google Gemini.
     """
-    # 1. Concurrently query each notebook
+    from backend.storage import get_profiles
+    profiles = await get_profiles()
+    pro_profile_id = None
+    pro_email = None
+    for p in profiles:
+        if p.isDefaultPro or getattr(p, "tier", "") == "pro":
+            pro_profile_id = p.id
+            pro_email = p.email
+            break
+
+    # 1. Concurrently query each notebook with quota fallback and a 1-shot retry on failure
     async def _query_single(ref: NotebookRef):
-        ans = await query_notebook(ref.profileId, ref.notebookId, question)
+        # First attempt with home profile and Pro fallback
+        ans = await query_notebook_with_pro_fallback(
+            profile_id=ref.profileId,
+            notebook_id=ref.notebookId,
+            question=question,
+            pro_profile_id=pro_profile_id,
+            pro_email=pro_email
+        )
+        # If initial attempt failed, 1-shot retry
+        if not ans.get("success"):
+            logger.warning(f"[Cross Synthesis] Notebook {ref.title or ref.notebookId} on {ref.profileId} failed ({ans.get('error')}). Retrying once...")
+            await asyncio.sleep(1.0)
+            ans = await query_notebook_with_pro_fallback(
+                profile_id=ref.profileId,
+                notebook_id=ref.notebookId,
+                question=question,
+                pro_profile_id=pro_profile_id,
+                pro_email=pro_email
+            )
         return {
             "notebookId": ref.notebookId,
             "profileId": ref.profileId,
@@ -823,15 +870,21 @@ async def synthesize_cross_notebook(
 
     sub_results = await asyncio.gather(*[_query_single(ref) for ref in notebooks])
 
+    # Sort deterministically by title / notebookId to guarantee stable evidence order
+    sub_results = sorted(sub_results, key=lambda x: (str(x.get("title") or "").lower(), str(x.get("notebookId"))))
+
     # 2. Extract partial answers for raw source context
     partial_summaries = []
     for item in sub_results:
         res = item["result"]
+        title = item["title"]
+        profile = item["profileId"]
         if res.get("success") and res.get("answer"):
-            partial_summaries.append(f"### Source Notebook: {item['title']} (Profile: {item['profileId']})\n{res['answer']}\n")
+            fallback_note = " *(Served via Pro AI Fallback)*" if res.get("handledByProFallback") else ""
+            partial_summaries.append(f"### Source Notebook: {title} (Profile: {profile}){fallback_note}\n{res['answer']}\n")
         else:
             err_detail = res.get("error") or "No answer returned or query failed"
-            partial_summaries.append(f"### Source Notebook: {item['title']} (Profile: {item['profileId']})\n*⚠️ {err_detail}*")
+            partial_summaries.append(f"### Source Notebook: {title} (Profile: {profile})\n*⚠️ {err_detail}*")
 
     combined_context = "\n\n".join(partial_summaries)
 
