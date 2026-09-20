@@ -58,4 +58,9 @@ if ($Foreground -or $Console) {
     Write-Host "✅ Super-NLM Hub is active in the background (PID: $($proc.Id))" -ForegroundColor Green
     Write-Host "🌐 Dashboard: http://127.0.0.1:8000" -ForegroundColor Cyan
     Write-Host "🛑 To stop background server: .\stop.ps1 or double-click stop.bat" -ForegroundColor Gray
+
+    if (-not $NoBrowser) {
+        Start-Sleep -Milliseconds 800
+        Start-Process "http://127.0.0.1:8000"
+    }
 }
