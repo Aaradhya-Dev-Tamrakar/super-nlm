@@ -4,12 +4,13 @@ from contextlib import asynccontextmanager
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Security, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.config import FRONTEND_DIR, NLM_EXECUTABLE, DOWNLOADS_DIR
+from backend.auth import verify_api_access
+from backend.config import FRONTEND_DIR, NLM_EXECUTABLE, DOWNLOADS_DIR, SUPER_NLM_ALLOWED_ORIGINS
 from backend.models import (
     AccountProfile, ProfileCreateRequest, ProfileUpdateRequest,
     Notebook, QueryRequest, CrossQueryRequest, detect_course_info,
@@ -79,8 +80,8 @@ def validate_profile_id(pid: str) -> str:
 # Allow CORS for local development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=SUPER_NLM_ALLOWED_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -122,7 +123,7 @@ async def list_profiles():
     return profiles
 
 @app.post("/api/profiles", response_model=AccountProfile)
-async def create_profile(req: ProfileCreateRequest, launch_login: bool = True):
+async def create_profile(req: ProfileCreateRequest, launch_login: bool = True, _auth: bool = Depends(verify_api_access)):
     clean_id = validate_profile_id(req.id)
     existing = await get_profile(clean_id)
     if existing:
@@ -146,7 +147,7 @@ async def create_profile(req: ProfileCreateRequest, launch_login: bool = True):
     return profile
 
 @app.put("/api/profiles/{profile_id}", response_model=AccountProfile)
-async def update_profile(profile_id: str, req: ProfileUpdateRequest):
+async def update_profile(profile_id: str, req: ProfileUpdateRequest, _auth: bool = Depends(verify_api_access)):
     clean_id = validate_profile_id(profile_id)
     profile = await get_profile(clean_id)
     if not profile:
@@ -218,7 +219,7 @@ async def update_profile(profile_id: str, req: ProfileUpdateRequest):
     return profile
 
 @app.delete("/api/profiles/{profile_id}")
-async def remove_profile(profile_id: str):
+async def remove_profile(profile_id: str, _auth: bool = Depends(verify_api_access)):
     clean_id = validate_profile_id(profile_id)
     profile = await get_profile(clean_id)
     if not profile:
@@ -238,7 +239,7 @@ async def remove_profile(profile_id: str):
     return {"success": True, "message": f"Profile '{clean_id}' removed"}
 
 @app.post("/api/profiles/{profile_id}/login")
-async def trigger_profile_login(profile_id: str, clear: bool = True):
+async def trigger_profile_login(profile_id: str, clear: bool = True, _auth: bool = Depends(verify_api_access)):
     clean_id = validate_profile_id(profile_id)
     profile = await get_profile(clean_id)
     if not profile:
@@ -276,7 +277,7 @@ async def get_profiles_health():
     }
 
 @app.post("/api/profiles/{profile_id}/check-auth")
-async def check_single_profile_auth(profile_id: str):
+async def check_single_profile_auth(profile_id: str, _auth: bool = Depends(verify_api_access)):
     """
     Probes authentication status for a specific profile, updates storage, and returns diagnostic results.
     """
@@ -381,12 +382,12 @@ async def list_notebooks(
     return notebooks
 
 @app.post("/api/notebooks/sync", response_model=List[Notebook])
-async def sync_notebooks():
+async def sync_notebooks(_auth: bool = Depends(verify_api_access)):
     notebooks = await sync_all_notebooks()
     return notebooks
 
 @app.post("/api/notebooks/batch-share")
-async def batch_share_endpoint(req: BatchShareRequest, background_tasks: BackgroundTasks):
+async def batch_share_endpoint(req: BatchShareRequest, background_tasks: BackgroundTasks, _auth: bool = Depends(verify_api_access)):
     """
     Batch shares multiple notebooks across target Google accounts.
     If targetProfileIds is omitted, shares with all other registered accounts.
@@ -401,7 +402,7 @@ async def batch_share_endpoint(req: BatchShareRequest, background_tasks: Backgro
     return res
 
 @app.post("/api/notebooks/auto-share-study")
-async def auto_share_study_endpoint(background_tasks: BackgroundTasks, role: str = Query("editor", description="Role to grant: editor or viewer")):
+async def auto_share_study_endpoint(background_tasks: BackgroundTasks, role: str = Query("editor", description="Role to grant: editor or viewer"), _auth: bool = Depends(verify_api_access)):
     """
     Automatically detects all Study / Course notebooks and shares them
     across all configured Google accounts as editor/viewer.
@@ -412,7 +413,7 @@ async def auto_share_study_endpoint(background_tasks: BackgroundTasks, role: str
     return res
 
 @app.delete("/api/notebooks/{notebook_id}")
-async def delete_notebook_from_cache(notebook_id: str):
+async def delete_notebook_from_cache(notebook_id: str, _auth: bool = Depends(verify_api_access)):
     """
     Deletes/purges a notebook from the local fleet cache across all profiles.
     """
@@ -440,7 +441,7 @@ async def get_notebook_folder_status(notebook_id: str):
     return await drive_sync_service.get_folder_status(notebook_id)
 
 @app.post("/api/notebooks/{notebook_id}/folder", response_model=FolderStatusResponse)
-async def set_notebook_folder_mapping(notebook_id: str, req: FolderMappingCreateRequest):
+async def set_notebook_folder_mapping(notebook_id: str, req: FolderMappingCreateRequest, _auth: bool = Depends(verify_api_access)):
     """
     Maps a local directory or Google Drive Web Folder URL/ID to a notebook.
     Automatically identifies folder type and performs initial status scan.
@@ -462,7 +463,7 @@ async def set_notebook_folder_mapping(notebook_id: str, req: FolderMappingCreate
     return await drive_sync_service.get_folder_status(notebook_id)
 
 @app.delete("/api/notebooks/{notebook_id}/folder")
-async def remove_notebook_folder_mapping(notebook_id: str):
+async def remove_notebook_folder_mapping(notebook_id: str, _auth: bool = Depends(verify_api_access)):
     """Unlinks the mapped folder from the specified notebook."""
     deleted = await delete_folder_mapping(notebook_id)
     if not deleted:
@@ -470,7 +471,7 @@ async def remove_notebook_folder_mapping(notebook_id: str):
     return {"success": True, "notebook_id": notebook_id, "message": "Folder unlinked successfully."}
 
 @app.post("/api/notebooks/{notebook_id}/folder/sync", response_model=FolderSyncResponse)
-async def sync_notebook_folder(notebook_id: str, req: FolderSyncRequest):
+async def sync_notebook_folder(notebook_id: str, req: FolderSyncRequest, _auth: bool = Depends(verify_api_access)):
     """
     Executes sequential ingestion of new folder files and refreshes stale Drive sources.
     Uses 1.5s delay between file uploads to protect against quota bursts.
@@ -484,7 +485,7 @@ async def sync_notebook_folder(notebook_id: str, req: FolderSyncRequest):
 # ----------------- QUERY & SYNTHESIS API -----------------
 
 @app.post("/api/query")
-async def ask_notebook(req: QueryRequest):
+async def ask_notebook(req: QueryRequest, _auth: bool = Depends(verify_api_access)):
     profile = await get_profile(req.profileId)
     if not profile:
         raise HTTPException(status_code=404, detail=f"Profile '{req.profileId}' not found")
@@ -523,7 +524,7 @@ async def ask_notebook(req: QueryRequest):
     return res
 
 @app.post("/api/cross-query")
-async def ask_cross_notebook(req: CrossQueryRequest):
+async def ask_cross_notebook(req: CrossQueryRequest, _auth: bool = Depends(verify_api_access)):
     if not req.notebooks:
         raise HTTPException(status_code=400, detail="At least one notebook must be selected")
 
@@ -579,7 +580,8 @@ async def ask_notebook_rotated(
     source_ids: Optional[str] = Query(None, description="Optional comma-separated source IDs"),
     timeout: int = Query(120, description="Query timeout in seconds"),
     new_conversation: bool = Query(False, description="Start fresh conversation"),
-    use_pro: Optional[bool] = Query(None, description="Directly route to Pro account without rotation")
+    use_pro: Optional[bool] = Query(None, description="Directly route to Pro account without rotation"),
+    _auth: bool = Depends(verify_api_access)
 ):
     """
     Queries a notebook with automatic multi-account round-robin rotation, auto-sharing,
@@ -618,7 +620,7 @@ async def refresh_calendar_agenda(days: int = Query(7, ge=1, le=30, description=
 # ----------------- SCHEDULED CREATION & BATCH QUEUE API -----------------
 
 @app.post("/api/scheduler/batch", response_model=BatchScheduleResponse)
-async def schedule_batch_creation(req: BatchScheduleRequest):
+async def schedule_batch_creation(req: BatchScheduleRequest, _auth: bool = Depends(verify_api_access)):
     """
     Schedules a batch of studio creations (e.g. cinematic videos, audio overviews, study guides)
     across multiple notebooks. Jobs are queued and executed round-robin across connected fleet accounts.
@@ -628,7 +630,7 @@ async def schedule_batch_creation(req: BatchScheduleRequest):
     return await scheduler.schedule_batch(req, nb_map)
 
 @app.post("/api/scheduler/job", response_model=ScheduledJob)
-async def schedule_single_creation(req: SingleScheduleRequest):
+async def schedule_single_creation(req: SingleScheduleRequest, _auth: bool = Depends(verify_api_access)):
     """
     Schedules a single creation job (immediately, off-peak, or at a custom time).
     """
@@ -651,7 +653,7 @@ async def get_scheduler_status():
     return scheduler.get_status()
 
 @app.post("/api/scheduler/jobs/{job_id}/run-now")
-async def run_job_now(job_id: str):
+async def run_job_now(job_id: str, _auth: bool = Depends(verify_api_access)):
     """
     Forces a queued/scheduled/failed/download_failed job to execute immediately.
     """
@@ -661,7 +663,7 @@ async def run_job_now(job_id: str):
     return {"success": True, "message": f"Job '{job_id}' marked for immediate execution."}
 
 @app.post("/api/scheduler/jobs/{job_id}/cancel")
-async def cancel_job(job_id: str):
+async def cancel_job(job_id: str, _auth: bool = Depends(verify_api_access)):
     """
     Cancels a pending queued or scheduled creation job.
     """
@@ -671,7 +673,7 @@ async def cancel_job(job_id: str):
     return {"success": True, "message": f"Job '{job_id}' cancelled."}
 
 @app.delete("/api/scheduler/jobs/{job_id}")
-async def delete_job(job_id: str):
+async def delete_job(job_id: str, _auth: bool = Depends(verify_api_access)):
     """
     Deletes a job from history.
     """

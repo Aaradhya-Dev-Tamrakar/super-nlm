@@ -83,7 +83,8 @@ if __name__ == "__main__":
     parser.add_argument("--no-upgrade", action="store_true", help="Skip checking for Gemini Notebook CLI updates at launch")
     args = parser.parse_args()
 
-    if not args.no_upgrade:
+    skip_upgrade = os.environ.get("SUPER_NLM_SKIP_UPGRADE", "").strip().lower() in ("1", "true", "yes")
+    if not args.no_upgrade and not skip_upgrade:
         upgrade_notebooklm_cli()
 
     desired_port = args.port or int(os.environ.get("SUPER_NLM_PORT", 8000))
@@ -123,4 +124,3 @@ if __name__ == "__main__":
         loop="asyncio",
         timeout_keep_alive=30
     )
-

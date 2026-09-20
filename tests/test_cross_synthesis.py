@@ -1,83 +1,69 @@
+import pytest
 import sys
-import asyncio
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.nlm_client import synthesize_with_gemini
+import backend.nlm_client as nlm_client
 import backend.config as config
+from backend.models import NotebookRef
 
-async def run_synthesis_tests():
-    print("--- Running Cross-Notebook Synthesis Tests ---")
+SAMPLE_RESULTS = [{
+    "notebookId": "nb-1",
+    "profileId": "default",
+    "title": "BiasAperture - Repo State",
+    "result": {"success": True, "answer": "FairFace validation contains 10,954 images."},
+}, {
+    "notebookId": "nb-2",
+    "profileId": "default",
+    "title": "BiasAperture - Source And Specs",
+    "result": {"success": True, "answer": "The source scrape contains 108,501 images."},
+}]
 
-    # Sample retrieved multi-notebook evidence
-    sample_sub_results = [
-        {
-            "notebookId": "nb-1",
-            "profileId": "default",
-            "title": "BiasAperture - Repo State",
-            "result": {
-                "success": True,
-                "answer": (
-                    "- FairFace released dataset has exactly 97,698 images (86,744 train + 10,954 val), "
-                    "not the 108,501 pre-discard scrape.\n"
-                    "- UTKFace was formally cut under Tier #2 due to DEX age label noise and race taxonomy mismatch.\n"
-                    "- Operational explainability engine uses additive linear Shapley surrogate over demographic dummy variables; full spatial SHAP deferred."
-                )
-            }
-        },
-        {
-            "notebookId": "nb-2",
-            "profileId": "default",
-            "title": "BiasAperture - Source And Specs",
-            "result": {
-                "success": True,
-                "answer": (
-                    "- FairFace 108,501 figure represents pre-annotation count; benchmark run was verified on 10,954 validation split.\n"
-                    "- UTKFace formally cut per Cut-List #2; only FairFace is ingested in data_ingestion.py.\n"
-                    "- LaTeX specs referenced classes like DirectInferenceAdapter and TestMatrixBuilder that do not exist in src/."
-                )
-            }
-        }
+
+def test_cross_synthesis_live_gemini():
+    if not config.GEMINI_API_KEY:
+        pytest.skip("GEMINI_API_KEY is not configured")
+
+    import asyncio
+    result = asyncio.run(nlm_client.synthesize_with_gemini("diff the sources", SAMPLE_RESULTS))
+    assert result["success"] is True
+    assert len(result["synthesizedBrief"]) > 50
+
+
+def test_cross_synthesis_missing_api_key():
+    import asyncio
+    result = asyncio.run(
+        nlm_client.synthesize_with_gemini("diff the sources", SAMPLE_RESULTS, api_key="")
+    )
+    assert result["success"] is False
+    assert "not configured" in result["error"]
+
+
+def test_cross_synthesis_empty_notebook_results():
+    import asyncio
+    result = asyncio.run(nlm_client.synthesize_with_gemini(
+        "diff the sources",
+        [{"notebookId": "nb-empty", "profileId": "default",
+          "result": {"success": False, "error": "timeout"}}],
+    ))
+    assert result["success"] is False
+    assert "No valid notebook answers" in result["error"]
+
+
+def test_cross_synthesis_evidence_ordering_determinism(monkeypatch):
+    import asyncio
+
+    async def fake_query(**kwargs):
+        return {"success": True, "answer": kwargs["notebook_id"]}
+
+    async def fake_synthesis(*args, **kwargs):
+        return {"success": True, "synthesizedBrief": "brief", "model": "test"}
+
+    monkeypatch.setattr(nlm_client, "query_notebook_with_pro_fallback", fake_query)
+    monkeypatch.setattr(nlm_client, "synthesize_with_gemini", fake_synthesis)
+    refs = [
+        NotebookRef(notebookId="z", profileId="default", title="Zeta"),
+        NotebookRef(notebookId="a", profileId="default", title="Alpha"),
     ]
-
-    question = "diff the sources and summarize discrepancies"
-
-    # Test 1: Live Gemini synthesis (if API key available)
-    if config.GEMINI_API_KEY:
-        print("\n1. Testing live 2nd-stage synthesis via Gemini...")
-        res = await synthesize_with_gemini(question, sample_sub_results)
-        if res["success"]:
-            assert res["synthesizedBrief"] is not None, "synthesizedBrief should not be None"
-            assert len(res["synthesizedBrief"]) > 50, "synthesizedBrief is too short"
-            print(f"   [OK] Live synthesis passed with model: {res.get('model')}")
-            print(f"   Sample output preview:\n   {res['synthesizedBrief'][:250]}...\n")
-        else:
-            # Check if failure is due to upstream API capacity limits / 503 spikes
-            err = res.get("error", "")
-            if "503" in err or "high demand" in err or "temporarily" in err or "quota" in err.lower():
-                print(f"   [NOTE] Upstream Gemini API temporarily under high load (503): {err}")
-            else:
-                assert False, f"Unexpected synthesis failure: {res}"
-    else:
-        print("\n1. [SKIP] GEMINI_API_KEY not found in config.")
-
-    # Test 2: Fallback handling when GEMINI_API_KEY is empty
-    print("2. Testing fallback handling when GEMINI_API_KEY is unset...")
-    res_empty = await synthesize_with_gemini(question, sample_sub_results, api_key="")
-    assert res_empty["success"] is False
-    assert "not configured" in res_empty["error"]
-    print("   [OK] Gracefully handled missing GEMINI_API_KEY.")
-
-    # Test 3: Handling empty / failed notebook results
-    print("3. Testing handling of empty notebook results...")
-    res_no_data = await synthesize_with_gemini(question, [
-        {"notebookId": "nb-empty", "profileId": "default", "result": {"success": False, "error": "timeout"}}
-    ])
-    assert res_no_data["success"] is False
-    assert "No valid notebook answers" in res_no_data["error"]
-    print("   [OK] Handled empty notebook inputs gracefully.")
-
-    print("\nALL CROSS-NOTEBOOK SYNTHESIS TESTS PASSED!")
-
-if __name__ == "__main__":
-    asyncio.run(run_synthesis_tests())
+    result = asyncio.run(nlm_client.synthesize_cross_notebook(refs, "question", "default"))
+    assert [item["notebookId"] for item in result["notebookResults"]] == ["a", "z"]

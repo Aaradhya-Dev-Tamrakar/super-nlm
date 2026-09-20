@@ -832,13 +832,39 @@ async def synthesize_cross_notebook(
     """
     from backend.storage import get_profiles
     profiles = await get_profiles()
-    pro_profile_id = None
-    pro_email = None
-    for p in profiles:
-        if p.isDefaultPro or getattr(p, "tier", "") == "pro":
-            pro_profile_id = p.id
-            pro_email = p.email
-            break
+    selected_profile = next(
+        (
+            p for p in profiles
+            if p.id == synthesizer_profile_id
+            and p.status == "connected"
+            and getattr(p, "tier", "").lower() == "pro"
+        ),
+        None,
+    )
+    if selected_profile is None:
+        selected_profile = next(
+            (
+                p for p in profiles
+                if p.isDefaultPro
+                and p.status == "connected"
+                and getattr(p, "tier", "").lower() == "pro"
+            ),
+            None,
+        )
+    if selected_profile is None:
+        selected_profile = next(
+            (p for p in profiles if p.status == "connected" and getattr(p, "tier", "").lower() == "pro"),
+            None,
+        )
+
+    pro_profile_id = selected_profile.id if selected_profile else None
+    pro_email = selected_profile.email if selected_profile else None
+    if selected_profile:
+        logger.info(
+            "[Cross Synthesis] Using synthesizer profile '%s' (%s)",
+            selected_profile.id,
+            selected_profile.email or "no email",
+        )
 
     # 1. Concurrently query each notebook with quota fallback and a 1-shot retry on failure
     async def _query_single(ref: NotebookRef):
@@ -898,7 +924,7 @@ async def synthesize_cross_notebook(
     return {
         "success": True,
         "question": question,
-        "synthesizerProfileId": synthesizer_profile_id,
+        "synthesizerProfileId": selected_profile.id if selected_profile else synthesizer_profile_id,
         "isSynthesized": is_synthesized,
         "synthesisModel": synthesis_model,
         "synthesizedBrief": synthesized_brief,
@@ -1152,5 +1178,3 @@ async def download_studio_artifact(
     logger.info(f"[Studio Download] Downloading '{cmd_type}' for notebook '{notebook_id}' to '{output_filepath}'")
     res = await run_nlm_cmd(args, timeout=180)
     return res
-
-

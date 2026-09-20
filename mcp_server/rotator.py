@@ -80,9 +80,9 @@ class AccountRotator:
         except Exception as e:
             logger.debug(f"Could not refresh CLI profiles: {e}")
 
-        # Return connected profiles, or all profiles if none marked connected
-        connected = [p for p in profiles if p.status != "expired"]
-        return connected if connected else profiles
+        # Never dispatch work to profiles that have no authenticated session.
+        connected = [p for p in profiles if p.status == "connected"]
+        return connected
 
     async def get_pro_profiles(self) -> List[AccountProfile]:
         """Returns all active profiles with pro tier."""
@@ -217,7 +217,7 @@ class AccountRotator:
         Results are cached in memory to avoid repetitive CLI overhead.
         """
         if not profile.email:
-            return True
+            return False
 
         cache_key = (notebook_id, profile.email.lower())
         async with self._lock:
@@ -249,10 +249,8 @@ class AccountRotator:
         except Exception as e:
             logger.warning(f"Error checking or auto-sharing notebook {notebook_id}: {e}")
 
-        # Fallback: assume access exists
-        async with self._lock:
-            self._shared_cache.add(cache_key)
-        return True
+        # Unknown ownership/access must fail closed so the caller can fail over.
+        return False
 
     async def execute_query_rotated(
         self,
@@ -318,7 +316,11 @@ class AccountRotator:
 
             try:
                 # 1. Ensure access
-                await self.ensure_profile_has_access(notebook_id, profile)
+                has_access = await self.ensure_profile_has_access(notebook_id, profile)
+                if not has_access:
+                    self.record_error(profile.id)
+                    excluded.add(profile.id)
+                    continue
 
                 # 2. Run query
                 res = await query_notebook(

@@ -13,23 +13,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python packages: notebooklm-mcp-cli provides the 'nlm' CLI
-RUN pip install --no-cache-dir \
-    notebooklm-mcp-cli \
-    fastapi \
-    uvicorn \
-    pydantic \
-    httpx \
-    aiosqlite \
-    qrcode \
-    mcp
-
 # Copy application source code
 COPY backend/ /app/backend/
 COPY frontend/ /app/frontend/
 COPY data/ /app/data/
-COPY pyproject.toml /app/
+COPY pyproject.toml uv.lock /app/
+
+# Install application dependencies from the repository lockfile. The CLI is a
+# separate uv tool because it is not a Python project dependency.
+RUN pip install --no-cache-dir uv \
+    && uv sync --locked --no-dev \
+    && uv tool install notebooklm-mcp-cli==0.11.5
+ENV PATH="/root/.local/bin:${PATH}"
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8080}"]
+CMD ["sh", "-c", ".venv/bin/uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8080}"]

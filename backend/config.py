@@ -91,3 +91,15 @@ SYNTHESIS_FALLBACK_MODELS = [
 # Google Calendar Private iCal Feed Configuration
 GOOGLE_CALENDAR_ICAL_URL = os.environ.get("GOOGLE_CALENDAR_ICAL_URL", "").strip()
 CALENDAR_CACHE_TTL_SECONDS = int(os.environ.get("CALENDAR_CACHE_TTL_SECONDS", "900")) # 15 minutes default
+
+# Super-NLM Access Control & Security Boundary
+SUPER_NLM_API_KEY = os.environ.get("SUPER_NLM_API_KEY", "").strip()
+SUPER_NLM_REQUIRE_AUTH_LOCAL = os.environ.get("SUPER_NLM_REQUIRE_AUTH_LOCAL", "false").strip().lower() in ("1", "true", "yes")
+SUPER_NLM_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "SUPER_NLM_ALLOWED_ORIGINS",
+        "http://127.0.0.1:8000,http://localhost:8000",
+    ).split(",")
+    if origin.strip()
+]
