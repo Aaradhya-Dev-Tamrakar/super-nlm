@@ -36,13 +36,21 @@ import re
 
 # Known explicit course notebook IDs
 COURSE_NOTEBOOK_IDS = {
-    "96a12a04-073e-43ca-9f6d-ca0048d63486",  # CT653 - Artificial Intelligence
+    "96a12a04-073e-43ca-9f6d-ca0048d63486",  # CT653 - Artificial Intelligence (test mock / canonical)
+    "c4a8af46-115b-4dff-81bf-5a22db2fbc64",  # CT653 - Artificial Intelligence (live cache)
     "c627a211-552e-496b-9ebb-42d22ac05a95",  # EX751 - Wireless Communications
     "66c34505-a60d-4a24-98df-446d8df12a24",  # CT704 - Digital Signal Analysis and Processing
     "c3c8ecd4-2884-42a1-aa49-c4de168c1ec7",  # EX752 - RF and Microwave Engineering
     "94cd4e14-802d-4231-b27d-6a4f4a2e6182",  # ME708 - Organization and Management
-    "56cdad30-13d3-4621-a0b7-8f841858476b",  # EX725 04 - Aeronautical Telecommunication
+    "56cdad30-13d3-4621-a0b7-8f841858476b",  # EX725 04 - Aeronautical Telecommunication - Elective I
 }
+
+# Canonical primary project notebook IDs
+BIASAPERTURE_NOTEBOOK_ID = "99bee3c6-07ed-4ff0-8ac8-0027b18ad06a"
+SPARK_NOTEBOOK_ID = "2c00f5a4-98dc-4783-96d1-3682fa3cb516"
+PERSONAL_NOTEBOOK_ID = "95a79d26-2f87-42cd-8cb9-8361a1e56059"
+AERO_NOTEBOOK_ID = "56cdad30-13d3-4621-a0b7-8f841858476b"
+ELECTIVE_I_NOTEBOOK_ID = "56cdad30-13d3-4621-a0b7-8f841858476b"
 
 # Canonical default course notebook mapping (Course Code / Acronym -> Canonical Notebook ID)
 DEFAULT_COURSE_NOTEBOOK_MAP = {
@@ -58,7 +66,11 @@ DEFAULT_COURSE_NOTEBOOK_MAP = {
     "OM": "94cd4e14-802d-4231-b27d-6a4f4a2e6182",
     "O&M": "94cd4e14-802d-4231-b27d-6a4f4a2e6182",
     "EX725": "56cdad30-13d3-4621-a0b7-8f841858476b",  # Aeronautical Telecommunication
+    "EX725 04": "56cdad30-13d3-4621-a0b7-8f841858476b",
+    "EX72504": "56cdad30-13d3-4621-a0b7-8f841858476b",
     "AERO": "56cdad30-13d3-4621-a0b7-8f841858476b",
+    "ELECTIVE I": "56cdad30-13d3-4621-a0b7-8f841858476b",
+    "ELECTIVE 1": "56cdad30-13d3-4621-a0b7-8f841858476b",
 }
 
 # Regex pattern matching academic semester course codes e.g. "CT653", "EX751", "ME708", "EX725 04", "CT704"

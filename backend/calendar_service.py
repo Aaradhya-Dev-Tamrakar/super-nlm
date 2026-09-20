@@ -11,7 +11,8 @@ from dateutil import tz
 from backend.config import GOOGLE_CALENDAR_ICAL_URL, CALENDAR_CACHE_TTL_SECONDS
 from backend.models import (
     CalendarAgendaResponse, CalendarAgendaEvent, MatchedNotebookSummary, Notebook,
-    DEFAULT_COURSE_NOTEBOOK_MAP
+    DEFAULT_COURSE_NOTEBOOK_MAP, BIASAPERTURE_NOTEBOOK_ID, SPARK_NOTEBOOK_ID,
+    AERO_NOTEBOOK_ID, ELECTIVE_I_NOTEBOOK_ID
 )
 
 logger = logging.getLogger("super_nlm.calendar")
@@ -24,7 +25,7 @@ ACRONYM_TO_KEYWORDS = {
     "OM": ["organization and management", "me708"],
     "O&M": ["organization and management", "me708"],
     "WC": ["wireless communications", "ex751"],
-    "AERO": ["aeronautical telecommunication", "ex725"],
+    "AERO": ["aeronautical telecommunication", "ex725", "aero"],
 }
 
 COURSE_CODE_REGEX = re.compile(r'\b([A-Z]{2,4}\s*\d{3}(?:\s*\d{2})?)\b', re.IGNORECASE)
@@ -119,9 +120,100 @@ class CalendarService:
                     match_reason=f"Course Code: {best.course_code}"
                 )
 
-        # 2. Match by Acronyms (e.g. DSAP, AI, RF, O&M)
+        # 2. Fellowship / Project matching (BiasAperture, AI Fellows, TA Sessions, SPARK)
+        # TA sessions and AI Fellows events are specifically for the Fusemachines AI Fellowship
+        # project (BiasAperture), NOT the academic university course CT653 (Artificial Intelligence).
+        is_biasaperture_event = any(
+            phrase in combined_text
+            for phrase in ["biasaperture", "bias aperture", "ai fellows", "ai fellowship", "ta session", "onsite ta"]
+        )
+        if is_biasaperture_event:
+            candidates = [
+                n for n in notebooks
+                if "biasaperture" in n.title.lower() or "bias aperture" in n.title.lower() or n.id == BIASAPERTURE_NOTEBOOK_ID
+            ]
+            if candidates:
+                def _bias_sort_key(nb):
+                    nb_id = getattr(nb, 'id', '')
+                    title = getattr(nb, 'title', '')
+                    is_canonical = (nb_id == BIASAPERTURE_NOTEBOOK_ID)
+                    is_ref = "reference" in title.lower()
+                    return (not is_canonical, _is_copy(title), is_ref)
+
+                candidates.sort(key=_bias_sort_key)
+                best = candidates[0]
+                return MatchedNotebookSummary(
+                    id=best.id,
+                    title=best.title,
+                    profile_id=getattr(best, "profileId", getattr(best, "profile_id", "")),
+                    course_code=best.course_code,
+                    color=best.color,
+                    match_reason="Fellowship Project: BiasAperture"
+                )
+            # If specifically a fellowship/TA session event but no BiasAperture notebook exists,
+            # never fall through to matching academic CT653 Artificial Intelligence.
+            return None
+
+        # Project matching for SPARK
+        if "spark" in combined_text:
+            candidates = [
+                n for n in notebooks
+                if "spark" in n.title.lower() or n.id == SPARK_NOTEBOOK_ID
+            ]
+            if candidates:
+                def _spark_sort_key(nb):
+                    nb_id = getattr(nb, 'id', '')
+                    title = getattr(nb, 'title', '')
+                    is_canonical = (nb_id == SPARK_NOTEBOOK_ID)
+                    return (not is_canonical, _is_copy(title))
+
+                candidates.sort(key=_spark_sort_key)
+                best = candidates[0]
+                return MatchedNotebookSummary(
+                    id=best.id,
+                    title=best.title,
+                    profile_id=getattr(best, "profileId", getattr(best, "profile_id", "")),
+                    course_code=best.course_code,
+                    color=best.color,
+                    match_reason="Project: SPARK"
+                )
+
+        # 3. Elective matching (e.g. "BEI IV/I Board Exam: Elective I", "Elective 1" -> EX725 Aeronautical Telecommunication)
+        is_elective_1 = bool(re.search(r'\belective\s*[-:]?\s*(?:i|1|01)\b', combined_text, re.IGNORECASE))
+        if is_elective_1:
+            candidates = [
+                n for n in notebooks
+                if n.id == ELECTIVE_I_NOTEBOOK_ID
+                or "aeronautical" in n.title.lower()
+                or "ex725" in (n.course_code or "").lower()
+                or "ex725" in n.title.lower()
+                or "elective i" in n.title.lower()
+            ]
+            if candidates:
+                def _aero_sort_key(nb):
+                    nb_id = getattr(nb, 'id', '')
+                    title = getattr(nb, 'title', '')
+                    is_canonical = (nb_id == ELECTIVE_I_NOTEBOOK_ID)
+                    return (not is_canonical, _is_copy(title))
+
+                candidates.sort(key=_aero_sort_key)
+                best = candidates[0]
+                return MatchedNotebookSummary(
+                    id=best.id,
+                    title=best.title,
+                    profile_id=getattr(best, "profileId", getattr(best, "profile_id", "")),
+                    course_code=best.course_code or "EX725",
+                    color=best.color,
+                    match_reason="Elective I: Aeronautical Telecommunication"
+                )
+
+        # 4. Match by Acronyms (e.g. DSAP, AI, RF, O&M)
         words = set(re.findall(r'\b[A-Za-z0-9&]+\b', summary.upper()))
         for acronym, keywords in ACRONYM_TO_KEYWORDS.items():
+            # Guard against "AI" triggering for fellowship / TA session events
+            if acronym == "AI" and ("AI FELLOW" in summary.upper() or "TA SESSION" in summary.upper()):
+                continue
+
             if acronym in words or (acronym == "O&M" and ("O&M" in summary.upper() or "OM" in words)):
                 candidates = []
                 for n in notebooks:

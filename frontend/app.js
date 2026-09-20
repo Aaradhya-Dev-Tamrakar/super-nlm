@@ -27,12 +27,13 @@ let state = {
 
 // ----------------- COURSE & STUDY CLASSIFICATION -----------------
 const COURSE_NOTEBOOK_IDS = new Set([
-  '96a12a04-073e-43ca-9f6d-ca0048d63486', // CT653 - Artificial Intelligence
+  '96a12a04-073e-43ca-9f6d-ca0048d63486', // CT653 - Artificial Intelligence (test mock / canonical)
+  'c4a8af46-115b-4dff-81bf-5a22db2fbc64', // CT653 - Artificial Intelligence (live cache)
   'c627a211-552e-496b-9ebb-42d22ac05a95', // EX751 - Wireless Communications
   '66c34505-a60d-4a24-98df-446d8df12a24', // CT704 - Digital Signal Analysis and Processing
   'c3c8ecd4-2884-42a1-aa49-c4de168c1ec7', // EX752 - RF and Microwave Engineering
   '94cd4e14-802d-4231-b27d-6a4f4a2e6182', // ME708 - Organization and Management
-  '56cdad30-13d3-4621-a0b7-8f841858476b', // EX725 04 - Aeronautical Telecommunication
+  '56cdad30-13d3-4621-a0b7-8f841858476b', // EX725 04 - Aeronautical Telecommunication - Elective I
 ]);
 
 const DEFAULT_COURSE_NOTEBOOK_MAP = {
@@ -48,7 +49,11 @@ const DEFAULT_COURSE_NOTEBOOK_MAP = {
   'OM': '94cd4e14-802d-4231-b27d-6a4f4a2e6182',
   'O&M': '94cd4e14-802d-4231-b27d-6a4f4a2e6182',
   'EX725': '56cdad30-13d3-4621-a0b7-8f841858476b',
+  'EX725 04': '56cdad30-13d3-4621-a0b7-8f841858476b',
+  'EX72504': '56cdad30-13d3-4621-a0b7-8f841858476b',
   'AERO': '56cdad30-13d3-4621-a0b7-8f841858476b',
+  'ELECTIVE I': '56cdad30-13d3-4621-a0b7-8f841858476b',
+  'ELECTIVE 1': '56cdad30-13d3-4621-a0b7-8f841858476b',
 };
 
 const COURSE_CODE_REGEX = /^([A-Z]{2,4}\s*\d{3}(?:\s*\d{2})?)\s*[-:]\s*(.+)/i;

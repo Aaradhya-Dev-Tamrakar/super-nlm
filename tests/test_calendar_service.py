@@ -56,6 +56,27 @@ def test_calendar_service_matching():
             is_study=True,
             category='study'
         ),
+        Notebook(
+            id='56cdad30-13d3-4621-a0b7-8f841858476b',
+            title='EX725 - Aeronautical Telecommunication',
+            url='https://notebooklm.google.com/notebook/56cdad30-13d3-4621-a0b7-8f841858476b',
+            profileId='main',
+            profileName='Personal',
+            profileEmail='user@gmail.com',
+            course_code='EX725',
+            is_study=True,
+            category='study'
+        ),
+        Notebook(
+            id='99bee3c6-07ed-4ff0-8ac8-0027b18ad06a',
+            title='BiasAperture - Fairness and Bias Audit Engineering and Implementation Strategy',
+            url='https://notebooklm.google.com/notebook/99bee3c6-07ed-4ff0-8ac8-0027b18ad06a',
+            profileId='main',
+            profileName='Personal',
+            profileEmail='user@gmail.com',
+            category='project',
+            is_study=False
+        ),
     ]
 
     # Test 1: Direct course code match
@@ -79,10 +100,42 @@ def test_calendar_service_matching():
     assert m4 is not None
     assert m4.id == 'nb-ct704'
 
-    # Test 5: Acronym match (AI Fellows)
-    m5 = svc._match_event_to_notebook('TA Session Weekly Reflection | AI Fellows', '', mock_notebooks)
+    # Test 5: Fellowship / TA Session match (BiasAperture, not CT653)
+    m5 = svc._match_event_to_notebook('TA Session Weekly Reflection & Support Form | AI Fellows', '', mock_notebooks)
     assert m5 is not None
-    assert m5.id == 'nb-ct653'
+    assert m5.id == '99bee3c6-07ed-4ff0-8ac8-0027b18ad06a'
+    assert 'BiasAperture' in m5.title
+
+    # Test 5b: Onsite TA Session also matches BiasAperture
+    m5b = svc._match_event_to_notebook('Onsite TA Session', '', mock_notebooks)
+    assert m5b is not None
+    assert m5b.id == '99bee3c6-07ed-4ff0-8ac8-0027b18ad06a'
+
+    # Test 5c: AI course lecture matches CT653, not BiasAperture
+    m5c = svc._match_event_to_notebook('AI (SS)', '', mock_notebooks)
+    assert m5c is not None
+    assert m5c.id == 'nb-ct653'
+
+    # Test 5d: If no BiasAperture notebook is present, TA session must NOT match CT653
+    only_course_nbs = [nb for nb in mock_notebooks if 'bias' not in nb.title.lower()]
+    m5d = svc._match_event_to_notebook('TA Session Weekly Reflection | AI Fellows', '', only_course_nbs)
+    assert m5d is None
+
+    # Test 5e: Elective I exam matches Aeronautical Telecommunication
+    m5e = svc._match_event_to_notebook('BEI IV/I Board Exam: Elective I', '', mock_notebooks)
+    assert m5e is not None
+    assert m5e.id == '56cdad30-13d3-4621-a0b7-8f841858476b'
+    assert m5e.course_code == 'EX725'
+    assert 'Aeronautical' in m5e.title
+
+    # Test 5f: Elective 1 with description matches
+    m5f = svc._match_event_to_notebook('Board Exam: Elective 1', 'Room 304 IOE Pulchowk', mock_notebooks)
+    assert m5f is not None
+    assert m5f.id == '56cdad30-13d3-4621-a0b7-8f841858476b'
+
+    # Test 5g: Elective II does not match Elective I
+    m5g = svc._match_event_to_notebook('BEI IV/I Board Exam: Elective II', '', mock_notebooks)
+    assert m5g is None
 
     # Test 6: Unrelated event (no match)
     m6 = svc._match_event_to_notebook('Dentist Appointment with Dr. Sharma', '', mock_notebooks)
