@@ -10,6 +10,16 @@ import subprocess
 import shutil
 
 # --- Windows Console & Runtime Performance Optimizations ---
+# When running under pythonw.exe, sys.stdout and sys.stderr are None
+if sys.stdout is None or sys.stderr is None:
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    os.makedirs(log_dir, exist_ok=True)
+    _log_f = open(os.path.join(log_dir, "server.log"), "a", encoding="utf-8", buffering=1)
+    if sys.stdout is None:
+        sys.stdout = _log_f
+    if sys.stderr is None:
+        sys.stderr = _log_f
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
