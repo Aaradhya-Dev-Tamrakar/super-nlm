@@ -950,7 +950,7 @@ async function apiFetch(url, options = {}) {
   if (apiKey) {
     requestOptions.headers.set('Authorization', `Bearer ${apiKey}`);
   }
-  const response = await apiFetch(url, requestOptions);
+  const response = await fetch(url, requestOptions);
   if (response.status === 401) {
     openRemoteAuthModal();
   }
