@@ -1,13 +1,13 @@
 param (
-    [switch]$Background,
-    [switch]$Hidden,
+    [switch]$Foreground,
+    [switch]$Console,
     [switch]$Tunnel,
     [switch]$NoBrowser,
     [switch]$NoUpgrade,
     [int]$Port = 0
 )
 
-# Windows PowerShell Launcher for Super-NLM Hub
+# Windows PowerShell Launcher for Super-NLM Hub (Defaults to Background)
 $Host.UI.RawUI.WindowTitle = "Super-NLM Hub (Dev Drive ReFS)"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -24,14 +24,28 @@ if (-not (Test-Path $pythonExe)) {
     uv pip install --python .venv\Scripts\python.exe fastapi uvicorn pydantic httpx aiosqlite
 }
 
+# Check if server is already running on port 8000
+$existingConn = Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | Where-Object { $_.State -eq "Listen" }
+if ($existingConn) {
+    Write-Host "ℹ️ Super-NLM Hub is already running on http://127.0.0.1:8000 (PID: $($existingConn[0].OwningProcess))" -ForegroundColor Green
+    if (-not $NoBrowser) {
+        Start-Process "http://127.0.0.1:8000"
+    }
+    exit 0
+}
+
 $argList = @()
 if ($Tunnel) { $argList += "--tunnel" }
 if ($NoBrowser) { $argList += "--no-browser" }
 if ($NoUpgrade) { $argList += "--no-upgrade" }
 if ($Port -gt 0) { $argList += "--port", $Port }
 
-if ($Background -or $Hidden) {
-    Write-Host "🚀 Launching Super-NLM Hub in the background (hidden)..." -ForegroundColor Cyan
+if ($Foreground -or $Console) {
+    Write-Host "🖥️ Launching Super-NLM Hub in foreground console..." -ForegroundColor Cyan
+    & $pythonExe (Join-Path $scriptDir "run.py") $argList
+} else {
+    # Default: Background execution
+    Write-Host "🚀 Launching Super-NLM Hub silently in background..." -ForegroundColor Cyan
     $runPy = Join-Path $scriptDir "run.py"
     $targetExe = if (Test-Path $pythonwExe) { $pythonwExe } else { $pythonExe }
     
@@ -41,9 +55,7 @@ if ($Background -or $Hidden) {
         New-Item -ItemType Directory -Path "$scriptDir\data" -Force | Out-Null
     }
     $proc.Id | Out-File -FilePath "$scriptDir\data\server.pid" -Encoding ascii
-    Write-Host "✅ Super-NLM Hub is running silently in background (PID: $($proc.Id))" -ForegroundColor Green
-    Write-Host "🌐 Access Dashboard at http://127.0.0.1:8000" -ForegroundColor Cyan
-    Write-Host "🛑 To stop the background server, run: .\stop.ps1" -ForegroundColor Gray
-} else {
-    & $pythonExe (Join-Path $scriptDir "run.py") $argList
+    Write-Host "✅ Super-NLM Hub is active in the background (PID: $($proc.Id))" -ForegroundColor Green
+    Write-Host "🌐 Dashboard: http://127.0.0.1:8000" -ForegroundColor Cyan
+    Write-Host "🛑 To stop background server: .\stop.ps1 or double-click stop.bat" -ForegroundColor Gray
 }
