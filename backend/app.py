@@ -114,7 +114,7 @@ async def sync_all_notebooks(auto_share_study: bool = True) -> List[Notebook]:
 # ----------------- PROFILES API -----------------
 
 @app.get("/api/profiles", response_model=List[AccountProfile])
-async def list_profiles():
+async def list_profiles(_auth: bool = Depends(verify_api_access)):
     cli_profiles = await get_cli_profiles()
     profiles = await get_profiles()
     for p in profiles:
@@ -249,7 +249,7 @@ async def trigger_profile_login(profile_id: str, clear: bool = True, _auth: bool
     return {"success": True, "message": f"Login window launched for '{profile.id}'"}
 
 @app.get("/api/profiles/health")
-async def get_profiles_health():
+async def get_profiles_health(_auth: bool = Depends(verify_api_access)):
     """
     Returns summary of authentication and connectivity health across all account profiles.
     """
@@ -302,7 +302,7 @@ _fleet_usage_cache: Dict[str, Any] = {
 FLEET_USAGE_CACHE_TTL = 60.0  # seconds
 
 @app.get("/api/usage", response_model=FleetUsageResponse)
-async def get_fleet_usage(force_refresh: bool = Query(False, description="Force bypass cache and query nlm directly")):
+async def get_fleet_usage(force_refresh: bool = Query(False, description="Force bypass cache and query nlm directly"), _auth: bool = Depends(verify_api_access)):
     """
     Returns plan usage and quota limits across all registered Google accounts.
     Uses an in-memory 60s cache unless force_refresh is True.
@@ -318,7 +318,7 @@ async def get_fleet_usage(force_refresh: bool = Query(False, description="Force 
     return fleet_response
 
 @app.get("/api/profiles/{profile_id}/usage", response_model=ProfileUsage)
-async def get_single_profile_usage(profile_id: str):
+async def get_single_profile_usage(profile_id: str, _auth: bool = Depends(verify_api_access)):
     """
     Fetches real-time usage limits for a specific Google account profile.
     Also updates the profile in the cached fleet summary if present.
@@ -348,7 +348,8 @@ async def list_notebooks(
     search: Optional[str] = Query(None),
     profile_id: Optional[str] = Query(None),
     tier: Optional[str] = Query(None),
-    category: Optional[str] = Query(None)
+    category: Optional[str] = Query(None),
+    _auth: bool = Depends(verify_api_access)
 ):
     notebooks = await get_cached_notebooks()
 
@@ -428,12 +429,12 @@ async def delete_notebook_from_cache(notebook_id: str, _auth: bool = Depends(ver
 # ----------------- HYBRID FOLDER MAPPING & SYNC API -----------------
 
 @app.get("/api/folders/mappings", response_model=Dict[str, FolderMapping])
-async def list_all_folder_mappings():
+async def list_all_folder_mappings(_auth: bool = Depends(verify_api_access)):
     """Returns all active folder-to-notebook mappings for dashboard badge rendering."""
     return await get_folder_mappings()
 
 @app.get("/api/notebooks/{notebook_id}/folder", response_model=FolderStatusResponse)
-async def get_notebook_folder_status(notebook_id: str):
+async def get_notebook_folder_status(notebook_id: str, _auth: bool = Depends(verify_api_access)):
     """
     Returns the mapped folder status, diffed file list (ingested, new, stale, unsupported),
     and NotebookLM 300-source Pro capacity gauge.
@@ -543,17 +544,17 @@ async def ask_cross_notebook(req: CrossQueryRequest, _auth: bool = Depends(verif
     return res
 
 @app.get("/api/rotation/status")
-async def get_rotation_diagnostics():
+async def get_rotation_diagnostics(_auth: bool = Depends(verify_api_access)):
     """Returns current query counter, per-profile statistics, and cooldown status."""
     return await rotator.get_status()
 
 @app.get("/api/fleet/health")
-async def get_fleet_health():
+async def get_fleet_health(_auth: bool = Depends(verify_api_access)):
     """Returns proactive health, auth verification, and cooldown diagnostics across all fleet nodes."""
     return await rotator.check_all_profiles_health()
 
 @app.get("/api/fleet/metrics")
-async def get_fleet_metrics():
+async def get_fleet_metrics(_auth: bool = Depends(verify_api_access)):
     """Returns real-time fleet utilization, in-flight concurrency, and Pro capacity metrics."""
     status = await rotator.get_status()
     total_nodes = status.get("total_profiles_in_pool", 0)
@@ -601,7 +602,7 @@ async def ask_notebook_rotated(
 # ----------------- CALENDAR & AGENDA API -----------------
 
 @app.get("/api/calendar/agenda", response_model=CalendarAgendaResponse)
-async def get_calendar_agenda(days: int = Query(7, ge=1, le=30, description="Days ahead to retrieve events")):
+async def get_calendar_agenda(days: int = Query(7, ge=1, le=30, description="Days ahead to retrieve events"), _auth: bool = Depends(verify_api_access)):
     """
     Returns today's and upcoming events from Google Calendar iCal feed,
     with smart automatic matching against user course and study notebooks.
@@ -610,7 +611,7 @@ async def get_calendar_agenda(days: int = Query(7, ge=1, le=30, description="Day
     return await calendar_service.get_agenda(notebooks, days=days, force_refresh=False)
 
 @app.post("/api/calendar/refresh", response_model=CalendarAgendaResponse)
-async def refresh_calendar_agenda(days: int = Query(7, ge=1, le=30, description="Days ahead to retrieve events")):
+async def refresh_calendar_agenda(days: int = Query(7, ge=1, le=30, description="Days ahead to retrieve events"), _auth: bool = Depends(verify_api_access)):
     """
     Forces a cache bypass and fetches the latest Google Calendar iCal feed.
     """
@@ -639,14 +640,14 @@ async def schedule_single_creation(req: SingleScheduleRequest, _auth: bool = Dep
     return await scheduler.schedule_job(req, nb_title)
 
 @app.get("/api/scheduler/jobs", response_model=List[ScheduledJob])
-async def list_scheduled_jobs(status: Optional[str] = Query(None, description="Filter by status (queued, scheduled, in_progress, completed, failed, download_failed, cancelled)")):
+async def list_scheduled_jobs(status: Optional[str] = Query(None, description="Filter by status (queued, scheduled, in_progress, completed, failed, download_failed, cancelled)"), _auth: bool = Depends(verify_api_access)):
     """
     Lists all creation jobs with optional status filter.
     """
     return scheduler.get_jobs(status_filter=status)
 
 @app.get("/api/scheduler/status", response_model=SchedulerStatusResponse)
-async def get_scheduler_status():
+async def get_scheduler_status(_auth: bool = Depends(verify_api_access)):
     """
     Returns live summary of the rotating fleet queue, active workers, and job counts.
     """
@@ -683,7 +684,7 @@ async def delete_job(job_id: str, _auth: bool = Depends(verify_api_access)):
     return {"success": True, "message": f"Job '{job_id}' deleted."}
 
 @app.get("/api/scheduler/downloads/{filename}")
-async def download_file(filename: str):
+async def download_file(filename: str, _auth: bool = Depends(verify_api_access)):
     """
     Serves a downloaded studio artifact file from the local downloads/ directory.
     """

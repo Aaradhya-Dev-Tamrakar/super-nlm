@@ -37,3 +37,26 @@ def test_remote_request_requires_configured_key(monkeypatch):
 def test_valid_remote_api_key(monkeypatch, header):
     monkeypatch.setattr(auth, "SUPER_NLM_API_KEY", "secret")
     assert asyncio.run(auth.verify_api_access(make_request(headers=[header]))) is True
+
+
+def test_api_endpoints_remote_auth_enforcement(monkeypatch):
+    from fastapi.testclient import TestClient
+    from backend.app import app
+
+    monkeypatch.setattr(auth, "SUPER_NLM_API_KEY", "secret")
+    monkeypatch.setattr(auth, "SUPER_NLM_REQUIRE_AUTH_LOCAL", True)
+
+    client = TestClient(app)
+
+    # Remote/enforced unauthenticated call should be 401
+    res_unauth = client.get("/api/profiles")
+    assert res_unauth.status_code == 401
+
+    # Call with valid Bearer token should succeed (200)
+    res_auth = client.get("/api/profiles", headers={"Authorization": "Bearer secret"})
+    assert res_auth.status_code == 200
+
+    # Call with invalid token should be 401
+    res_bad = client.get("/api/profiles", headers={"Authorization": "Bearer wrong"})
+    assert res_bad.status_code == 401
+

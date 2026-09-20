@@ -161,6 +161,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initGoogleRipple();
   loadAllChatHistories();
   setupEventListeners();
+  updateRemoteApiKeyBadge();
   renderAccountPills();
   renderCategoryChips();
   showSkeletons(true);
@@ -174,6 +175,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // ----------------- THEME CONTROLLER (Google Light / Dark / System) -----------------
 const THEME_STORAGE_KEY = 'supernlm_theme_mode';
+const REMOTE_API_KEY_STORAGE_KEY = 'super_nlm_api_key';
 
 function initTheme() {
   const savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || 'system';
@@ -312,7 +314,7 @@ function setupEventListeners() {
 
     // 2. Escape: Closes open modal / clears search input / clears selection
     if (e.key === 'Escape') {
-      const openModalIds = ['modal-shortcuts', 'modal-chat', 'modal-accounts', 'modal-cross', 'modal-batch-share', 'modal-usage', 'modal-scheduler', 'modal-folder-mapping'];
+      const openModalIds = ['modal-shortcuts', 'modal-chat', 'modal-accounts', 'modal-cross', 'modal-batch-share', 'modal-usage', 'modal-scheduler', 'modal-folder-mapping', 'auth-key-modal'];
       const openModalId = openModalIds.find(id => isModalOpen(id));
       if (openModalId) {
         closeModal(openModalId);
@@ -449,8 +451,35 @@ function setupEventListeners() {
     }
   });
 
+  const openAuthKeyBtn = document.getElementById('btn-open-auth-key-modal');
+  if (openAuthKeyBtn) {
+    openAuthKeyBtn.addEventListener('click', openRemoteAuthModal);
+  }
+
+  const authKeyForm = document.getElementById('auth-key-form');
+  if (authKeyForm) {
+    authKeyForm.addEventListener('submit', handleRemoteAuthSubmit);
+  }
+
+  const clearAuthKeyBtn = document.getElementById('btn-clear-auth-key');
+  if (clearAuthKeyBtn) {
+    clearAuthKeyBtn.addEventListener('click', () => {
+      const input = document.getElementById('auth-key-input');
+      if (input) input.value = '';
+      setStoredApiKey('');
+      updateRemoteApiKeyBadge();
+      closeRemoteAuthModal();
+      showToast('Remote access key cleared.', 'info');
+    });
+  }
+
+  const closeAuthKeyBtn = document.getElementById('close-auth-key-modal');
+  if (closeAuthKeyBtn) {
+    closeAuthKeyBtn.addEventListener('click', closeRemoteAuthModal);
+  }
+
   // Dismiss modals on backdrop click
-  ['modal-shortcuts', 'modal-chat', 'modal-accounts', 'modal-cross', 'modal-batch-share'].forEach(id => {
+  ['modal-shortcuts', 'modal-chat', 'modal-accounts', 'modal-cross', 'modal-batch-share', 'modal-usage', 'modal-scheduler', 'modal-folder-mapping', 'auth-key-modal'].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       el.addEventListener('click', (e) => {
@@ -881,6 +910,76 @@ function showSkeletons(show) {
   }
 }
 
+function getStoredApiKey() {
+  try {
+    return localStorage.getItem(REMOTE_API_KEY_STORAGE_KEY) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function setStoredApiKey(value) {
+  try {
+    if (!value) {
+      localStorage.removeItem(REMOTE_API_KEY_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(REMOTE_API_KEY_STORAGE_KEY, value);
+  } catch (e) {}
+}
+
+function updateRemoteApiKeyBadge() {
+  const btn = document.getElementById('btn-open-auth-key-modal');
+  const status = document.getElementById('auth-key-status');
+  const apiKey = getStoredApiKey();
+  if (status) {
+    status.textContent = apiKey ? 'Configured' : 'Not set';
+    status.classList.toggle('bg-[var(--google-green-container)]', !!apiKey);
+    status.classList.toggle('text-[var(--google-green)]', !!apiKey);
+    status.classList.toggle('bg-[var(--m3-surface-container)]', !apiKey);
+    status.classList.toggle('text-[var(--m3-on-surface-subtle)]', !apiKey);
+  }
+  if (btn) {
+    btn.title = apiKey ? 'Remote access key is configured' : 'Set your remote access key';
+  }
+}
+
+async function apiFetch(url, options = {}) {
+  const requestOptions = { ...options, headers: new Headers(options.headers || {}) };
+  const apiKey = getStoredApiKey();
+  if (apiKey) {
+    requestOptions.headers.set('Authorization', `Bearer ${apiKey}`);
+  }
+  const response = await apiFetch(url, requestOptions);
+  if (response.status === 401) {
+    openRemoteAuthModal();
+  }
+  return response;
+}
+
+function openRemoteAuthModal() {
+  const modal = document.getElementById('auth-key-modal');
+  const input = document.getElementById('auth-key-input');
+  if (modal) {
+    if (input) input.value = getStoredApiKey();
+    openModal('auth-key-modal');
+  }
+}
+
+function closeRemoteAuthModal() {
+  closeModal('auth-key-modal');
+}
+
+async function handleRemoteAuthSubmit(event) {
+  event.preventDefault();
+  const input = document.getElementById('auth-key-input');
+  const key = input ? input.value.trim() : '';
+  setStoredApiKey(key);
+  updateRemoteApiKeyBadge();
+  closeRemoteAuthModal();
+  showToast(key ? 'Remote access key saved locally.' : 'Remote access key cleared.', key ? 'success' : 'info');
+}
+
 // ----------------- AUTHENTICATION ALERT & HEALTH BANNER -----------------
 
 function renderAuthAlertBanner() {
@@ -959,7 +1058,7 @@ function renderAuthAlertBanner() {
 async function loadProfiles() {
   setGlobalLoading(true);
   try {
-    const res = await fetch('/api/profiles');
+    const res = await apiFetch('/api/profiles');
     if (res.ok) {
       state.profiles = await res.json();
       
@@ -990,7 +1089,7 @@ async function loadProfiles() {
 
 async function loadFolderMappings() {
   try {
-    const res = await fetch('/api/folders/mappings');
+    const res = await apiFetch('/api/folders/mappings');
     if (res.ok) {
       state.folderMappings = await res.json();
     }
@@ -1003,7 +1102,7 @@ async function loadNotebooks() {
   setGlobalLoading(true);
   try {
     const [nbRes] = await Promise.all([
-      fetch('/api/notebooks'),
+      apiFetch('/api/notebooks'),
       loadFolderMappings()
     ]);
     if (nbRes.ok) {
@@ -1038,7 +1137,7 @@ async function handleSyncAll() {
 
   try {
     const startTime = performance.now();
-    const res = await fetch('/api/notebooks/sync', { method: 'POST' });
+    const res = await apiFetch('/api/notebooks/sync', { method: 'POST' });
     if (!res.ok) {
       const errData = await res.json().catch(() => ({ detail: res.statusText }));
       throw new Error(errData.detail || `Server error (${res.status})`);
@@ -2252,7 +2351,7 @@ async function handleEditProfileSubmit(e) {
   setGlobalLoading(true);
 
   try {
-    const res = await fetch(`/api/profiles/${encodeURIComponent(oldProfileId)}`, {
+    const res = await apiFetch(`/api/profiles/${encodeURIComponent(oldProfileId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2311,7 +2410,7 @@ async function handleAddAccountSubmit(e) {
   setGlobalLoading(true);
 
   try {
-    const res = await fetch(`/api/profiles?launch_login=${launchLogin}`, {
+    const res = await apiFetch(`/api/profiles?launch_login=${launchLogin}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2355,7 +2454,7 @@ async function handleTriggerLogin(profileId) {
   setGlobalLoading(true);
 
   try {
-    const res = await fetch(`/api/profiles/${profileId}/login`, { method: 'POST' });
+    const res = await apiFetch(`/api/profiles/${profileId}/login`, { method: 'POST' });
     if (res.ok) {
       showToast(`Sign-in window launched for '${profileId}'`, 'info');
     }
@@ -2382,7 +2481,7 @@ async function handleSetPro(profileId) {
   setGlobalLoading(true);
 
   try {
-    const res = await fetch(`/api/profiles/${profileId}`, {
+    const res = await apiFetch(`/api/profiles/${profileId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ isDefaultPro: true, tier: 'pro' })
@@ -2409,7 +2508,7 @@ async function handleSetPro(profileId) {
 async function handleDeleteAccount(profileId) {
   if (!confirm(`Are you sure you want to remove profile '${profileId}' and its cached data?`)) return;
   try {
-    const res = await fetch(`/api/profiles/${profileId}`, { method: 'DELETE' });
+    const res = await apiFetch(`/api/profiles/${profileId}`, { method: 'DELETE' });
     if (res.ok) {
       await loadProfiles();
       await loadNotebooks();
@@ -2944,7 +3043,7 @@ async function handleChatSubmit(e) {
   const conversationId = getConversationIdForNotebook(notebookId);
 
   try {
-    const res = await fetch('/api/query', {
+    const res = await apiFetch('/api/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -3315,7 +3414,7 @@ async function handleRunCrossSynthesis() {
   }, 150);
 
   try {
-    const res = await fetch('/api/cross-query', {
+    const res = await apiFetch('/api/cross-query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -4159,7 +4258,7 @@ async function handleExecuteBatchShare() {
   }
 
   try {
-    const res = await fetch('/api/notebooks/batch-share', {
+    const res = await apiFetch('/api/notebooks/batch-share', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -4242,7 +4341,7 @@ async function loadCalendarAgenda(forceRefresh = false) {
   try {
     const endpoint = forceRefresh ? '/api/calendar/refresh?days=14' : '/api/calendar/agenda?days=14';
     const method = forceRefresh ? 'POST' : 'GET';
-    const res = await fetch(endpoint, { method });
+    const res = await apiFetch(endpoint, { method });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     state.calendarAgenda = data;
@@ -4508,7 +4607,7 @@ async function loadFleetUsage(forceRefresh = false) {
 
   try {
     const endpoint = forceRefresh ? '/api/usage?force_refresh=true' : '/api/usage';
-    const res = await fetch(endpoint);
+    const res = await apiFetch(endpoint);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || `HTTP ${res.status}`);
@@ -4538,7 +4637,7 @@ async function refreshProfileUsage(profileId) {
   if (btn) btn.disabled = true;
 
   try {
-    const res = await fetch(`/api/profiles/${encodeURIComponent(profileId)}/usage`);
+    const res = await apiFetch(`/api/profiles/${encodeURIComponent(profileId)}/usage`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const updated = await res.json();
 
@@ -5190,7 +5289,7 @@ async function loadSchedulerQueue(showAnimation = false) {
   if (showAnimation && refreshIcon) refreshIcon.classList.add('animate-spin');
 
   try {
-    const res = await fetch('/api/scheduler/status');
+    const res = await apiFetch('/api/scheduler/status');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     
@@ -5424,7 +5523,7 @@ function renderSchedulerQueueData(data) {
       const id = btn.getAttribute('data-id');
       if (id) {
         try {
-          await fetch(`/api/scheduler/jobs/${id}/run-now`, { method: 'POST' });
+          await apiFetch(`/api/scheduler/jobs/${id}/run-now`, { method: 'POST' });
           showToast('Job queued for immediate dispatch', 'success');
           loadSchedulerQueue(true);
         } catch (e) {
@@ -5439,7 +5538,7 @@ function renderSchedulerQueueData(data) {
       const id = btn.getAttribute('data-id');
       if (id) {
         try {
-          await fetch(`/api/scheduler/jobs/${id}`, { method: 'DELETE' });
+          await apiFetch(`/api/scheduler/jobs/${id}`, { method: 'DELETE' });
           showToast('Job removed from queue', 'info');
           loadSchedulerQueue(true);
         } catch (e) {
@@ -5486,7 +5585,7 @@ async function handleExecuteBatchSchedule() {
   if (btnLabel) btnLabel.textContent = 'Queueing across fleet...';
 
   try {
-    const res = await fetch('/api/scheduler/batch', {
+    const res = await apiFetch('/api/scheduler/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -5508,11 +5607,11 @@ async function handleExecuteBatchSchedule() {
 
 async function handleClearCompletedJobs() {
   try {
-    const res = await fetch('/api/scheduler/jobs?status=completed');
+    const res = await apiFetch('/api/scheduler/jobs?status=completed');
     if (!res.ok) return;
     const completed = await res.json();
     for (const job of completed) {
-      await fetch(`/api/scheduler/jobs/${job.id}`, { method: 'DELETE' });
+      await apiFetch(`/api/scheduler/jobs/${job.id}`, { method: 'DELETE' });
     }
     showToast('Cleared completed jobs from history', 'info');
     loadSchedulerQueue(true);
@@ -5623,7 +5722,7 @@ async function loadFolderMappingStatus(notebookId) {
   }
 
   try {
-    const res = await fetch(`/api/notebooks/${notebookId}/folder`);
+    const res = await apiFetch(`/api/notebooks/${notebookId}/folder`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     state.activeFolderStatus = data;
@@ -5829,7 +5928,7 @@ async function handleSaveOrScanFolder() {
   }
 
   try {
-    const res = await fetch(`/api/notebooks/${state.activeFolderNotebookId}/folder`, {
+    const res = await apiFetch(`/api/notebooks/${state.activeFolderNotebookId}/folder`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -5867,7 +5966,7 @@ async function handleUnlinkFolder() {
   if (!confirm('Unlink this folder from the notebook? No files will be deleted from your drive.')) return;
 
   try {
-    const res = await fetch(`/api/notebooks/${state.activeFolderNotebookId}/folder`, {
+    const res = await apiFetch(`/api/notebooks/${state.activeFolderNotebookId}/folder`, {
       method: 'DELETE'
     });
     if (!res.ok) throw new Error('Failed to unlink');
@@ -5911,7 +6010,7 @@ async function handleSyncFolderAction(action) {
   }
 
   try {
-    const res = await fetch(`/api/notebooks/${state.activeFolderNotebookId}/folder/sync`, {
+    const res = await apiFetch(`/api/notebooks/${state.activeFolderNotebookId}/folder/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
