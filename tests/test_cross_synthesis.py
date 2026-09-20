@@ -45,6 +45,7 @@ def test_cross_synthesis_empty_notebook_results():
         "diff the sources",
         [{"notebookId": "nb-empty", "profileId": "default",
           "result": {"success": False, "error": "timeout"}}],
+        api_key="test",
     ))
     assert result["success"] is False
     assert "No valid notebook answers" in result["error"]
