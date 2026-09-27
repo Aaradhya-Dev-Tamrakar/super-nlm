@@ -285,6 +285,17 @@ Queue and execute heavy **NotebookLM Studio** artifact generations autonomously:
 | `rotator.py` | Thread-safe `AccountRotator` managing atomic query counting, 120s burst / daily midnight quota cooldowns, multi-turn conversation pinning, and auto-sharing. |
 | `tools.py` | All 14 MCP tool registrations: `query_notebook`, `list_notebooks`, `list_profiles`, `sync_notebooks`, `cross_query`, `rotation_status`, `batch_share_notebooks`, `auto_share_study_courses`, `get_agenda`, `schedule_batch_creation`, `get_scheduled_queue`, `cancel_scheduled_job`, `map_notebook_folder`, `get_folder_status`, `sync_notebook_folder`. |
 
+### Agent Skills (`.agents/skills/`)
+| Skill | Location | Description |
+|---|---|---|
+| `super-nlm` | `.agents/skills/super-nlm/SKILL.md` | Comprehensive agent orchestration skill for Google NotebookLM multi-account fleets, parallel MCP queries, Studio artifact scheduling & deduplicated downloads, folder mapping, and academic course exam copiloting. |
+| `antigravity-ui-motion-design-expert` | `.agents/skills/antigravity-ui-motion-design-expert/` | Spatial layouts, 3D CSS transforms, and multi-layer glassmorphism. |
+| `design-taste-frontend` | `.agents/skills/design-taste-frontend/` | High-agency frontend design rules and calibrated color systems. |
+| `google-stitch-integration` | `.agents/skills/google-stitch-integration/` | Google Stitch layout generator and design token ingestion. |
+| `google-ux-fluidity` | `.agents/skills/google-ux-fluidity/` | Material Design 3 fluidity and tactile micro-interactions. |
+| `shadcn-context` | `.agents/skills/shadcn-context/` | Exact component schemas and composition rules for shadcn/ui. |
+| `ui-ux-pro-max` | `.agents/skills/ui-ux-pro-max/` | Advanced UI/UX intelligence and responsive typography hierarchy. |
+
 ### Backend (`backend/`)
 | File | Description |
 |---|---|
