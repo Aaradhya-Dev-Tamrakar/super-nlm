@@ -1,12 +1,14 @@
 import os
 import re
 import json
+import time
 import asyncio
 import logging
 import tempfile
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
+import httpx
 
 from backend.config import (
     NLM_EXECUTABLE,
@@ -16,7 +18,9 @@ from backend.config import (
     NLM_MEDIA_FORMATS,
     CODE_ADAPTER_EXTENSIONS,
     EXCEL_EXTENSIONS,
-    IGNORED_EXTENSIONS
+    IGNORED_EXTENSIONS,
+    GDRIVE_CREDENTIALS_PATH,
+    GDRIVE_OAUTH_PATH
 )
 from backend.models import (
     FolderMapping, FolderFileItem, FolderStatusResponse,
@@ -119,9 +123,152 @@ def prepare_code_file_as_markdown(filepath: Path) -> str:
         logger.warning(f"Error reading code file {filepath}: {e}")
         return f"# {filepath.name}\n(Could not read file)\n"
 
+async def get_drive_access_token() -> Optional[str]:
+    """
+    Retrieves or refreshes a valid Google Drive OAuth access token using
+    the configured GDRIVE_CREDENTIALS_PATH and GDRIVE_OAUTH_PATH.
+    """
+    cred_file = Path(GDRIVE_CREDENTIALS_PATH)
+    oauth_file = Path(GDRIVE_OAUTH_PATH)
+
+    if not cred_file.exists():
+        logger.debug(f"Drive credentials not found at {cred_file}")
+        return None
+
+    try:
+        with open(cred_file, "r", encoding="utf-8") as f:
+            creds = json.load(f)
+
+        expiry = creds.get("expiry_date", 0)
+        # Check if expired or expiring within 60s
+        if expiry and expiry < (time.time() * 1000 + 60000):
+            if not oauth_file.exists():
+                logger.warning(f"OAuth client secret file not found at {oauth_file}, cannot refresh Drive token")
+                return creds.get("access_token")
+
+            with open(oauth_file, "r", encoding="utf-8") as f:
+                oauth = json.load(f)
+            keys = oauth.get("installed") or oauth.get("web")
+            if not keys:
+                return creds.get("access_token")
+
+            refresh_data = {
+                "client_id": keys["client_id"],
+                "client_secret": keys["client_secret"],
+                "refresh_token": creds["refresh_token"],
+                "grant_type": "refresh_token",
+            }
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                res = await client.post("https://oauth2.googleapis.com/token", data=refresh_data)
+                if res.status_code == 200:
+                    token_data = res.json()
+                    creds["access_token"] = token_data["access_token"]
+                    if "expires_in" in token_data:
+                        creds["expiry_date"] = int((time.time() + token_data["expires_in"]) * 1000)
+                    with open(cred_file, "w", encoding="utf-8") as f:
+                        json.dump(creds, f, indent=2)
+                else:
+                    logger.warning(f"Failed to refresh Drive token: {res.text}")
+
+        return creds.get("access_token")
+    except Exception as e:
+        logger.warning(f"Error obtaining Drive access token: {e}")
+        return None
+
+def normalize_title_for_matching(title: str) -> str:
+    """Normalizes title for fuzzy matching across spaces, underscores, hyphens, and dashes."""
+    t = title.strip().lower()
+    return re.sub(r'[\s_\-–—]+', ' ', t)
+
 class DriveSyncService:
     def __init__(self):
         self._sync_lock = asyncio.Lock()
+
+    async def scan_drive_folder(self, folder_id: str, recursive: bool = False) -> List[FolderFileItem]:
+        """
+        Scans a remote Google Drive folder for files via Google Drive REST API.
+        """
+        token = await get_drive_access_token()
+        if not token:
+            logger.warning("No Google Drive access token available to scan folder.")
+            return []
+
+        headers = {"Authorization": f"Bearer {token}"}
+        items_found: List[FolderFileItem] = []
+        page_token = None
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                while True:
+                    params: Dict[str, Any] = {
+                        "q": f"'{folder_id}' in parents and trashed = false",
+                        "fields": "nextPageToken, files(id, name, mimeType, modifiedTime, size)",
+                        "pageSize": 100
+                    }
+                    if page_token:
+                        params["pageToken"] = page_token
+
+                    res = await client.get("https://www.googleapis.com/drive/v3/files", params=params, headers=headers)
+                    if res.status_code != 200:
+                        logger.error(f"Drive API returned {res.status_code}: {res.text}")
+                        break
+
+                    data = res.json()
+                    files = data.get("files", [])
+
+                    for f in files:
+                        mime = f.get("mimeType", "")
+                        name = f.get("name", "")
+                        f_id = f.get("id", "")
+
+                        if mime == "application/vnd.google-apps.folder":
+                            if recursive:
+                                sub_files = await self.scan_drive_folder(f_id, recursive=True)
+                                items_found.extend(sub_files)
+                            continue
+
+                        ext = Path(name).suffix.lower()
+                        if not ext:
+                            if mime == "application/vnd.google-apps.document":
+                                ext = ".gdoc"
+                            elif mime == "application/vnd.google-apps.spreadsheet":
+                                ext = ".gsheet"
+                            elif mime == "application/vnd.google-apps.presentation":
+                                ext = ".gslides"
+
+                        category, status, req_adapter = categorize_file(name if ext else f"{name}{ext}")
+                        if mime.startswith("application/vnd.google-apps."):
+                            if "document" in mime or "presentation" in mime:
+                                category = "document"
+                                status = "new"
+                            elif "spreadsheet" in mime:
+                                category = "spreadsheet"
+                                status = "new"
+
+                        size_b = int(f.get("size") or 0)
+                        mod_iso = f.get("modifiedTime") or datetime.now().isoformat()
+
+                        items_found.append(FolderFileItem(
+                            name=name,
+                            path_or_id=f_id,
+                            extension=ext,
+                            size_bytes=size_b,
+                            modified_at=mod_iso,
+                            status=status,
+                            category=category,
+                            requires_code_adapter=req_adapter,
+                            detail="Drive file"
+                        ))
+
+                    page_token = data.get("nextPageToken")
+                    if not page_token:
+                        break
+
+        except Exception as e:
+            logger.error(f"Error scanning Drive folder {folder_id}: {e}")
+
+        items_found.sort(key=lambda x: x.name.lower())
+        return items_found
 
     async def get_notebook_sources(self, notebook_id: str, profile_id: str = "default") -> List[Dict[str, Any]]:
         """Fetches current sources from NotebookLM."""
@@ -207,34 +354,40 @@ class DriveSyncService:
         current_source_count = len(sources) if sources else (nb.source_count if nb else 0)
         stale_source_indicators = await self.get_stale_drive_sources(notebook_id, profile_id=profile_id)
 
-        # Build lookup set of existing source titles and IDs
+        # Build lookup sets and normalized dictionaries of existing source titles and IDs
         existing_titles = {s.get("title", "").strip().lower(): s for s in sources if s.get("title")}
         existing_ids = {s.get("id", "").strip(): s for s in sources if s.get("id")}
+        norm_titles = {normalize_title_for_matching(s.get("title", "")): s for s in sources if s.get("title")}
+        norm_stems = {normalize_title_for_matching(Path(s.get("title", "")).stem): s for s in sources if s.get("title")}
 
         files: List[FolderFileItem] = []
         if mapping:
             if mapping.folder_type == "local_folder":
                 files = await self.scan_local_folder(mapping.target_path, recursive=mapping.recursive)
             elif mapping.folder_type == "drive_web":
-                # For Drive web folders, display all current live notebook sources with Drive sync status
-                for s in sources:
-                    s_title = s.get("title") or "Drive Source"
-                    s_id = s.get("id") or ""
-                    s_ext = Path(s_title).suffix.lower() or ".pdf"
-                    is_stale = s_id in stale_source_indicators or s_title.strip().lower() in stale_source_indicators
-                    category, _, req_adapter = categorize_file(s_title)
-                    files.append(FolderFileItem(
-                        name=s_title,
-                        path_or_id=s_id,
-                        extension=s_ext,
-                        size_bytes=0,
-                        modified_at=datetime.now().isoformat(),
-                        status="stale" if is_stale else "ingested",
-                        category=category,
-                        source_id=s_id,
-                        requires_code_adapter=req_adapter,
-                        detail="Modified in Google Drive, refresh needed" if is_stale else "Ingested from Google Drive"
-                    ))
+                drive_files = await self.scan_drive_folder(mapping.target_path, recursive=mapping.recursive)
+                if drive_files:
+                    files = drive_files
+                else:
+                    # Fallback to existing notebook sources if Drive credentials not configured or folder scan yielded no files
+                    for s in sources:
+                        s_title = s.get("title") or "Drive Source"
+                        s_id = s.get("id") or ""
+                        s_ext = Path(s_title).suffix.lower() or ".pdf"
+                        is_stale = s_id in stale_source_indicators or s_title.strip().lower() in stale_source_indicators
+                        category, _, req_adapter = categorize_file(s_title)
+                        files.append(FolderFileItem(
+                            name=s_title,
+                            path_or_id=s_id,
+                            extension=s_ext,
+                            size_bytes=0,
+                            modified_at=datetime.now().isoformat(),
+                            status="stale" if is_stale else "ingested",
+                            category=category,
+                            source_id=s_id,
+                            requires_code_adapter=req_adapter,
+                            detail="Modified in Google Drive, refresh needed" if is_stale else "Ingested from Google Drive"
+                        ))
 
         # Diffing logic
         new_count = 0
@@ -247,15 +400,23 @@ class DriveSyncService:
                 unsupported_count += 1
                 continue
 
-            # Check if matching source exists
+            # Robust matching: exact, normalized name, normalized stem, or Drive/source ID
             clean_name = f.name.strip().lower()
-            matched_source = existing_titles.get(clean_name)
+            norm_name = normalize_title_for_matching(f.name)
+            norm_stem = normalize_title_for_matching(Path(f.name).stem)
+
+            matched_source = (
+                existing_titles.get(clean_name)
+                or norm_titles.get(norm_name)
+                or norm_stems.get(norm_stem)
+                or existing_ids.get(f.path_or_id)
+            )
 
             if matched_source:
                 source_id = matched_source.get("id")
                 f.source_id = source_id
                 # Check if stale
-                if source_id in stale_source_indicators or clean_name in stale_source_indicators:
+                if source_id in stale_source_indicators or clean_name in stale_source_indicators or norm_name in stale_source_indicators:
                     f.status = "stale"
                     f.detail = "Modified in Drive, refresh needed"
                     stale_count += 1
@@ -265,6 +426,7 @@ class DriveSyncService:
                     ingested_count += 1
             else:
                 f.status = "new"
+                f.detail = "New file in Google Drive, ready to ingest" if mapping and mapping.folder_type == "drive_web" else "New file on disk"
                 new_count += 1
 
         capacity_percent = round((current_source_count / max_capacity) * 100, 1) if max_capacity > 0 else 0.0
@@ -358,6 +520,46 @@ class DriveSyncService:
                         failed_count += 1
                         break
 
+                    # Rate-limiting throttle breather: 1.5s between consecutive uploads
+                    if idx > 0:
+                        await asyncio.sleep(1.5)
+
+                    if mapping.folder_type == "drive_web":
+                        try:
+                            cmd_args = [
+                                "source", "add", notebook_id,
+                                "--drive", file_item.path_or_id,
+                                "--title", file_item.name,
+                                "--profile", profile_id,
+                                "--wait"
+                            ]
+                            logger.info(f"Ingesting Drive file: {file_item.name} ({file_item.path_or_id}) -> notebook {notebook_id}")
+                            res = await run_nlm_cmd(cmd_args, timeout=180)
+                            if res.get("success"):
+                                ingested_count += 1
+                                results.append({
+                                    "file": file_item.name,
+                                    "status": "success",
+                                    "detail": "Successfully ingested from Google Drive"
+                                })
+                            else:
+                                failed_count += 1
+                                err = res.get("stderr") or res.get("stdout") or "Drive ingestion error"
+                                results.append({
+                                    "file": file_item.name,
+                                    "status": "failed",
+                                    "error": err
+                                })
+                        except Exception as e:
+                            failed_count += 1
+                            logger.error(f"Failed to ingest Drive file {file_item.name}: {e}")
+                            results.append({
+                                "file": file_item.name,
+                                "status": "failed",
+                                "error": str(e)
+                            })
+                        continue
+
                     file_path = Path(file_item.path_or_id)
                     if not file_path.exists():
                         results.append({
@@ -367,10 +569,6 @@ class DriveSyncService:
                         })
                         failed_count += 1
                         continue
-
-                    # Rate-limiting throttle breather: 1.5s between consecutive uploads
-                    if idx > 0:
-                        await asyncio.sleep(1.5)
 
                     try:
                         cmd_args = []

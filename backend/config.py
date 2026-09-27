@@ -103,3 +103,7 @@ SUPER_NLM_ALLOWED_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+
+# Google Drive OAuth Configuration for Folder Sync
+GDRIVE_CREDENTIALS_PATH = os.environ.get("GDRIVE_CREDENTIALS_PATH", "").strip() or str(Path.home() / ".gdrive-server-credentials.json")
+GDRIVE_OAUTH_PATH = os.environ.get("GDRIVE_OAUTH_PATH", "").strip() or str(Path.home() / ".gdrive-credentials.json")
