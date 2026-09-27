@@ -270,6 +270,25 @@ class DriveSyncService:
         items_found.sort(key=lambda x: x.name.lower())
         return items_found
 
+    async def download_drive_file(self, file_id: str, dest_path: Path) -> bool:
+        """Downloads a file's raw bytes from Google Drive to a local destination path."""
+        token = await get_drive_access_token()
+        if not token:
+            return False
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                res = await client.get(f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media", headers=headers)
+                if res.status_code == 200:
+                    dest_path.write_bytes(res.content)
+                    return True
+                else:
+                    logger.warning(f"Failed to download Drive file {file_id}: HTTP {res.status_code}")
+                    return False
+        except Exception as e:
+            logger.error(f"Error downloading Drive file {file_id}: {e}")
+            return False
+
     async def get_notebook_sources(self, notebook_id: str, profile_id: str = "default") -> List[Dict[str, Any]]:
         """Fetches current sources from NotebookLM."""
         res = await run_nlm_cmd(["source", "list", notebook_id, "--profile", profile_id, "--json"], timeout=45)
@@ -525,14 +544,48 @@ class DriveSyncService:
                         await asyncio.sleep(1.5)
 
                     if mapping.folder_type == "drive_web":
+                        temp_dl_file = None
                         try:
-                            cmd_args = [
-                                "source", "add", notebook_id,
-                                "--drive", file_item.path_or_id,
-                                "--title", file_item.name,
-                                "--profile", profile_id,
-                                "--wait"
-                            ]
+                            # For native Google Docs, Sheets, Slides, link via --drive
+                            if file_item.extension in (".gdoc", ".gsheet", ".gslides"):
+                                cmd_args = [
+                                    "source", "add", notebook_id,
+                                    "--drive", file_item.path_or_id,
+                                    "--title", file_item.name,
+                                    "--profile", profile_id,
+                                    "--wait"
+                                ]
+                            else:
+                                # For Markdown, PDFs, text, code, download content first to ensure flawless ingestion
+                                ext = file_item.extension or ".txt"
+                                temp_fd, temp_dl_path = tempfile.mkstemp(prefix="nlm_drive_dl_", suffix=ext)
+                                os.close(temp_fd)
+                                temp_dl_file = Path(temp_dl_path)
+                                ok = await self.download_drive_file(file_item.path_or_id, temp_dl_file)
+                                if not ok:
+                                    cmd_args = [
+                                        "source", "add", notebook_id,
+                                        "--drive", file_item.path_or_id,
+                                        "--title", file_item.name,
+                                        "--profile", profile_id,
+                                        "--wait"
+                                    ]
+                                else:
+                                    if file_item.requires_code_adapter:
+                                        if file_item.extension == ".ipynb":
+                                            adapted_content = convert_ipynb_to_markdown(temp_dl_file)
+                                        else:
+                                            adapted_content = prepare_code_file_as_markdown(temp_dl_file)
+                                        temp_dl_file.write_text(adapted_content, encoding="utf-8")
+
+                                    cmd_args = [
+                                        "source", "add", notebook_id,
+                                        "--file", str(temp_dl_file.resolve()),
+                                        "--title", file_item.name,
+                                        "--profile", profile_id,
+                                        "--wait"
+                                    ]
+
                             logger.info(f"Ingesting Drive file: {file_item.name} ({file_item.path_or_id}) -> notebook {notebook_id}")
                             res = await run_nlm_cmd(cmd_args, timeout=180)
                             if res.get("success"):
@@ -558,6 +611,12 @@ class DriveSyncService:
                                 "status": "failed",
                                 "error": str(e)
                             })
+                        finally:
+                            if temp_dl_file and temp_dl_file.exists():
+                                try:
+                                    temp_dl_file.unlink()
+                                except Exception:
+                                    pass
                         continue
 
                     file_path = Path(file_item.path_or_id)
