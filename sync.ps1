@@ -442,11 +442,16 @@ try {
     }
 
     # 1. Pull latest changes
-    Write-Status "Pulling latest updates from origin/$currentBranch..."
-    git pull --rebase --autostash origin $currentBranch
-    if ($LASTEXITCODE -ne 0) {
-        Write-Fail "git pull encountered conflicts or errors."
-        exit $LASTEXITCODE
+    $remoteBranchExists = git ls-remote --heads origin $currentBranch 2>$null
+    if ($remoteBranchExists) {
+        Write-Status "Pulling latest updates from origin/$currentBranch..."
+        git pull --rebase --autostash origin $currentBranch
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "git pull encountered conflicts or errors."
+            exit $LASTEXITCODE
+        }
+    } else {
+        Write-Status "Branch $currentBranch is local-only. Skipping initial pull."
     }
 
     if ($PullOnly) {
@@ -459,13 +464,13 @@ try {
     $statusPorcelain = git status --porcelain 2>$null
     $hasUncommitted = [bool]($statusPorcelain -and $statusPorcelain.Trim().Length -gt 0)
 
-    $unpushed = git rev-list "origin/$currentBranch..$currentBranch" 2>$null
+    $unpushed = if ($remoteBranchExists) { git rev-list "origin/$currentBranch..$currentBranch" 2>$null } else { git rev-list "$currentBranch" 2>$null }
     $hasUnpushed = [bool]($unpushed -and $unpushed.Trim().Length -gt 0)
 
     if ($PushOnly) {
         if ($hasUnpushed) {
             Write-Status "Pushing existing commits to origin/$currentBranch..."
-            git push origin $currentBranch
+            git push -u origin $currentBranch
             Write-Success "Push completed successfully."
         }
         else {
@@ -553,11 +558,11 @@ try {
     }
 
     Write-Status "Pushing to origin/$currentBranch..."
-    git push origin $currentBranch
+    git push -u origin $currentBranch
     if ($LASTEXITCODE -ne 0) {
         Write-Notice "Push was rejected (remote may have new changes). Pulling with rebase and retrying..."
         git pull --rebase --autostash origin $currentBranch
-        git push origin $currentBranch
+        git push -u origin $currentBranch
         if ($LASTEXITCODE -ne 0) {
             Write-Fail "Push failed after retry. Please inspect conflicts manually."
             exit $LASTEXITCODE
