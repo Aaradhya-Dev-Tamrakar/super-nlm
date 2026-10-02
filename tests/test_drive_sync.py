@@ -183,66 +183,68 @@ def test_normalize_title_for_matching():
     assert normalize_title_for_matching("Past Questions — ME 708.md") == normalize_title_for_matching("Past Questions - ME 708.md")
     assert normalize_title_for_matching("  Lab__01 - Intro  ") == "lab 01 intro"
 
-@pytest.mark.asyncio
-async def test_drive_web_folder_status_and_sync(monkeypatch):
-    test_nb_id = "test-drive-web-sync-nb"
-    mapping = FolderMapping(
-        notebook_id=test_nb_id,
-        folder_type="drive_web",
-        target_path="1FakeDriveFolderId12345",
-        display_name="Test Drive Folder",
-        recursive=False
-    )
-    await save_folder_mapping(mapping)
-
-    # Mock Drive folder scanning returning 2 files
-    from backend.models import FolderFileItem
-    mock_files = [
-        FolderFileItem(
-            name="Lecture_1.pdf",
-            path_or_id="drive-file-id-1",
-            extension=".pdf",
-            size_bytes=1024,
-            modified_at="2026-09-27T10:00:00",
-            status="new",
-            category="document"
-        ),
-        FolderFileItem(
-            name="Course_Syllabus.docx",
-            path_or_id="drive-file-id-2",
-            extension=".docx",
-            size_bytes=2048,
-            modified_at="2026-09-27T10:00:00",
-            status="new",
-            category="document"
+def test_drive_web_folder_status_and_sync(monkeypatch):
+    async def _test():
+        test_nb_id = "test-drive-web-sync-nb"
+        mapping = FolderMapping(
+            notebook_id=test_nb_id,
+            folder_type="drive_web",
+            target_path="1FakeDriveFolderId12345",
+            display_name="Test Drive Folder",
+            recursive=False
         )
-    ]
-    monkeypatch.setattr(drive_sync_service, "scan_drive_folder", lambda folder_id, recursive=False: asyncio.sleep(0, result=mock_files))
+        await save_folder_mapping(mapping)
 
-    # Mock notebook sources (Lecture 1 already ingested with different spacing)
-    mock_sources = [
-        {"id": "source-1", "title": "Lecture 1.pdf"}
-    ]
-    monkeypatch.setattr(drive_sync_service, "get_notebook_sources", lambda notebook_id, profile_id="default": asyncio.sleep(0, result=mock_sources))
-    monkeypatch.setattr(drive_sync_service, "get_stale_drive_sources", lambda notebook_id, profile_id="default": asyncio.sleep(0, result=[]))
+        # Mock Drive folder scanning returning 2 files
+        from backend.models import FolderFileItem
+        mock_files = [
+            FolderFileItem(
+                name="Lecture_1.pdf",
+                path_or_id="drive-file-id-1",
+                extension=".pdf",
+                size_bytes=1024,
+                modified_at="2026-09-27T10:00:00",
+                status="new",
+                category="document"
+            ),
+            FolderFileItem(
+                name="Course_Syllabus.docx",
+                path_or_id="drive-file-id-2",
+                extension=".docx",
+                size_bytes=2048,
+                modified_at="2026-09-27T10:00:00",
+                status="new",
+                category="document"
+            )
+        ]
+        monkeypatch.setattr(drive_sync_service, "scan_drive_folder", lambda folder_id, recursive=False: asyncio.sleep(0, result=mock_files))
 
-    status = await drive_sync_service.get_folder_status(test_nb_id)
-    assert status.notebook_id == test_nb_id
-    assert status.ingested_count == 1  # Lecture_1.pdf matched Lecture 1.pdf
-    assert status.new_count == 1       # Course_Syllabus.docx is new
+        # Mock notebook sources (Lecture 1 already ingested with different spacing)
+        mock_sources = [
+            {"id": "source-1", "title": "Lecture 1.pdf"}
+        ]
+        monkeypatch.setattr(drive_sync_service, "get_notebook_sources", lambda notebook_id, profile_id="default": asyncio.sleep(0, result=mock_sources))
+        monkeypatch.setattr(drive_sync_service, "get_stale_drive_sources", lambda notebook_id, profile_id="default": asyncio.sleep(0, result=[]))
 
-    # Test sync_folder on new file
-    mock_added_cmds = []
-    async def mock_run_nlm_cmd(cmd_args, timeout=180):
-        mock_added_cmds.append(cmd_args)
-        return {"success": True, "stdout": json.dumps({"source_id": "new-src-id"})}
+        status = await drive_sync_service.get_folder_status(test_nb_id)
+        assert status.notebook_id == test_nb_id
+        assert status.ingested_count == 1  # Lecture_1.pdf matched Lecture 1.pdf
+        assert status.new_count == 1       # Course_Syllabus.docx is new
 
-    from backend import drive_sync_service as dss_module
-    monkeypatch.setattr(dss_module, "run_nlm_cmd", mock_run_nlm_cmd)
+        # Test sync_folder on new file
+        mock_added_cmds = []
+        async def mock_run_nlm_cmd(cmd_args, timeout=180):
+            mock_added_cmds.append(cmd_args)
+            return {"success": True, "stdout": json.dumps({"source_id": "new-src-id"})}
 
-    sync_res = await drive_sync_service.sync_folder(test_nb_id, action="ingest_new")
-    assert sync_res.success is True
-    assert sync_res.ingested_count == 1
-    assert any("--drive" in cmd and "drive-file-id-2" in cmd for cmd in mock_added_cmds)
+        from backend import drive_sync_service as dss_module
+        monkeypatch.setattr(dss_module, "run_nlm_cmd", mock_run_nlm_cmd)
 
-    await delete_folder_mapping(test_nb_id)
+        sync_res = await drive_sync_service.sync_folder(test_nb_id, action="ingest_new")
+        assert sync_res.success is True
+        assert sync_res.ingested_count == 1
+        assert any("--drive" in cmd and "drive-file-id-2" in cmd for cmd in mock_added_cmds)
+
+        await delete_folder_mapping(test_nb_id)
+
+    asyncio.run(_test())
