@@ -89,10 +89,17 @@ When `super-nlm` MCP server is active, use the following tools:
 
 The `nlm` unified CLI can be executed directly for high-throughput batch operations:
 
-### Studio Artifact Downloads
-To download all artifacts from a notebook into a target folder without duplicates:
+### Studio Artifact Downloads & LocalSend Sharing
+For automated URL resolution, folder routing outside the repo, and LocalSend transfers, activate the companion skill **`super-nlm-downloads`**:
 ```powershell
-nlm download all <notebook_id> --output-dir "C:\Path\To\Subject Folder" --skip-existing --interactive-format markdown
+node C:\Users\Aaradhya\.gemini\config\skills\super-nlm-downloads\scripts\download_and_share.mjs "<notebook_url_or_id>" [--share] [--files-only] [--to "V2029"]
+```
+> [!IMPORTANT]
+> **Zero Repo Pollution Rule**: Never download or stage artifacts inside the repository working tree. Always route to subject folders directly under `C:\Users\Aaradhya\Downloads\<Subject> Exam`.
+
+To download manually into a subject folder without duplicates:
+```powershell
+nlm download all <notebook_id> --output-dir "C:\Users\Aaradhya\Downloads\<Subject> Exam" --skip-existing --interactive-format markdown
 ```
 
 To download specific artifact types:
@@ -113,6 +120,7 @@ nlm studio status <notebook_id> --json
 ```
 
 ---
+
 
 ## 4. Academic Course Mappings & Notebook IDs
 
