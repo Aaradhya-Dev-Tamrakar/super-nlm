@@ -329,11 +329,20 @@ Queue and execute heavy **NotebookLM Studio** artifact generations autonomously:
 ### Scripts & Tools
 | File | Description |
 |---|---|
+| `scripts/scaffold_iv_ii_folders.py` | Deterministic academic folder scaffolder and syllabus extractor for Year IV Part II. |
+| `scripts/batch_setup_iv_ii.py` | Multi-account fleet batch provisioner for IV-II core notebooks (EX756, CE752, EX758, CT751). |
 | `sync.ps1` / `sync.bat` | Unified Git synchronization, secret scanner, and auto-commit engine. |
 | `launch.ps1` / `launch.bat` | Local desktop launcher with Dev Drive ReFS optimization. |
 | `launch_remote.bat` | Remote launcher with automatic Cloudflare HTTPS tunneling. |
 | `setup_tailscale.ps1` | Automated Tailscale mesh network configuration. |
 | `deploy_cloud_run.ps1` / `deploy_cloud_run.bat` | 1-click Google Cloud Run deployment. |
+
+### Agents & Skills (`.agents/skills/`)
+| Skill | Description |
+|---|---|
+| `academic-notebook-architect` | End-to-end procedural workflow for scaffolding academic repositories, extracting syllabi, authoring high-yield study hubs with KaTeX formulas and exam traps, and multi-account NotebookLM provisioning. |
+| `super-nlm` | Core operational skill for Super-NLM multi-account rotation, queries, and studio batch generation. |
+| `super-nlm-downloads` | Automated studio artifact downloader and LocalSend network sharing companion. |
 
 ### Data (`data/`)
 | File | Description |
@@ -343,3 +352,8 @@ Queue and execute heavy **NotebookLM Studio** artifact generations autonomously:
 | `folder_mappings.json` | Notebook-to-folder mappings with type, path, scan settings, and last scanned timestamp. |
 | `scheduled_jobs.json` | Persisted job queue for studio artifact generation (survives restarts). |
 | `dsap_guide.md` | Course reference guide for CT704 Digital Signal Analysis and Processing. |
+| `telecom_guide.md` | Course reference guide & exam traps for EX756 / EX703 Telecommunications. |
+| `epp_guide.md` | Legal statutes & ethics case study guide for CE752 Engineering Professional Practice. |
+| `ees_guide.md` | Renewable energy & PV system sizing numerical cheat sheet for EX758 Energy, Environment and Society. |
+| `is_guide.md` | Architecture, Balanced Scorecard & MapReduce cheat sheet for CT751 Information Systems. |
+
