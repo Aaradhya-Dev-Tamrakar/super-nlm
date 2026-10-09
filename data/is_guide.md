@@ -63,20 +63,14 @@ A strategic performance management framework translating mission and strategy in
 
 #### 1. ERP, SCM, and CRM Matrix
 
-```
-                      [   SUPPLIERS   ]
-                            |
-                     ( SCM Pipeline )
-                            v
-+-----------------------------------------------------------+
-|               ENTERPRISE RESOURCE PLANNING (ERP)          |
-|  - Financials & Accounting      - Production Planning    |
-|  - Human Capital Management     - Inventory / Warehouse   |
-+-----------------------------------------------------------+
-                            |
-                     ( CRM Channels )
-                            v
-                      [   CUSTOMERS   ]
+```mermaid
+flowchart TD
+    sup["[ SUPPLIERS ]"]
+    erp["ENTERPRISE RESOURCE PLANNING (ERP)<br>- Financials & Accounting<br>- Production Planning<br>- Human Capital Management<br>- Inventory / Warehouse"]
+    cust["[ CUSTOMERS ]"]
+    
+    sup -- "( SCM Pipeline )" --> erp
+    erp -- "( CRM Channels )" --> cust
 ```
 
 - **ERP (Enterprise Resource Planning)**: Centralized relational transactional database eliminating isolated departmental data silos; enforces standardized business process workflows.

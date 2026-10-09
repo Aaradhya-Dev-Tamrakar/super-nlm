@@ -111,21 +111,16 @@ This comprehensive reference guide outlines theoretical mechanisms, mathematical
 
 #### 2. ITU Common Channel Signaling System No. 7 (SS7)
 
-```
-SS7 Architecture Protocol Stack:
-+-------------------------------------------------------+
-|  Application Layer: TCAP, MAP, INAP, CAMEL            |
-+-------------------------------------------------------+
-|  Call Control: ISUP (ISDN User Part) / TUP (Tel User) |
-+-------------------------------------------------------+
-|  SCCP (Signaling Connection Control Part - Global Title)|
-+-------------------------------------------------------+
-|  MTP-3 (Message Transfer Part Level 3: Routing/Network)|
-+-------------------------------------------------------+
-|  MTP-2 (Message Transfer Part Level 2: Link HDLC/FCS) |
-+-------------------------------------------------------+
-|  MTP-1 (Message Transfer Part Level 1: Physical E1/V.35)|
-+-------------------------------------------------------+
+```mermaid
+flowchart TB
+    app["Application Layer: TCAP, MAP, INAP, CAMEL"]
+    cc["Call Control: ISUP (ISDN User Part) / TUP (Tel User)"]
+    sccp["SCCP (Signaling Connection Control Part - Global Title)"]
+    mtp3["MTP-3 (Message Transfer Part Level 3: Routing/Network)"]
+    mtp2["MTP-2 (Message Transfer Part Level 2: Link HDLC/FCS)"]
+    mtp1["MTP-1 (Message Transfer Part Level 1: Physical E1/V.35)"]
+    
+    app --- cc --- sccp --- mtp3 --- mtp2 --- mtp1
 ```
 
 - **SS7 Network Nodes**:
