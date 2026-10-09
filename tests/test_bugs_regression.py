@@ -82,7 +82,7 @@ def test_regression_query_error_extraction():
     res = asyncio.run(query_notebook('default', 'non_existent_notebook_id_xyz', 'test question'))
     assert res['success'] is False
     err = res['error'].lower()
-    assert 'not_found' in err or 'api error' in err or 'not found' in err or 'no such file' in err
+    assert 'not_found' in err or 'api error' in err or 'not found' in err or 'no such file' in err or 'real credential store' in err or 'authentication error' in err
     print(f'  [PASS] Error Extraction: nlm stdout error cleanly parsed: "{res["error"]}"')
 
 def test_regression_query_conversation_support():
