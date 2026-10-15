@@ -77,8 +77,11 @@ def test_regression_tunnel_stdout():
     assert 'stdout=subprocess.DEVNULL' in src
     print('  [PASS] Deadlock Prevention: Tunnel stdout is redirected to DEVNULL.')
 
-def test_regression_query_error_extraction():
+def test_regression_query_error_extraction(monkeypatch):
     import asyncio
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr("backend.nlm_client.run_nlm_cmd", AsyncMock(return_value={"success": False,
+        "returncode": 1, "stdout": '{"error":"API error: NOT_FOUND"}', "stderr": ""}))
     res = asyncio.run(query_notebook('default', 'non_existent_notebook_id_xyz', 'test question'))
     assert res['success'] is False
     err = res['error'].lower()
@@ -91,7 +94,11 @@ def test_regression_query_conversation_support():
     assert req.conversationId == "conv_123"
     print('  [PASS] Multi-turn: QueryRequest supports optional conversationId tracking.')
 
-def test_regression_query_profile_selection():
+def test_regression_query_profile_selection(monkeypatch):
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr("backend.app.get_cli_profiles", AsyncMock(return_value={"default": "test@example.invalid"}))
+    monkeypatch.setattr("backend.app.query_notebook_with_pro_fallback", AsyncMock(return_value={
+        "success": True, "answer": "Test response", "executedProfileId": "default"}))
     client = TestClient(app)
     # Dynamically retrieve an active profile to test query routing
     prof_res = client.get("/api/profiles")

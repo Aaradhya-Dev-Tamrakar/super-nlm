@@ -1,21 +1,21 @@
 import logging
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from mcp.server.mcpserver import MCPServer
-from backend.storage import (
-    get_profiles,
-    get_cached_notebooks,
-    save_cached_notebooks,
-    save_profile
-)
+
+from backend.models import NotebookRef, detect_course_info
 from backend.nlm_client import (
+    auto_share_study_notebooks,
+    batch_share_notebooks_to_accounts,
     fetch_all_notebooks_concurrently,
     synthesize_cross_notebook,
-    get_cli_profiles,
-    batch_share_notebooks_to_accounts,
-    auto_share_study_notebooks
 )
-from backend.models import NotebookRef, detect_course_info
+from backend.storage import (
+    get_cached_notebooks,
+    get_profiles,
+    save_cached_notebooks,
+    save_profile,
+)
 from mcp_server.rotator import rotator
 
 logger = logging.getLogger("super_nlm.tools")
@@ -269,12 +269,17 @@ def register_tools(server: MCPServer):
     async def schedule_batch_creation(
         notebook_ids: List[str],
         artifact_type: str = "video",
-        format_option: str = "cinematic",
+        format_option: str | None = None,
         style: str = "auto_select",
         custom_prompt: Optional[str] = None,
         quantity: Optional[int] = None,
         difficulty: Optional[str] = None,
-        preferred_profile_id: Optional[str] = None
+        preferred_profile_id: Optional[str] = None,
+        source_ids: list[str] | None = None,
+        source_ids_by_notebook: dict[str, list[str]] | None = None,
+        exclude_sources: list[str] | None = None,
+        prompts: list[str] | None = None,
+        request_key: str | None = None
     ) -> Dict[str, Any]:
         """
         Schedules a batch of heavy studio generations (e.g. Cinematic Videos, Audio Overviews, Study Guides)
@@ -292,6 +297,11 @@ def register_tools(server: MCPServer):
             quantity: Optional question count (for quizzes).
             difficulty: Optional difficulty ('easy', 'medium', 'hard').
             preferred_profile_id: Optional specific Google account profile ID to target.
+            source_ids: Optional selected IDs; use per-notebook mapping for different notebooks.
+            source_ids_by_notebook: Optional mapping of notebook UUID to selected source IDs.
+            exclude_sources: Optional source filenames or IDs to exclude in every notebook.
+            prompts: Optional multiple prompts, producing one job per notebook per prompt.
+            request_key: Reuse for an identical request to avoid duplicate batches.
         """
         from backend.models import BatchScheduleRequest
         from backend.scheduler import scheduler
@@ -301,13 +311,18 @@ def register_tools(server: MCPServer):
         req = BatchScheduleRequest(
             notebook_ids=notebook_ids,
             artifact_type=artifact_type,
-            format_option=format_option,
+            format_option=format_option or ("cinematic" if artifact_type == "video" else None),
             style=style,
             custom_prompt=custom_prompt,
             quantity=quantity,
             difficulty=difficulty,
-            preferred_profile_id=preferred_profile_id
+            preferred_profile_id=preferred_profile_id,
+            source_ids=source_ids, source_ids_by_notebook=source_ids_by_notebook or {},
+            exclude_sources=exclude_sources or [], prompts=prompts or [], request_key=request_key
         )
+        from backend.queue_bridge import claim_scheduler, forward_queue
+        if not claim_scheduler(scheduler):
+            return await forward_queue("schedule", req.model_dump())
         res = await scheduler.schedule_batch(req, nb_map)
         return res.model_dump()
 
@@ -321,10 +336,16 @@ def register_tools(server: MCPServer):
             status_filter: Optional filter ('queued', 'scheduled', 'in_progress', 'completed', 'failed', 'download_failed', 'cancelled').
         """
         from backend.scheduler import scheduler
+        from backend.queue_bridge import forward_queue, queue_owned_elsewhere
+        if queue_owned_elsewhere(scheduler):
+            status = await forward_queue("status")
+            if status_filter:
+                status["jobs"] = [j for j in status["jobs"] if j["status"] == status_filter]
+            return status
         status = scheduler.get_status()
         if status_filter:
             status.jobs = [j for j in status.jobs if j.status == status_filter]
-        return status.model_dump()
+        return {**status.model_dump(), "scheduler_running": scheduler.running, "dispatch_paused": scheduler.dispatch_paused}
 
     @server.tool()
     async def cancel_scheduled_job(job_id: str) -> Dict[str, Any]:
@@ -335,8 +356,101 @@ def register_tools(server: MCPServer):
             job_id: Unique job UUID to cancel.
         """
         from backend.scheduler import scheduler
+        from backend.queue_bridge import claim_scheduler, forward_queue
+        if not claim_scheduler(scheduler):
+            return await forward_queue("cancel", {"job_id": job_id})
         success = await scheduler.cancel_job(job_id)
         return {"success": success, "job_id": job_id}
+
+    @server.tool()
+    async def start_scheduler() -> dict[str, Any]:
+        """Start the persistent queue worker and dispatch due jobs now.
+
+        Existing queued jobs are reused. Fleet capacity and cooldowns still apply.
+        Jobs use the scheduler's existing sharing and download behavior.
+        """
+        from backend.scheduler import scheduler
+        from backend.queue_bridge import claim_scheduler, forward_queue
+        if not claim_scheduler(scheduler):
+            return await forward_queue("resume")
+        await scheduler.dispatch_now()
+        return {**scheduler.get_status().model_dump(), "scheduler_running": scheduler.running}
+
+    @server.tool()
+    async def stop_scheduler() -> dict[str, Any]:
+        """Stop the worker and local polling tasks, preserving jobs for resume.
+
+        This does not cancel generation already submitted to Google.
+        """
+        from backend.scheduler import scheduler
+        from backend.queue_bridge import claim_scheduler, forward_queue
+        if not claim_scheduler(scheduler):
+            return await forward_queue("stop")
+        await scheduler.stop()
+        return {"success": True, "scheduler_running": scheduler.running}
+
+    @server.tool()
+    async def run_scheduled_job_now(job_id: str) -> dict[str, Any]:
+        """Make an existing job due now and start the queue worker.
+
+        Does not create a duplicate job. Busy accounts or cooldowns can leave it queued.
+        Failed, cancelled and download-failed jobs can be retried explicitly.
+        """
+        from backend.scheduler import scheduler
+        from backend.queue_bridge import claim_scheduler, forward_queue
+        if not claim_scheduler(scheduler):
+            return await forward_queue("run-now", {"job_id": job_id})
+        job = scheduler.get_job(job_id)
+        if job is None:
+            return {"success": False, "error": "Job not found", "job_id": job_id}
+        if job.id in scheduler._active_workers.values() or job.status in ("in_progress", "completed"):
+            return {"success": False, "error": "Job is already running or completed", "job": job.model_dump()}
+        success = await scheduler.run_job_now(job_id)
+        if success:
+            await scheduler.dispatch_now()
+        return {"success": success, "scheduler_running": scheduler.running, "job": scheduler.get_job(job_id).model_dump()}
+
+    @server.tool()
+    async def create_video_now(
+        notebook_id: str,
+        custom_prompt: str | None = None,
+        format_option: str = "explainer",
+        style: str = "auto_select",
+        profile_id: str | None = None,
+        source_ids: list[str] | None = None,
+        exclude_sources: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Submit a video directly to Google without creating a scheduler job.
+
+        Uses an authenticated account already associated with the cached notebook.
+        No account sharing or automatic retry is performed. Returns submission output,
+        not a completed video. Rate limits are returned to the caller.
+        """
+        from backend.nlm_client import create_studio_artifact
+        if format_option not in ("explainer", "brief", "cinematic", "short"):
+            raise ValueError("format_option must be explainer, brief, cinematic, or short")
+        notebooks = await get_cached_notebooks()
+        active = await rotator.get_active_profiles()
+        candidates = {n.profileId for n in notebooks if n.id == notebook_id}
+        selected = next((p for p in active if p.id in candidates and (profile_id is None or p.id == profile_id)), None)
+        if selected is None:
+            return {"success": False, "error": "No authenticated cached account has this notebook; sync notebooks or select its profile"}
+        from backend.studio_service import source_scope
+        scoped_ids = await source_scope(notebook_id, selected.id, source_ids, exclude_sources)
+        result = await create_studio_artifact(
+            profile_id=selected.id, notebook_id=notebook_id, artifact_type="video",
+            format_option=format_option, style=style, custom_prompt=custom_prompt,
+            source_ids=scoped_ids,
+        )
+        from backend.studio_service import diagnostic, parse_payload
+        payload = parse_payload(result.get("stdout", ""))
+        if isinstance(payload, dict) and payload.get("status") == "error":
+            result["success"] = False
+        artifact_id = payload.get("artifact_id") if isinstance(payload, dict) else None
+        return {**result, "notebook_id": notebook_id, "profile_id": selected.id,
+                "source_ids": scoped_ids, "artifact_id": artifact_id,
+                "accepted": bool(result.get("success") and artifact_id),
+                **({"error_details": diagnostic(result, "creation", notebook_id, selected.id)} if not result.get("success") else {})}
 
     # ----------------- HYBRID FOLDER MAPPING TOOLS -----------------
 
@@ -363,9 +477,13 @@ def register_tools(server: MCPServer):
         """
         from datetime import datetime
         from pathlib import Path
+
+        from backend.drive_sync_service import (
+            drive_sync_service,
+            normalize_folder_target,
+        )
         from backend.models import FolderMapping
         from backend.storage import save_folder_mapping
-        from backend.drive_sync_service import drive_sync_service, normalize_folder_target
 
         f_type, target = normalize_folder_target(target_path)
         if folder_type:

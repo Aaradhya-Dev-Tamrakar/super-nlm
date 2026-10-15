@@ -42,6 +42,8 @@ def test_valid_remote_api_key(monkeypatch, header):
 def test_api_endpoints_remote_auth_enforcement(monkeypatch):
     from fastapi.testclient import TestClient
     from backend.app import app
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr("backend.app.get_cli_profiles", AsyncMock(return_value={}))
 
     monkeypatch.setattr(auth, "SUPER_NLM_API_KEY", "secret")
     monkeypatch.setattr(auth, "SUPER_NLM_REQUIRE_AUTH_LOCAL", True)

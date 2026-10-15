@@ -111,6 +111,7 @@ def test_scheduler_api_routes():
 
 def test_download_failed_is_distinct_and_retryable():
     sched = JobScheduler()
+    sched._ensure_owner()
     job = ScheduledJob(
         id="download-failed-job",
         notebook_id="nb-1",

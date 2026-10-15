@@ -41,6 +41,7 @@ from backend.nlm_client import (
 )
 from mcp_server.rotator import rotator
 from backend.scheduler import scheduler
+from backend.notebook_owners import enrich_notebook_owners
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("super_nlm")
@@ -65,9 +66,13 @@ async def lifespan(app: FastAPI):
         logger.error(f"Error during startup sync: {e}")
     yield
     logger.info("Shutting down Super-NLM Hub...")
+    from backend.batch_downloads import downloads
+    await downloads.shutdown()
     await scheduler.stop()
 
 app = FastAPI(title="Super-Gemini Notebook", lifespan=lifespan)
+from backend.fleet_api import router as fleet_router
+app.include_router(fleet_router)
 
 import re
 
@@ -92,7 +97,7 @@ async def sync_all_notebooks(auto_share_study: bool = True) -> List[Notebook]:
     profiles = await get_profiles()
     cached = await get_cached_notebooks()
     result = await fetch_all_notebooks_concurrently(profiles, fallback_cached=cached)
-    notebooks = result["notebooks"]
+    notebooks = await enrich_notebook_owners(result["notebooks"], cached)
     for n in notebooks:
         is_study, course_code, cat = detect_course_info(n.title, n.id)
         n.is_study = is_study

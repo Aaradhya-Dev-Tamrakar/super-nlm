@@ -7,6 +7,8 @@ let state = {
   activeProfileFilter: 'all',
   activeCategoryFilter: 'all', // 'all' | 'study' | 'projects'
   searchQuery: '',
+  notebookPage: 0,
+  notebookPageFilter: null,
   selectedNotebooks: new Map(), // key: notebookId, value: { notebookId, profileId, title }
   lastSelectedNotebookId: null, // anchor notebook ID for Shift + click range selection (Windows Explorer pattern)
   activeChat: null, // { notebookId, profileId, title }
@@ -324,6 +326,15 @@ function setupEventListeners() {
       activeEl.isContentEditable
     );
 
+    const fleetDialog = document.getElementById('fleet-dialog');
+    if (fleetDialog?.open) {
+      if (e.key === 'Escape' || (!isInputActive && e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !e.repeat)) {
+        e.preventDefault();
+        fleetDialog.close();
+      }
+      return;
+    }
+
     // 1. Modifier combinations (Ctrl / Meta)
     if (e.ctrlKey || e.metaKey) {
       if (e.key.toLowerCase() === 'k') {
@@ -389,6 +400,13 @@ function setupEventListeners() {
     // If an interactive modal is open, don't trigger background navigation or actions
     const anyModalOpen = ['modal-chat', 'modal-accounts', 'modal-cross', 'modal-shortcuts', 'modal-batch-share', 'modal-usage', 'modal-scheduler', 'modal-folder-mapping', 'auth-key-modal'].some(id => isModalOpen(id));
     if (anyModalOpen) return;
+
+    // Shortcut 'f': Open Fleet Batches (generation and downloads).
+    if (e.key.toLowerCase() === 'f' && !e.shiftKey && !e.repeat) {
+      e.preventDefault();
+      document.getElementById('btn-open-fleet-downloads')?.click();
+      return;
+    }
 
     // Shortcut '/': Focus search input
     if (e.key === '/') {
@@ -1640,7 +1658,7 @@ function syncSelectionUI() {
 }
 
 function handleNotebookSelection(clickedNotebookId, event, isDirectCheckbox = false) {
-  const visible = getVisibleNotebooks();
+  const visible = getNotebookPage();
   const clickedNotebook = visible.find(n => n.id === clickedNotebookId) || state.notebooks.find(n => n.id === clickedNotebookId);
   if (!clickedNotebook) return;
 
@@ -1727,7 +1745,7 @@ function handleNotebookSelection(clickedNotebookId, event, isDirectCheckbox = fa
 }
 
 function toggleSelectAllVisible() {
-  const visible = getVisibleNotebooks();
+  const visible = getNotebookPage();
   if (!visible.length) {
     showToast('No notebooks visible to select', 'info');
     return;
@@ -1751,6 +1769,11 @@ function toggleSelectAllVisible() {
   syncSelectionUI();
 }
 
+const NOTEBOOKS_PER_PAGE = 8;
+function getNotebookPage(notebooks = getVisibleNotebooks()) {
+  return notebooks.slice(state.notebookPage * NOTEBOOKS_PER_PAGE, (state.notebookPage + 1) * NOTEBOOKS_PER_PAGE);
+}
+
 function renderNotebooksGrid() {
   const grid = document.getElementById('notebooks-grid');
   const emptyState = document.getElementById('empty-state');
@@ -1760,9 +1783,40 @@ function renderNotebooksGrid() {
   if (!grid || !emptyState) return;
 
   // Filter notebooks
-  let filtered = getVisibleNotebooks();
+  const filterKey = JSON.stringify([state.activeProfileFilter, state.activeCategoryFilter, state.searchQuery]);
+  if (state.notebookPageFilter !== filterKey) {
+    state.notebookPage = 0;
+    state.notebookPageFilter = filterKey;
+  }
+  const filtered = getVisibleNotebooks();
+  const pageCount = Math.max(1, Math.ceil(filtered.length / NOTEBOOKS_PER_PAGE));
+  state.notebookPage = Math.min(state.notebookPage, pageCount - 1);
+  const pageNotebooks = getNotebookPage(filtered);
+  const start = state.notebookPage * NOTEBOOKS_PER_PAGE;
+  const pager = document.getElementById('notebook-pagination');
+  if (pager) {
+    pager.hidden = filtered.length <= NOTEBOOKS_PER_PAGE;
+    document.getElementById('notebook-page-label').textContent = `Page ${state.notebookPage + 1} of ${pageCount}`;
+    const previous = document.getElementById('notebook-page-previous');
+    const next = document.getElementById('notebook-page-next');
+    previous.disabled = state.notebookPage === 0;
+    next.disabled = state.notebookPage === pageCount - 1;
+    const changePage = delta => {
+      state.notebookPage += delta;
+      state.lastSelectedNotebookId = null;
+      renderNotebooksGrid();
+    };
+    previous.onclick = () => changePage(-1);
+    next.onclick = () => changePage(1);
+  }
 
-  if (visibleCountLabel) visibleCountLabel.textContent = filtered.length;
+  if (visibleCountLabel) {
+    const visibleCount = new Set(filtered.map(notebook => notebook.id)).size;
+    const totalCount = new Set(state.notebooks.map(notebook => notebook.id)).size;
+    visibleCountLabel.textContent = filtered.length ? `${start + 1}–${start + pageNotebooks.length}/${visibleCount}` : `0/${totalCount}`;
+    visibleCountLabel.setAttribute('aria-label', `${pageNotebooks.length} notebooks on this page, ${visibleCount} matching out of ${totalCount} total notebooks`);
+    visibleCountLabel.title = `${visibleCount} matching notebooks out of ${totalCount} unique notebooks across all accounts`;
+  }
   if (filterLabel) {
     let accountName = 'All Accounts';
     if (state.activeProfileFilter !== 'all') {
@@ -1836,12 +1890,22 @@ function renderNotebooksGrid() {
   emptyState.classList.add('hidden');
   emptyState.classList.remove('flex');
 
-  grid.innerHTML = filtered.map((notebook, idx) => {
+  grid.innerHTML = pageNotebooks.map((notebook, idx) => {
     const isSelected = state.selectedNotebooks.has(notebook.id);
     const dateFormatted = notebook.updated_at ? new Date(notebook.updated_at).toLocaleDateString('en-US', {
       month: 'short', day: 'numeric', year: 'numeric'
     }) : 'Recent';
 
+    const ownerEmail = notebook.ownerEmail || state.notebooks.find(n => n.id === notebook.id && n.ownerEmail)?.ownerEmail;
+    const ownerProfile = ownerEmail ? state.profiles.find(p => (p.email || '').toLowerCase() === ownerEmail.toLowerCase()) : null;
+    const ownerName = ownerProfile?.displayName || ownerEmail || 'Owner unknown';
+    const ownerColor = ownerProfile?.color || 'var(--m3-outline)';
+    const sharedWith = notebook.sharedWith ?? state.notebooks.find(n => n.id === notebook.id && n.sharedWith != null)?.sharedWith;
+    const sharingAccounts = (sharedWith || []).filter(c => (c.email || '').toLowerCase() !== (ownerEmail || '').toLowerCase()).map(c => {
+      const profile = state.profiles.find(p => (p.email || '').toLowerCase() === (c.email || '').toLowerCase());
+      const pending = c.pending === true || c.is_pending === true || c.status === 'pending';
+      return {name: profile?.displayName || c.email, color: profile?.color || 'var(--m3-outline)', detail: `${profile?.displayName || c.email} (${c.role || 'shared'}${pending ? ', invitation pending' : ''})`, pending};
+    });
     const isPro = notebook.tier === 'pro';
     const isStudy = isStudyNotebook(notebook);
     const courseCode = getCourseCode(notebook);
@@ -1865,20 +1929,11 @@ function renderNotebooksGrid() {
               class="notebook-select-checkbox rounded bg-[var(--m3-surface)] border-[var(--m3-outline)] text-[var(--google-blue)] focus:ring-0 cursor-pointer w-4 h-4 shrink-0 transition-transform active:scale-95"
               ${isSelected ? 'checked' : ''}
             >
-            ${notebook.allProfiles && notebook.allProfiles.length > 1 ? `
-              <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)] min-w-0 max-w-full" title="${escapeHtml(notebook.allProfiles.map(p => p.profileName || p.profileId).join(' • '))}">
-                <span class="flex items-center -space-x-1 shrink-0">
-                  ${notebook.allProfiles.map(p => `<span class="w-1.5 h-1.5 rounded-full border border-[var(--m3-surface)]" style="background-color: ${p.color || '#3b82f6'}"></span>`).join('')}
-                </span>
-                <span class="truncate max-w-[65px] sm:max-w-[100px]">${escapeHtml(notebook.profileName)}</span>
-                <span class="text-[9px] text-[var(--google-blue)] font-medium font-mono bg-[var(--google-blue-container)]/50 px-1 py-0.2 rounded shrink-0" title="Shared across ${notebook.allProfiles.length} accounts">+${notebook.allProfiles.length - 1}</span>
-              </span>
-            ` : `
-              <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)] min-w-0 max-w-full">
-                <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background-color: ${notebook.color}"></span>
-                <span class="truncate max-w-[85px] sm:max-w-[125px]">${escapeHtml(notebook.profileName)}</span>
-              </span>
-            `}
+            <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] sm:text-[11px] font-medium border border-[var(--m3-outline-variant)] bg-[var(--m3-surface-container-low)] text-[var(--m3-on-surface-variant)] min-w-0 max-w-full" title="${escapeHtml(ownerEmail ? `Owner: ${ownerEmail}` : 'Owner has not been verified; sync notebooks to resolve')}">
+              <span class="w-1.5 h-1.5 rounded-full shrink-0" style="background-color: ${ownerColor}"></span>
+              <span class="truncate max-w-[100px] sm:max-w-[140px]">${escapeHtml(ownerName)}</span>
+              ${sharingAccounts.length ? `<span class="inline-flex items-center -space-x-0.5 shrink-0" aria-label="Shared accounts">${sharingAccounts.slice(0, 6).map(account => `<span class="w-2 h-2 rounded-full border border-[var(--m3-surface)] ${account.pending ? 'opacity-40' : ''}" style="background-color: ${account.color}" title="${escapeHtml(account.detail)}"></span>`).join('')}</span><span class="text-[9px] text-[var(--google-blue)] font-medium font-mono bg-[var(--google-blue-container)]/50 px-1 py-0.2 rounded shrink-0" title="${escapeHtml(`Shared with ${sharingAccounts.length} other accounts: ${sharingAccounts.map(a => a.detail).join('; ')}`)}">+${sharingAccounts.length}</span>` : sharedWith == null ? '<span class="text-[9px] shrink-0" title="Sharing has not been verified; sync notebooks to refresh">+?</span>' : ''}
+            </span>
           </div>
 
           <div class="flex items-center gap-1 shrink-0 justify-end">
@@ -2045,7 +2100,7 @@ function updateSelectionBanner() {
     banner.classList.remove('hidden');
     banner.classList.add('flex');
     const textEl = document.getElementById('selection-text');
-    if (textEl) textEl.textContent = `${count} notebook${count > 1 ? 's' : ''} selected across accounts for cross-synthesis`;
+    if (textEl) textEl.textContent = `${count} notebook${count > 1 ? 's' : ''} selected across accounts`;
   } else {
     banner.classList.add('hidden');
     banner.classList.remove('flex');
