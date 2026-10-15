@@ -1,7 +1,7 @@
 ---
 name: super-nlm
 description: This skill should be used when interacting with Google NotebookLM fleets, querying notebooks via Super-NLM MCP, downloading and managing Studio artifacts (videos, mind maps, reports, audio overviews, quizzes), syncing Google Drive or local folders with code adapters, scheduling batch generation, and running cross-notebook synthesis.
-version: 1.1.0
+version: 1.2.0
 ---
 
 # Super-NLM Orchestrator & Fleet Management Skill
@@ -68,6 +68,11 @@ When `super-nlm` MCP server is active, use the following tools:
   Cancel an active or queued generation task.
 
 ### Fleet operations
+
+#### Hub notebook and Fleet batch controls
+
+The notebook grid shows at most **8 notebooks per page** with a visible range/total counter (for example, `1–8/51`); selections persist while paging. Each card identifies the creator account from verified owner-role metadata. Shared collaborators appear as colored account dots plus `+N`; pending invitations are visually faded. `+?` means sharing metadata is unknown, not that the notebook is unshared. Sync to refresh metadata and never infer ownership from the profile used to query the notebook. Press **F** to open Fleet Batches, **Esc** to close it, and `?` to view the shortcut reference. The selected-notebook **Batch Download** action opens Fleet Batches with those IDs prefilled for review.
+
 
 `download_mode="auto"` starts at one transfer and probes up to six using completed transfer windows (bytes / elapsed time, including CLI/server overhead). It backs off after failures or absent throughput gains, ignores tiny/incomplete samples for tuning, and shows observed MiB/s plus concurrency. This is a heuristic, not an internet line-speed test. Manual concurrency remains available. Paused batches can select Auto on resume.
 
