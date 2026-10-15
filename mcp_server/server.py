@@ -1,7 +1,9 @@
-import sys
-import os
 import logging
+import sys
+from contextlib import asynccontextmanager
+
 from mcp.server.mcpserver import MCPServer
+
 from mcp_server.tools import register_tools
 
 # Configure logging to stderr to prevent corrupting stdio JSON-RPC communication
@@ -12,11 +14,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger("super_nlm.mcp")
 
+@asynccontextmanager
+async def scheduler_lifespan(server):
+    """Clean up a worker explicitly started through MCP on transport shutdown."""
+    try:
+        yield {}
+    finally:
+        from backend.batch_downloads import downloads
+        from backend.scheduler import scheduler
+        await downloads.shutdown()
+        if scheduler.running:
+            await scheduler.stop()
+        elif scheduler._lease:
+            scheduler._lease.release()
+
 def create_server() -> MCPServer:
     """Instantiates and configures the Super-NLM MCP Server."""
     server = MCPServer(
         name="super-nlm",
         version="0.1.0",
+        lifespan=scheduler_lifespan,
         instructions=(
             "Super-NLM MCP Server with round-robin multi-account rotation. "
             "Distributes notebook queries across all configured Google accounts to prevent "
@@ -25,6 +42,8 @@ def create_server() -> MCPServer:
         )
     )
     register_tools(server)
+    from mcp_server.fleet_tools import register_fleet_tools
+    register_fleet_tools(server)
     return server
 
 def main():

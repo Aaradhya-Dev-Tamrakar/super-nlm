@@ -1,24 +1,38 @@
 import asyncio
 import datetime
+import hashlib
 import json
 import logging
 import os
 import re
 import time
 import uuid
-from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Dict, List, Optional
 
-from backend.config import SCHEDULED_JOBS_FILE, DOWNLOADS_DIR
+from backend.artifact_files import ArtifactCatalog
+from backend.config import DOWNLOADS_DIR, SCHEDULED_JOBS_FILE
 from backend.models import (
-    ScheduledJob, BatchScheduleRequest, SingleScheduleRequest,
-    BatchScheduleResponse, SchedulerStatusResponse, AccountProfile
+    AccountProfile,
+    BatchScheduleRequest,
+    BatchScheduleResponse,
+    ScheduledJob,
+    SchedulerStatusResponse,
+    SingleScheduleRequest,
 )
-from backend.storage import get_profiles, get_cached_notebooks
 from backend.nlm_client import (
-    create_studio_artifact, get_studio_status, download_studio_artifact,
-    ensure_notebook_shared, fetch_fleet_usage, is_rate_limit_or_quota_error,
-    classify_quota_error
+    create_studio_artifact,
+    download_studio_artifact,
+    ensure_notebook_shared,
+    is_rate_limit_or_quota_error,
+)
+from backend.process_lease import ProcessLease
+from backend.storage import get_cached_notebooks, get_profiles
+from backend.studio_service import (
+    StudioCommandError,
+    artifacts,
+    diagnostic,
+    parse_payload,
+    source_scope,
 )
 from mcp_server.rotator import rotator
 
@@ -41,11 +55,38 @@ class JobScheduler:
         self._jobs: Dict[str, ScheduledJob] = {}
         self._active_workers: Dict[str, Optional[str]] = {}  # profile_id -> job_id
         self._lock = asyncio.Lock()
+        self._dispatch_lock = asyncio.Lock()
+        self._execution_tasks: set[asyncio.Task] = set()
         self._worker_task: Optional[asyncio.Task] = None
         self._running: bool = False
+        self.dispatch_paused = False
+        self._lease = None
+
+    def _ensure_owner(self):
+        if self._lease and self._lease.handle:
+            return
+        lease = ProcessLease(SCHEDULED_JOBS_FILE.with_suffix(".lock"))
+        if not lease.acquire():
+            raise RuntimeError("Scheduler is owned by another web/MCP process; use its interface for queue mutations")
+        self._lease = lease
+        self.load_jobs_from_disk()
+
+    def read_jobs(self):
+        """Inspect persisted jobs without changing their generation state."""
+        if not SCHEDULED_JOBS_FILE.exists():
+            return []
+        data = json.loads(SCHEDULED_JOBS_FILE.read_text(encoding="utf-8"))
+        result = []
+        for item in data:
+            try:
+                result.append(ScheduledJob(**item))
+            except ValueError:
+                continue
+        return result
 
     def load_jobs_from_disk(self):
         """Loads persisted jobs from data/scheduled_jobs.json."""
+        self._jobs.clear()
         if not SCHEDULED_JOBS_FILE.exists():
             return
         try:
@@ -55,10 +96,12 @@ class JobScheduler:
                     for item in data:
                         try:
                             job = ScheduledJob(**item)
-                            # If server restarted while in_progress, reset to queued so it retries
-                            if job.status == "in_progress":
-                                job.status = "queued"
-                                job.started_at = None
+                            # A persisted artifact ID allows polling to resume without regeneration.
+                            # Legacy running records without an ID need an explicit operator retry.
+                            if job.status == "in_progress" and not job.artifact_id:
+                                job.status = "failed"
+                                job.error_message = "Submission state unknown after restart; inspect Studio before explicitly retrying"
+                                job.error_details = {"stage": "restart_recovery", "message": job.error_message}
                             self._jobs[job.id] = job
                         except Exception as parse_err:
                             logger.warning(f"Skipping corrupted job record: {parse_err}")
@@ -68,6 +111,8 @@ class JobScheduler:
 
     def save_jobs_to_disk(self):
         """Persists jobs to data/scheduled_jobs.json."""
+        if not self._lease or not self._lease.handle:
+            return
         try:
             data = [job.model_dump() for job in self._jobs.values()]
             tmp_path = str(SCHEDULED_JOBS_FILE) + ".tmp"
@@ -89,7 +134,7 @@ class JobScheduler:
         async with self._lock:
             if self._running:
                 return
-            self.load_jobs_from_disk()
+            self._ensure_owner()
             self._running = True
             self._worker_task = asyncio.create_task(self._worker_loop())
             logger.info("Super-NLM JobScheduler background worker started.")
@@ -97,6 +142,8 @@ class JobScheduler:
     async def stop(self):
         """Gracefully stops the background worker daemon."""
         async with self._lock:
+            if not self._lease or not self._lease.handle:
+                return
             self._running = False
             if self._worker_task:
                 self._worker_task.cancel()
@@ -104,11 +151,27 @@ class JobScheduler:
                     await self._worker_task
                 except asyncio.CancelledError:
                     pass
+            tasks = list(self._execution_tasks)
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            self._active_workers.clear()
             self.save_jobs_to_disk()
+            if self._lease:
+                self._lease.release()
             logger.info("Super-NLM JobScheduler stopped.")
 
     async def schedule_job(self, req: SingleScheduleRequest, notebook_title: str) -> ScheduledJob:
         """Schedules a single creation job."""
+        self._ensure_owner()
+        fingerprint = hashlib.sha256(json.dumps(req.model_dump(exclude={"request_key", "batch_id"}), sort_keys=True).encode()).hexdigest()
+        if req.request_key:
+            existing = next((j for j in self._jobs.values() if j.request_key == req.request_key), None)
+            if existing:
+                if existing.request_fingerprint != fingerprint:
+                    raise ValueError("request_key already belongs to a different generation request")
+                return existing
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
         job_id = str(uuid.uuid4())
         
@@ -122,10 +185,16 @@ class JobScheduler:
             notebook_id=req.notebook_id,
             notebook_title=notebook_title,
             assigned_profile_id=req.preferred_profile_id,
+            preferred_profile_id=req.preferred_profile_id,
             artifact_type=req.artifact_type,
             format_option=req.format_option,
             style=req.style,
             custom_prompt=req.custom_prompt,
+            source_ids=req.source_ids,
+            exclude_sources=req.exclude_sources,
+            batch_id=req.batch_id,
+            request_key=req.request_key,
+            request_fingerprint=fingerprint,
             quantity=req.quantity,
             difficulty=req.difficulty,
             status=status,
@@ -147,13 +216,23 @@ class JobScheduler:
         Schedules a batch of creation jobs across multiple notebooks.
         Assigns initial rotation waves based on active fleet size.
         """
+        self._ensure_owner()
+        fingerprint = hashlib.sha256(json.dumps(req.model_dump(exclude={"request_key", "batch_id"}), sort_keys=True).encode()).hexdigest()
+        if req.request_key:
+            existing = [j for j in self._jobs.values() if j.request_key and j.request_key.startswith(req.request_key + ":")]
+            if existing:
+                if any(j.request_fingerprint != fingerprint for j in existing):
+                    raise ValueError("request_key already belongs to a different generation request")
+                return BatchScheduleResponse(batch_id=existing[0].batch_id, total_queued=len(existing), queued_jobs=existing, message="Existing batch reused")
+        batch_id = req.batch_id or str(uuid.uuid4())
+        expanded = [(nb, prompt) for nb in dict.fromkeys(req.notebook_ids) for prompt in (req.prompts or [req.custom_prompt])]
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
         profiles = await get_profiles()
         fleet_size = max(1, len([p for p in profiles if p.status != "expired"]))
 
         queued_jobs: List[ScheduledJob] = []
         async with self._lock:
-            for idx, nb_id in enumerate(req.notebook_ids):
+            for idx, (nb_id, prompt) in enumerate(expanded):
                 job_id = str(uuid.uuid4())
                 nb_title = notebooks_map.get(nb_id, f"Notebook {nb_id[:8]}")
                 wave = (idx // fleet_size) + 1
@@ -163,10 +242,16 @@ class JobScheduler:
                     notebook_id=nb_id,
                     notebook_title=nb_title,
                     assigned_profile_id=req.preferred_profile_id,
+                    preferred_profile_id=req.preferred_profile_id,
                     artifact_type=req.artifact_type,
                     format_option=req.format_option,
                     style=req.style,
-                    custom_prompt=req.custom_prompt,
+                    custom_prompt=prompt.replace("{notebook_title}", nb_title) if prompt else None,
+                    source_ids=req.source_ids_by_notebook.get(nb_id, req.source_ids),
+                    exclude_sources=req.exclude_sources,
+                    batch_id=batch_id,
+                    request_key=f"{req.request_key}:{idx}" if req.request_key else None,
+                    request_fingerprint=fingerprint,
                     quantity=req.quantity,
                     difficulty=req.difficulty,
                     status="queued",
@@ -180,11 +265,12 @@ class JobScheduler:
 
             self.save_jobs_to_disk()
 
-        msg = f"Queued {len(queued_jobs)} {req.artifact_type} generation(s) across {fleet_size} account(s) in {len(queued_jobs) // fleet_size + 1} rotation wave(s)."
+        msg = f"Queued {len(queued_jobs)} {req.artifact_type} generation(s) across {fleet_size} account(s) in {(len(queued_jobs) + fleet_size - 1) // fleet_size} rotation wave(s)."
         logger.info(f"[Batch Schedule] {msg}")
 
         return BatchScheduleResponse(
             success=True,
+            batch_id=batch_id,
             total_queued=len(queued_jobs),
             queued_jobs=queued_jobs,
             active_profiles=[p.id for p in profiles],
@@ -193,7 +279,7 @@ class JobScheduler:
 
     def get_jobs(self, status_filter: Optional[str] = None) -> List[ScheduledJob]:
         """Returns sorted list of jobs (newest created first)."""
-        jobs = list(self._jobs.values())
+        jobs = list(self._jobs.values()) if self._lease and self._lease.handle else self.read_jobs()
         if status_filter:
             jobs = [j for j in jobs if j.status == status_filter]
         jobs.sort(key=lambda x: x.created_at, reverse=True)
@@ -204,6 +290,7 @@ class JobScheduler:
 
     async def cancel_job(self, job_id: str) -> bool:
         """Cancels a queued or scheduled job."""
+        self._ensure_owner()
         async with self._lock:
             if job_id in self._jobs and self._jobs[job_id].status in ("queued", "scheduled"):
                 self._jobs[job_id].status = "cancelled"
@@ -214,8 +301,9 @@ class JobScheduler:
 
     async def delete_job(self, job_id: str) -> bool:
         """Deletes a job from history."""
+        self._ensure_owner()
         async with self._lock:
-            if job_id in self._jobs:
+            if job_id in self._jobs and self._jobs[job_id].status != "in_progress" and job_id not in self._active_workers.values():
                 del self._jobs[job_id]
                 self.save_jobs_to_disk()
                 return True
@@ -223,6 +311,7 @@ class JobScheduler:
 
     async def run_job_now(self, job_id: str) -> bool:
         """Forces a queued, scheduled, cancelled, failed, or download-failed job to run immediately."""
+        self._ensure_owner()
         async with self._lock:
             if job_id in self._jobs and self._jobs[job_id].status in (
                 "queued", "scheduled", "failed", "download_failed", "cancelled"
@@ -232,6 +321,13 @@ class JobScheduler:
                 self._jobs[job_id].scheduled_time = now_iso
                 self._jobs[job_id].trigger_type = "immediate"
                 self._jobs[job_id].error_message = None
+                if not self._jobs[job_id].artifact_id:
+                    self._jobs[job_id].assigned_profile_id = self._jobs[job_id].preferred_profile_id
+                if self._jobs[job_id].error_details and self._jobs[job_id].error_details.get("stage") == "generation":
+                    self._jobs[job_id].artifact_id = None
+                    self._jobs[job_id].submitted_at = None
+                elif self._jobs[job_id].submitted_at and not self._jobs[job_id].artifact_id:
+                    self._jobs[job_id].submitted_at = None
                 self.save_jobs_to_disk()
                 logger.info(f"Forced immediate execution for job {job_id}")
                 return True
@@ -239,7 +335,7 @@ class JobScheduler:
 
     def get_status(self) -> SchedulerStatusResponse:
         """Returns fleet queue summary and active worker state."""
-        jobs = list(self._jobs.values())
+        jobs = list(self._jobs.values()) if self._lease and self._lease.handle else self.read_jobs()
         queued = sum(1 for j in jobs if j.status in ("queued", "scheduled"))
         in_prog = sum(1 for j in jobs if j.status == "in_progress")
         comp = sum(1 for j in jobs if j.status == "completed")
@@ -254,7 +350,7 @@ class JobScheduler:
             failed_count=failed,
             download_failed_count=download_failed,
             active_workers=dict(self._active_workers),
-            jobs=self.get_jobs()
+            jobs=sorted(jobs, key=lambda job: job.created_at, reverse=True)
         )
 
     def get_status_summary(self) -> SchedulerStatusResponse:
@@ -275,13 +371,22 @@ class JobScheduler:
             await asyncio.sleep(12)
 
     async def _process_queue_tick(self):
+        # Explicit run-now requests can overlap the periodic worker tick.
+        async with self._dispatch_lock:
+            await self._dispatch_due_jobs()
+
+    async def _dispatch_due_jobs(self):
+        if self.dispatch_paused:
+            return
         now = datetime.datetime.now(datetime.timezone.utc)
         now_iso = now.isoformat()
 
         # Find pending jobs that are due
         pending_jobs: List[ScheduledJob] = []
         for job in self._jobs.values():
-            if job.status in ("queued", "scheduled"):
+            if job.id in self._active_workers.values():
+                continue
+            if job.status in ("queued", "scheduled", "in_progress"):
                 if not job.scheduled_time or job.scheduled_time <= now_iso:
                     pending_jobs.append(job)
 
@@ -311,6 +416,8 @@ class JobScheduler:
             # Find matching job: prefer job assigned specifically to this profile, or first unassigned/flexible job
             matched_job_idx = None
             for idx, job in enumerate(pending_jobs):
+                if job.preferred_profile_id and job.preferred_profile_id != profile.id:
+                    continue
                 if job.assigned_profile_id == profile.id:
                     matched_job_idx = idx
                     break
@@ -331,146 +438,148 @@ class JobScheduler:
 
             # Mark worker busy and dispatch execution task
             self._active_workers[profile.id] = job.id
-            asyncio.create_task(self._execute_job(job, profile))
+            task = asyncio.create_task(self._execute_job(job, profile))
+            self._execution_tasks.add(task)
+            task.add_done_callback(self._execution_tasks.discard)
+
+    @property
+    def running(self) -> bool:
+        return self._running and self._worker_task is not None and not self._worker_task.done()
+
+    async def dispatch_now(self):
+        """Start the daemon if necessary and dispatch due jobs within fleet capacity."""
+        await self.start()
+        await self._process_queue_tick()
+        # Let reserved execution tasks update their durable job state.
+        await asyncio.sleep(0)
 
     async def _execute_job(self, job: ScheduledJob, profile: AccountProfile):
-        """
-        Executes a studio artifact creation job on a specific profile.
-        Handles auto-sharing, CLI invocation, status polling, and automatic downloading.
-        """
+        """Submit once, poll the exact artifact, and preserve every failure attempt."""
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
         job.status = "in_progress"
         job.assigned_profile_id = profile.id
-        job.started_at = now_iso
+        job.started_at = job.started_at or now_iso
         job.error_message = None
+        job.error_details = None
+        attempt = {"at": now_iso, "profile_id": profile.id, "artifact_id": job.artifact_id}
+        job.attempts.append(attempt)
         self.save_jobs_to_disk()
-
-        logger.info(f"[Scheduler Executing] Job {job.id} ({job.artifact_type}) on profile '{profile.id}' ({profile.email})")
-
+        stage = "preflight"
         try:
-            # 1. Ensure notebook is shared with this profile if it was created on another account
-            if profile.email:
+            if not job.artifact_id:
+                if job.submitted_at:
+                    raise ValueError("A submission was accepted without an artifact ID; inspect Studio before retrying")
+                cached = await get_cached_notebooks()
+                associated = [n.profileId for n in cached if n.id == job.notebook_id]
+                stage = "source_lookup"
                 try:
-                    await ensure_notebook_shared(job.notebook_id, profile.email)
-                except Exception as share_err:
-                    logger.debug(f"Auto-share check on '{job.notebook_id}': {share_err}")
-
-            # 2. Dispatch creation command
-            res = await create_studio_artifact(
-                profile_id=profile.id,
-                notebook_id=job.notebook_id,
-                artifact_type=job.artifact_type,
-                format_option=job.format_option,
-                style=job.style,
-                custom_prompt=job.custom_prompt,
-                quantity=job.quantity,
-                difficulty=job.difficulty
-            )
-
-            # 3. Check for immediate rate limit or failure
-            if not res.get("success"):
-                err_text = (res.get("stderr") or "") + " " + (res.get("stdout") or "")
-                if is_rate_limit_or_quota_error(err_text):
-                    logger.warning(f"[Scheduler Quota Hit] Profile '{profile.id}' hit quota: {err_text}")
-                    rotator.record_rate_limit(profile.id, err_text)
-                    # note job remains queued
-                    job.status = "queued"
-                    job.started_at = None
-                    job.retry_count += 1
-                    self.save_jobs_to_disk()
-                    return
-                else:
-                    raise RuntimeError(f"Creation command failed: {err_text}")
-
-            # 4. Background Polling for Artifact Readiness
-            max_poll_seconds = 600
-            poll_interval = 15
-            elapsed = 0
-            artifact_found = None
-
-            while elapsed < max_poll_seconds:
-                await asyncio.sleep(poll_interval)
-                elapsed += poll_interval
-
-                artifacts = await get_studio_status(profile.id, job.notebook_id)
-                for art in artifacts:
-                    art_type = str(art.get("type", "")).lower()
-                    art_status = str(art.get("status", "")).lower()
-                    
-                    if job.artifact_type in art_type or art_type in job.artifact_type:
-                        if art_status in ("completed", "ready", "done", "success"):
-                            artifact_found = art
-                            break
-
-                if artifact_found:
+                    job.source_ids = await source_scope(job.notebook_id, profile.id, job.source_ids, job.exclude_sources)
+                except StudioCommandError as access_error:
+                    if profile.id in associated or not associated:
+                        raise
+                    attempt["initial_access_error"] = access_error.details
+                    stage = "sharing"
+                    if not await ensure_notebook_shared(job.notebook_id, associated[0], profile.email):
+                        raise ValueError("Invitation did not confirm access; inspect sharing status before generation")
+                    stage = "source_lookup"
+                    job.source_ids = await source_scope(job.notebook_id, profile.id, job.source_ids, job.exclude_sources)
+                stage = "creation"
+                submission = asyncio.create_task(create_studio_artifact(
+                    profile_id=profile.id, notebook_id=job.notebook_id,
+                    artifact_type=job.artifact_type, format_option=job.format_option,
+                    style=job.style, custom_prompt=job.custom_prompt,
+                    quantity=job.quantity, difficulty=job.difficulty, source_ids=job.source_ids,
+                ))
+                interrupted = False
+                try:
+                    result = await asyncio.shield(submission)
+                except asyncio.CancelledError:
+                    # Finish recording the remote response before yielding ownership.
+                    result = await submission
+                    interrupted = True
+                payload = parse_payload(result.get("stdout", ""))
+                if not result.get("success") or (isinstance(payload, dict) and payload.get("status") == "error"):
+                    details = diagnostic(result, stage, job.notebook_id, "default")
+                    if is_rate_limit_or_quota_error(str(details["message"])):
+                        rotator.record_rate_limit(profile.id, str(details["message"]))
+                        job.retry_count += 1
+                        if not job.preferred_profile_id:
+                            job.assigned_profile_id = None
+                        job.status = "queued" if job.retry_count <= 3 else "failed"
+                        job.error_message = str(details["message"])
+                        job.error_details = details
+                        attempt.update(status=job.status, error=details)
+                        return
+                    raise StudioCommandError(details)
+                job.submitted_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                job.artifact_id = (payload.get("artifact_id") or payload.get("id") or payload.get("mind_map_id")) if isinstance(payload, dict) else None
+                attempt["artifact_id"] = job.artifact_id
+                self.save_jobs_to_disk()
+                if not job.artifact_id:
+                    raise StudioCommandError({**diagnostic(result, stage, job.notebook_id, profile.id),
+                                              "message": "Submission returned no artifact ID; automatic regeneration is blocked"})
+                if interrupted:
+                    raise asyncio.CancelledError()
+            stage = "studio_poll"
+            found = None
+            for _ in range(240):
+                current = await artifacts(job.notebook_id, profile.id)
+                found = next((a for a in current if a.get("id") == job.artifact_id), None)
+                if found and found.get("status") == "failed":
+                    raise StudioCommandError({"stage": "generation", "notebook_id": job.notebook_id,
+                        "profile_id": profile.id, "artifact_id": job.artifact_id,
+                        "message": found.get("error_reason") or "NotebookLM reported a failed artifact without a cause"})
+                if found and found.get("status") in ("completed", "ready", "done", "success"):
                     break
-
-            # 5. Determine Artifact ID for Download
-            art_id = artifact_found.get("id") if artifact_found else None
-            ext_map = {
-                "video": ".mp4",
-                "audio": ".m4a",
-                "report": ".md",
-                "slides": ".pdf",
-                "infographic": ".png",
-                "mindmap": ".json",
-                "quiz": ".md",
-                "flashcards": ".md",
-                "data-table": ".csv"
-            }
-            ext = ext_map.get(job.artifact_type, ".bin")
-            safe_title = sanitize_filename(job.notebook_title)
-            filename = f"{job.artifact_type}_{safe_title}_{job.id[:6]}{ext}"
-            output_filepath = str(DOWNLOADS_DIR / filename)
-
-            # 6. Stream Download the artifact
-            download_ok = False
-            try:
-                dl_res = await download_studio_artifact(
-                    profile_id=profile.id,
-                    notebook_id=job.notebook_id,
-                    artifact_type=job.artifact_type,
-                    artifact_id=art_id,
-                    output_filepath=output_filepath
-                )
-                if dl_res.get("success") and os.path.exists(output_filepath):
-                    job.local_filepath = output_filepath
-                    job.download_filename = filename
-                    download_ok = True
-            except Exception as dl_err:
-                logger.warning(f"[Scheduler Download Error] Could not download {filename}: {dl_err}")
-
-            # 7. Mark Job based on actual download outcome
-            job.artifact_id = art_id
-            job.completed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-            if download_ok:
-                job.status = "completed"
-                logger.info(f"[Scheduler Success] Job {job.id} ({job.artifact_type}) finished on '{profile.id}'!")
-                try:
-                    import winsound
-                    winsound.MessageBeep(winsound.MB_ICONASTERISK)
-                except Exception:
-                    pass
+                await asyncio.sleep(15)
             else:
-                job.status = "download_failed"
-                job.error_message = f"Artifact {art_id} generated but download did not complete successfully"
-                logger.warning(f"[Scheduler Partial] Job {job.id}: artifact created but download failed on '{profile.id}'")
-
-        except asyncio.CancelledError:
-            # Cancellation is an interruption, not a terminal job failure. Leave
-            # the durable queue in a retryable state before propagating cancellation.
-            job.status = "queued"
-            job.started_at = None
-            job.retry_count += 1
-            raise
-        except Exception as e:
-            logger.error(f"[Scheduler Job Error] Job {job.id} failed: {e}")
-            job.status = "failed"
-            job.error_message = str(e)
+                raise ValueError("Polling timed out; retry this job to resume checking the same artifact")
+            stage = "download"
+            extension = {"video": ".mp4", "audio": ".m4a", "report": ".md", "slides": ".pdf",
+                         "infographic": ".png", "mindmap": ".json", "quiz": ".md",
+                         "flashcards": ".md", "data-table": ".csv"}[job.artifact_type]
+            DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+            name_lease = ProcessLease(DOWNLOADS_DIR / ".super-nlm.lock")
+            while not name_lease.acquire():
+                await asyncio.sleep(1)
+            try:
+                catalog = ArtifactCatalog(DOWNLOADS_DIR, SCHEDULED_JOBS_FILE.parent)
+                output, _ = catalog.prepare(job.artifact_id, found.get("title") or job.notebook_title, extension, job.local_filepath)
+                filename = output.name
+                if not output.exists() or not output.stat().st_size:
+                    temporary = output.with_name(output.stem + ".partial" + output.suffix)
+                    result = await download_studio_artifact("default", job.notebook_id, job.artifact_type,
+                                                           job.artifact_id, str(temporary))
+                    if not result.get("success") or not temporary.exists() or not temporary.stat().st_size:
+                        details = diagnostic(result, stage, job.notebook_id, "default")
+                        if result.get("success"):
+                            details["message"] = "Download returned success without a nonempty output file"
+                        raise StudioCommandError(details)
+                    temporary.replace(output)
+                job.local_filepath = str(output)
+                job.download_filename = filename
+            finally:
+                name_lease.release()
             job.completed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
+            job.status = "completed"
+            attempt["status"] = "completed"
+        except asyncio.CancelledError:
+            job.status = "in_progress" if job.artifact_id else "failed" if job.submitted_at else "queued"
+            if job.status == "queued":
+                job.started_at = None
+                job.retry_count += 1
+            attempt["status"] = "interrupted"
+            raise
+        except Exception as error:
+            details = getattr(error, "details", {"stage": stage, "profile_id": profile.id,
+                              "notebook_id": job.notebook_id, "message": str(error)})
+            job.status = "download_failed" if stage == "download" else "failed"
+            job.error_message = str(error)
+            job.error_details = details
+            job.completed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            attempt.update(status=job.status, error=details)
+            logger.error("Job %s failed at %s: %s", job.id, stage, error)
         finally:
-            # Free worker profile
             if profile.id in self._active_workers:
                 self._active_workers[profile.id] = None
             self.save_jobs_to_disk()

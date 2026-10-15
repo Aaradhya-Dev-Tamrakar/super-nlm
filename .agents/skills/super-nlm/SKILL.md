@@ -1,7 +1,7 @@
 ---
 name: super-nlm
 description: This skill should be used when interacting with Google NotebookLM fleets, querying notebooks via Super-NLM MCP, downloading and managing Studio artifacts (videos, mind maps, reports, audio overviews, quizzes), syncing Google Drive or local folders with code adapters, scheduling batch generation, and running cross-notebook synthesis.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Super-NLM Orchestrator & Fleet Management Skill
@@ -67,6 +67,28 @@ When `super-nlm` MCP server is active, use the following tools:
 - **`cancel_scheduled_job(job_id)`**:
   Cancel an active or queued generation task.
 
+### Fleet operations
+
+`download_mode="auto"` starts at one transfer and probes up to six using completed transfer windows (bytes / elapsed time, including CLI/server overhead). It backs off after failures or absent throughput gains, ignores tiny/incomplete samples for tuning, and shows observed MiB/s plus concurrency. This is a heuristic, not an internet line-speed test. Manual concurrency remains available. Paused batches can select Auto on resume.
+
+Notebooks download sequentially in input order. `artifact_concurrency` controls simultaneous artifacts within the current notebook (1-6, default 1 for slow connections). The GUI offers sequential or parallel modes; a paused batch can change concurrency when resumed.
+
+Clean filenames use the artifact title and extension (for example `Evolution of Context.mp4`). Add a short ID suffix only for name collisions; keep full IDs in the local catalog and batch manifests. Recognize and safely rename legacy type/title/UUID filenames without re-downloading. The scheduler also uses the actual artifact title when available.
+
+Downloads always use the `default` account; generation retains fleet rotation. The download CLI has no `--profile` option: set `NLM_PROFILE=default` only in the child process environment, removing inherited `NOTEBOOKLM_COOKIES`. Never switch the saved CLI default for each download.
+
+
+- In the Hub Fleet batch dialog, paste notebook URLs/UUIDs or include selected, filtered, or all notebooks. Download all Studio artifact types by default; preview notebook folders and set an external destination.
+- `get_notebook_share_status` inspects collaborators and roles without sending invitations. `list_notebook_sources` returns source IDs/titles. `preflight_studio_generation` checks access and source scope without creation.
+- Generation accepts explicit `source_ids`, per-notebook ID maps, filename/ID exclusions, multiple prompts separated by `---`, `{notebook_title}` expansion, and idempotency keys. NotebookLM UI checkboxes are not read. Exclude `seed.sql` explicitly when intended.
+- Pause/resume scheduler dispatch and clean selected terminal history through the MCP tools. Submitted Studio work continues when dispatch is paused.
+- `batch_download_artifacts` accepts notebook URLs/IDs, optional artifact type filters, external root and per-notebook folder overrides. It saves persistent progress/manifests, skips nonempty files indexed by artifact ID, and supports pause/resume without regeneration. `download_batch_results` fetches only exact artifacts from a generation batch.
+- Download types: video, audio, report, quiz, flashcards, mindmap, slides, infographic, data-table. Paths are on the Super-NLM host; the default scheduler output is `~/Downloads/Super-NLM/Generated`.
+- OS leases enforce one scheduler writer; MCP forwards queue controls to the Hub loopback API when the Hub owns the queue. Use `SUPER_NLM_HUB_URL` to configure its loopback address.
+- Generation stores accepted artifact IDs before polling and resumes those IDs after restart. Legacy interrupted jobs without IDs stop for inspection instead of automatic duplicate creation. Finish old-worker generations before restarting; old workers do not honor leases.
+- Failure records retain stage, notebook, profile, process output and available provider detail. If the CLI reports only a generic source error, the cause is marked unavailable.
+- Automated tests isolate data and mock CLI calls. Provider quota and fleet throughput are not benchmarked.
+
 ### Folder Mapping & Ingestion
 - **`map_notebook_folder(notebook_id, target_path, folder_type?, display_name?, auto_sync?, recursive?)`**:
   Map a local filesystem path or Google Drive folder URL/ID to a notebook.
@@ -92,14 +114,14 @@ The `nlm` unified CLI can be executed directly for high-throughput batch operati
 ### Studio Artifact Downloads & LocalSend Sharing
 For automated URL resolution, folder routing outside the repo, and LocalSend transfers, activate the companion skill **`super-nlm-downloads`**:
 ```powershell
-node C:\Users\Aaradhya\.gemini\config\skills\super-nlm-downloads\scripts\download_and_share.mjs "<notebook_url_or_id>" [--share] [--files-only] [--to "V2029"]
+node $env:USERPROFILE\.gemini\config\skills\super-nlm-downloads\scripts\download_and_share.mjs "<notebook_url_or_id>" [--share] [--files-only] [--to "V2029"]
 ```
 > [!IMPORTANT]
-> **Zero Repo Pollution Rule**: Never download or stage artifacts inside the repository working tree. Always route to subject folders directly under `C:\Users\Aaradhya\Downloads\<Subject> Exam`.
+> **Zero Repo Pollution Rule**: Never download or stage artifacts inside the repository working tree. Always route to subject folders directly under `$env:USERPROFILE\Downloads\<Subject> Exam`.
 
 To download manually into a subject folder without duplicates:
 ```powershell
-nlm download all <notebook_id> --output-dir "C:\Users\Aaradhya\Downloads\<Subject> Exam" --skip-existing --interactive-format markdown
+nlm download all <notebook_id> --output-dir "$env:USERPROFILE\Downloads\<Subject> Exam" --skip-existing --interactive-format markdown
 ```
 
 To download specific artifact types:
@@ -128,15 +150,15 @@ For reference, the primary course notebooks in the ecosystem include:
 
 | Course Code | Subject / Notebook Title | Key Notebook ID |
 |---|---|---|
-| **ME708** | ME708 - Organization and Management | `94cd4e14-802d-4231-b27d-6a4f4a2e6182` |
+| **ME708** | ME708 - Organization and Management | `<notebook-uuid>` |
 | **CT653** | Artificial Intelligence | `0e89a8...` |
 | **CT704** | Digital Signal Analysis and Processing | `e52d46...` |
 | **EX751** | Energy Management & Audit | *Fleet Managed* |
 | **EX752** | RF & Microwave Engineering | `EX752...` |
 | **EX725** | Embedded Systems Design | *Fleet Managed* |
-| **Personal** | ⚙️ Aaradhya — Engineer's Personal Notebook | `95a79d26-2f87-42cd-8cb9-8361a1e56059` |
-| **SPARK** | SPARK Research | `2c00f5a4-98dc-4783-96d1-3682fa3cb516` |
-| **BiasAperture** | BiasAperture Study | `99bee3c6-07ed-4ff0-8ac8-0027b18ad06a` |
+| **Personal** | ⚙️ Aaradhya — Engineer's Personal Notebook | `<notebook-uuid>` |
+| **SPARK** | SPARK Research | `<notebook-uuid>` |
+| **BiasAperture** | BiasAperture Study | `<notebook-uuid>` |
 
 ---
 

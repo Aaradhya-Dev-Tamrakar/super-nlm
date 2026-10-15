@@ -17,7 +17,7 @@
 - **Google Calendar Agenda & Study Copilot:** Reads your private Google Calendar via iCal (`.env`), automatically matches upcoming exams, lectures, and labs to course notebooks (`CT653`, `CT704`, `EX751`, `EX752`, `ME708`, `EX725`), and surfaces 1-click Quick Chat and NotebookLM links — no GCP setup needed.
 - **Hybrid Folder Mapping & Drive Sync:** Map local directories or Google Drive Web folders per notebook with live 300-source Pro capacity tracking, automated diffing (new vs. ingested vs. stale), academic code adapter (`.ipynb`, `.py`, `.c`, `.m`), and sequential rate-limited ingestion.
 - **Usage & Quota Dashboard:** View real-time rolling and weekly usage percentages, reset timestamps, and per-account health status (healthy / warning / critical) across the entire fleet — with 60s in-memory cache for efficiency.
-- **Rotating Batch Studio Scheduler & Download Alarms:** Queue Cinematic Videos, Audio Overviews, Study Guides, Quizzes, Flashcards, Mindmaps, Infographics, and more in a background multi-account rotating queue. Features Web Audio API 4-tone melodic chimes ($C_5 \rightarrow E_5 \rightarrow G_5 \rightarrow C_6$), interactive download toasts with 1-click open, and native OS audio cues upon artifact download to `downloads/`.
+- **Rotating Batch Studio Scheduler & Download Alarms:** Queue Cinematic Videos, Audio Overviews, Study Guides, Quizzes, Flashcards, Mindmaps, Infographics, and more in a background multi-account rotating queue. Features Web Audio API 4-tone melodic chimes ($C_5 \rightarrow E_5 \rightarrow G_5 \rightarrow C_6$), interactive download toasts with 1-click open, and native OS audio cues upon artifact download to the external downloads folder.
 - **Export to PDF:** Save synthesis summaries and source notebook responses as clean PDF reports with scope selection (*Both Synthesis & Raw*, *Synthesis Only*, or *Raw Notebooks Only*).
 - **Model Context Protocol (MCP) Server:** Native MCP integration with round-robin multi-account rotation, allowing parallel AI agents (Antigravity, Claude Desktop, or Claude Code) to query notebooks without exhausting rate limits on any single account.
 - **Automated Git Synchronization (`sync.ps1`):** Built-in repository synchronization engine with pre-commit secret leak protection, intelligent component-scoped conventional commits, and rebase conflict auto-recovery.
@@ -57,9 +57,59 @@ Super-NLM includes a built-in MCP server (`super-nlm-mcp`) designed specifically
 | `schedule_batch_creation` | `notebook_ids[]`, `artifact_type?`, `format_option?`, `style?`, `custom_prompt?`, `quantity?`, `difficulty?`, `preferred_profile_id?` | Queue batch studio artifact generation (video, audio, quiz, flashcards, etc.) across notebooks. |
 | `get_scheduled_queue` | `status_filter?` | Returns current fleet queue state, active workers, and all job records with optional status filter. |
 | `cancel_scheduled_job` | `job_id` | Cancels a queued or scheduled artifact generation job by UUID. |
+| `start_scheduler` | *none* | Starts the persistent worker and dispatches due jobs. |
+| `stop_scheduler` | *none* | Stops local dispatch/polling while preserving jobs; does not cancel work already submitted to Google. |
+| `run_scheduled_job_now` | `job_id` | Retries or runs an existing job in place; does not create a duplicate. |
+| `create_video_now` | `notebook_id`, `custom_prompt?`, `format_option?`, `style?`, `profile_id?` | Submits a video directly to Google without a local queue job. |
 | `map_notebook_folder` | `notebook_id`, `target_path`, `folder_type?`, `display_name?`, `auto_sync?`, `recursive?` | Map a local directory or Google Drive folder URL/ID to a notebook. |
 | `get_folder_status` | `notebook_id` | Check mapped folder status, diffed file list (ingested, new, stale, unsupported), and 300-source capacity meter. |
 | `sync_notebook_folder` | `notebook_id`, `action?`, `selected_files?` | Sequentially ingest new files and/or refresh stale Google Drive docs with 1.5s rate-limit delay. |
+
+### Immediate execution controls
+
+The standalone MCP worker is controlled explicitly. After reconnecting the MCP
+client to load these tools, use `start_scheduler()` to resume persisted due jobs.
+It reuses the existing queue, respects account capacity and cooldowns, and retains
+the scheduler's automatic sharing/download behavior. Run a single existing job
+with `run_scheduled_job_now(job_id="<job UUID>")`; the returned job status shows
+whether it is running or still waiting for capacity.
+
+For direct submission without a local queue entry, use
+`create_video_now(notebook_id="<notebook UUID>", custom_prompt="Explain the topic",
+format_option="explainer", style="whiteboard", profile_id="<existing profile>")`.
+The profile is optional and is chosen from authenticated accounts already associated
+with the cached notebook. This command performs no account sharing or automatic
+retry. Success confirms submission, not a finished video. Do not submit an existing
+queued job this way unless you also cancel its queue entry to prevent duplicates.
+
+### Fleet operations
+
+Press **F** to open Fleet Batches; **Esc** closes it. The shortcut is inactive while typing, and other global actions are blocked while the dialog is open.
+
+Notebook card account badges show the verified owner from collaborator metadata. Colored circles and `+N` show verified collaborators other than the owner; tooltips identify accounts and roles, with pending invitations faded. Shared account routing and Pro account promotion do not change the owner label; unverifiable ownership appears as `Owner unknown`. Sync refreshes cached ownership and sharing metadata.
+
+Select notebook cards and click **Batch Download** in the selection bar to open a prefilled download batch. Review folders, artifact types and connection mode, then start the batch.
+
+`download_mode="auto"` starts at one transfer and probes up to six using completed transfer windows (bytes / elapsed time, including CLI/server overhead). It backs off after failures or absent throughput gains, ignores tiny/incomplete samples for tuning, and shows observed MiB/s plus concurrency. This is a heuristic, not an internet line-speed test. Manual concurrency remains available. Paused batches can select Auto on resume.
+
+Notebooks download sequentially in input order. `artifact_concurrency` controls simultaneous artifacts within the current notebook (1-6, default 1 for slow connections). The GUI offers sequential or parallel modes; a paused batch can change concurrency when resumed.
+
+Clean filenames use the artifact title and extension (for example `Evolution of Context.mp4`). Add a short ID suffix only for name collisions; keep full IDs in the local catalog and batch manifests. Recognize and safely rename legacy type/title/UUID filenames without re-downloading. The scheduler also uses the actual artifact title when available.
+
+Downloads always use the `default` account; generation retains fleet rotation. The download CLI has no `--profile` option: set `NLM_PROFILE=default` only in the child process environment, removing inherited `NOTEBOOKLM_COOKIES`. Never switch the saved CLI default for each download.
+
+
+- Use the Hub **Fleet batch** dialog to paste notebook URLs/UUIDs or include selected, filtered, or all notebooks. Download all Studio artifacts by default, optionally filter types, preview per-notebook folders, and choose an external destination.
+- `get_notebook_share_status(notebook_id, profile_id?)` reads collaborators, roles and pending invitations without sharing. Unlisted accounts remain unknown. `list_notebook_sources` returns IDs/titles; `preflight_studio_generation(notebook_ids, exclude_sources?)` checks access and scope without creation.
+- `schedule_batch_creation` accepts `source_ids`, `source_ids_by_notebook`, `exclude_sources`, `prompts`, and `request_key`. Notebooks multiply by prompts; `{notebook_title}` expands titles. Source exclusions can include `seed.sql`. Browser source checkboxes are not read. Explicit source IDs are validated and passed to creation.
+- `pause_scheduler_dispatch` retains submitted work; `resume_scheduler_dispatch` resumes new submissions. `cleanup_scheduled_jobs(statuses?, batch_id?)` deletes terminal history only. Retry existing jobs with `run_scheduled_job_now`.
+- `batch_download_artifacts(notebook_ids, artifact_types?, output_root?, notebook_folders?, skip_existing?, request_key?)` starts persistent bulk downloads. Omit types for all supported types: video, audio, report, quiz, flashcards, mindmap, slides, infographic, data-table.
+- Inspect with `get_download_batch(batch_id)` / `list_download_batches()`. `resume_download_batch` retries/re-scans without generation; `pause_download_batch` pauses a locally owned batch. `download_batch_results(batch_id, output_root?)` restricts downloads to exact IDs from a generation batch.
+- Output paths are on the Super-NLM host, outside repositories. Default scheduler output is `~/Downloads/Super-NLM/Generated`. Bulk batches export manifests; nonempty files indexed by artifact ID are skipped. Keep the same request key for retrying an identical submission; changed settings require a new key.
+- OS leases enforce one scheduler writer. MCP forwards queue controls to the owning Hub at loopback `SUPER_NLM_HUB_URL` (default port 8000), with its configured access key. Download batch/profile/folder leases coordinate processes.
+- Accepted artifact IDs persist before polling; restart resumes those IDs. Legacy interrupted jobs without IDs fail for inspection rather than automatic regeneration. Finish old-worker generations before upgrading/restarting Hub and MCP, since old workers ignore the new leases.
+- Errors retain stage, notebook, profile, exit code, stdout/stderr and provider details. A generic upstream source error marks the cause unavailable; do not invent an explanation. Sharing status alone does not prove generation permission or remaining quota.
+- Automated coverage uses isolated storage and mocked CLI calls. Fleet throughput and provider quotas have not been benchmarked.
 
 ### MCP Client Setup
 
@@ -258,8 +308,8 @@ Queue and execute heavy **NotebookLM Studio** artifact generations autonomously:
 - **Trigger types:** `immediate`, `next_reset_window`, `custom_time`, `calendar_event`.
 - **Fleet rotation:** Jobs are assigned across connected profiles in round-robin waves. Each wave accommodates one job per available account.
 - **Automatic retry:** Quota-limited accounts are temporarily skipped and retried on the next tick (every 12s worker loop).
-- **Download artifacts:** Generated files are streamed and saved locally to `downloads/`, served via `GET /api/scheduler/downloads/{filename}`.
-- **Job persistence:** Jobs are saved to `data/scheduled_jobs.json` and restored on restart (in-progress jobs are automatically re-queued).
+- **Download artifacts:** Generated files are streamed and saved outside the repository to `~/Downloads/Super-NLM/Generated`, served via `GET /api/scheduler/downloads/{filename}`.
+- **Job persistence:** Jobs are saved to `data/scheduled_jobs.json` and restored on restart (accepted artifact IDs resume polling; legacy interrupted jobs require inspection).
 
 ### Scheduler REST API
 
@@ -281,9 +331,10 @@ Queue and execute heavy **NotebookLM Studio** artifact generations autonomously:
 ### MCP Server (`mcp_server/`)
 | File | Description |
 |---|---|
+| `fleet_tools.py` | Persistent bulk downloads, sharing/source inspection and queue controls. |
 | `server.py` | MCPServer instance running over stdio transport for agent tool calls. |
 | `rotator.py` | Thread-safe `AccountRotator` managing atomic query counting, 120s burst / daily midnight quota cooldowns, multi-turn conversation pinning, and auto-sharing. |
-| `tools.py` | All 14 MCP tool registrations: `query_notebook`, `list_notebooks`, `list_profiles`, `sync_notebooks`, `cross_query`, `rotation_status`, `batch_share_notebooks`, `auto_share_study_courses`, `get_agenda`, `schedule_batch_creation`, `get_scheduled_queue`, `cancel_scheduled_job`, `map_notebook_folder`, `get_folder_status`, `sync_notebook_folder`. |
+| `tools.py` | Core MCP tool registrations: `query_notebook`, `list_notebooks`, `list_profiles`, `sync_notebooks`, `cross_query`, `rotation_status`, `batch_share_notebooks`, `auto_share_study_courses`, `get_agenda`, `schedule_batch_creation`, `get_scheduled_queue`, `cancel_scheduled_job`, `map_notebook_folder`, `get_folder_status`, `sync_notebook_folder`. |
 
 ### Agent Skills (`.agents/skills/`)
 | Skill | Location | Description |
@@ -313,6 +364,7 @@ Queue and execute heavy **NotebookLM Studio** artifact generations autonomously:
 | File | Description |
 |---|---|
 | `index.html` | Responsive dark-mode SPA styled with Tailwind CSS and custom glassmorphism. |
+| `fleet.js` / `fleet.css` | Native bulk generation/download dialog, folder previews and saved batch controls. |
 | `app.js` | Reactive event handling, search filtering, study tabs, account editor form, keyboard shortcuts, markdown rendering, usage quota display, scheduler queue panel, and PDF export. |
 | `style.css` | Custom animations, spatial glassmorphism, badge themes, and scrollbars. |
 

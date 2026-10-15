@@ -30,6 +30,8 @@ Thumbs.db
 data/*.json
 data/*.tmp
 data/*.pid
+data/*.lock
+data/download_batches/
 *.pid
 !data/.gitkeep
 
@@ -44,3 +46,5 @@ verification-results/
 tools/
 *.exe
 *.lnk
+
+data/artifact_indexes/

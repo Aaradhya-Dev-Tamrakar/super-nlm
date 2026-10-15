@@ -1,5 +1,7 @@
+from typing import Any, Dict, List, Literal, Optional
+
 from pydantic import BaseModel, Field
-from typing import List, Optional, Literal, Dict, Any
+
 
 class AccountProfile(BaseModel):
     id: str = Field(..., description="Unique profile identifier e.g. default, work, college")
@@ -93,6 +95,8 @@ def detect_course_info(title: str, notebook_id: str):
     return False, None, "general"
 
 class Notebook(BaseModel):
+    ownerEmail: Optional[str] = None
+    sharedWith: Optional[List[Dict[str, Any]]] = None
     id: str
     title: str
     source_count: int = 0
@@ -214,10 +218,19 @@ class ScheduledJob(BaseModel):
     notebook_id: str
     notebook_title: str
     assigned_profile_id: Optional[str] = None
+    preferred_profile_id: str | None = None
     artifact_type: Literal["video", "audio", "report", "quiz", "flashcards", "mindmap", "slides", "infographic", "data-table"] = "video"
     format_option: Optional[str] = "cinematic"
     style: Optional[str] = "auto_select"
     custom_prompt: Optional[str] = None
+    source_ids: Optional[List[str]] = None
+    exclude_sources: List[str] = Field(default_factory=list)
+    batch_id: Optional[str] = None
+    request_key: Optional[str] = None
+    request_fingerprint: str | None = None
+    submitted_at: Optional[str] = None
+    error_details: Optional[Dict[str, Any]] = None
+    attempts: List[Dict[str, Any]] = Field(default_factory=list)
     quantity: Optional[int] = None
     difficulty: Optional[str] = None
     status: Literal["queued", "scheduled", "in_progress", "completed", "failed", "download_failed", "cancelled"] = "queued"
@@ -236,9 +249,15 @@ class ScheduledJob(BaseModel):
 class BatchScheduleRequest(BaseModel):
     notebook_ids: List[str] = Field(..., min_length=1, description="Target notebook IDs")
     artifact_type: Literal["video", "audio", "report", "quiz", "flashcards", "mindmap", "slides", "infographic", "data-table"] = "video"
-    format_option: Optional[str] = "cinematic"
+    format_option: Optional[str] = None
     style: Optional[str] = "auto_select"
     custom_prompt: Optional[str] = None
+    source_ids: Optional[List[str]] = None
+    source_ids_by_notebook: Dict[str, List[str]] = Field(default_factory=dict)
+    exclude_sources: List[str] = Field(default_factory=list)
+    prompts: List[str] = Field(default_factory=list)
+    batch_id: Optional[str] = None
+    request_key: Optional[str] = None
     quantity: Optional[int] = None
     difficulty: Optional[str] = None
     preferred_profile_id: Optional[str] = None
@@ -248,9 +267,13 @@ class BatchScheduleRequest(BaseModel):
 class SingleScheduleRequest(BaseModel):
     notebook_id: str
     artifact_type: Literal["video", "audio", "report", "quiz", "flashcards", "mindmap", "slides", "infographic", "data-table"] = "video"
-    format_option: Optional[str] = "cinematic"
+    format_option: Optional[str] = None
     style: Optional[str] = "auto_select"
     custom_prompt: Optional[str] = None
+    source_ids: Optional[List[str]] = None
+    exclude_sources: List[str] = Field(default_factory=list)
+    batch_id: Optional[str] = None
+    request_key: Optional[str] = None
     quantity: Optional[int] = None
     difficulty: Optional[str] = None
     preferred_profile_id: Optional[str] = None
@@ -259,6 +282,7 @@ class SingleScheduleRequest(BaseModel):
 
 class BatchScheduleResponse(BaseModel):
     success: bool = True
+    batch_id: Optional[str] = None
     total_queued: int = 0
     queued_jobs: List[ScheduledJob] = []
     active_profiles: List[str] = []

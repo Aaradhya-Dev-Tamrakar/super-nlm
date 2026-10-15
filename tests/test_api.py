@@ -4,8 +4,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient
 from backend.app import app
+from unittest.mock import AsyncMock
+from backend.models import Notebook
 
-def test_api():
+def test_api(monkeypatch):
+    monkeypatch.setattr("backend.notebook_owners.run_nlm_cmd", AsyncMock(return_value={"success": True, "stdout": '{"collaborators": [{"email": "test@example.invalid", "role": "owner"}]}' }))
+    monkeypatch.setattr("backend.app.get_cli_profiles", AsyncMock(return_value={"default": "test@example.invalid"}))
+    monkeypatch.setattr("backend.app.fetch_all_notebooks_concurrently", AsyncMock(return_value={"notebooks": [
+        Notebook(id="test-notebook", title="Test notebook", profileId="default", profileName="Test", profileEmail="test@example.invalid")], "errors": {}}))
+    monkeypatch.setattr("backend.app.rename_cli_profile", AsyncMock(return_value={"success": True}))
+    monkeypatch.setattr("backend.app.delete_cli_profile", AsyncMock(return_value={"success": True}))
     client = TestClient(app)
 
     # 1. Test profiles

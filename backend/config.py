@@ -10,7 +10,7 @@ PROFILES_FILE = DATA_DIR / "profiles.json"
 CACHE_FILE = DATA_DIR / "notebooks_cache.json"
 SCHEDULED_JOBS_FILE = DATA_DIR / "scheduled_jobs.json"
 FOLDER_MAPPINGS_FILE = DATA_DIR / "folder_mappings.json"
-DOWNLOADS_DIR = BASE_DIR / "downloads"
+DOWNLOADS_DIR = Path.home() / "Downloads" / "Super-NLM" / "Generated"
 
 # NotebookLM Quotas & Capacity Limits
 NOTEBOOKLM_PRO_SOURCE_LIMIT = 300
@@ -29,7 +29,7 @@ IGNORED_EXTENSIONS = {".zip", ".rar", ".7z", ".tar", ".gz", ".exe", ".dll", ".so
 
 # Ensure directories exist
 DATA_DIR.mkdir(exist_ok=True)
-DOWNLOADS_DIR.mkdir(exist_ok=True)
+DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 import sys
 

@@ -360,7 +360,7 @@
           <!-- Metrics and Active Filter Label -->
           <div class="flex items-center justify-between sm:justify-end gap-3 text-xs text-[var(--m3-on-surface-subtle)] px-1">
             <div class="flex items-center gap-2">
-              <span>Showing <strong id="visible-count" class="text-[var(--m3-on-surface)] font-mono font-medium">0</strong> notebooks</span>
+              <span class="whitespace-nowrap">Showing <strong id="visible-count" class="text-[var(--m3-on-surface)] font-mono font-medium">0/0</strong> notebooks</span>
               <span class="text-[var(--m3-outline-variant)]">•</span>
               <span id="active-filter-label" class="text-[var(--m3-on-surface-variant)] font-medium">All Accounts</span>
             </div>
@@ -369,7 +369,7 @@
       </div>
 
       <!-- FLOATING SELECTION SNACKBAR (For Cross-Synthesis) -->
-      <div id="selection-banner" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 hidden items-center justify-between px-5 py-3 rounded-full m3-card border border-[var(--google-blue)] text-xs shadow-2xl animate-m3-enter max-w-2xl w-[92%] backdrop-blur-lg bg-[var(--m3-surface-container)]/95">
+      <div id="selection-banner" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 hidden flex-wrap gap-3 items-center justify-between px-5 py-3 rounded-2xl sm:rounded-full m3-card border border-[var(--google-blue)] text-xs shadow-2xl animate-m3-enter max-w-4xl w-[92%] backdrop-blur-lg bg-[var(--m3-surface-container)]/95">
         <div class="flex items-center gap-3">
           <span class="relative flex h-2.5 w-2.5">
             <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--google-blue)] opacity-75"></span>
@@ -377,9 +377,13 @@
           </span>
           <span id="selection-text" class="text-[var(--m3-on-surface)] font-medium">0 notebooks selected across accounts</span>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2">
           <button id="btn-clear-selection" class="google-btn-outlined px-3 py-1.5 text-xs">
             Clear
+          </button>
+          <button id="btn-download-selected" type="button" class="google-btn-outlined px-3 py-1.5 text-xs flex items-center gap-1.5 whitespace-nowrap" title="Download Studio artifacts from selected notebooks">
+            <i data-lucide="download" class="w-3.5 h-3.5"></i>
+            <span>Batch Download</span>
           </button>
           <button id="btn-share-selected" class="google-btn-outlined px-3 py-1.5 text-xs flex items-center gap-1.5" title="Batch share selected notebooks">
             <i data-lucide="share-2" class="w-3.5 h-3.5"></i>
@@ -558,6 +562,12 @@
         </div>
       </div>
 
+      <nav id="notebook-pagination" aria-label="Notebook pages" class="flex flex-wrap items-center justify-end gap-3 text-xs" hidden>
+        <button id="notebook-page-previous" type="button" class="google-btn-outlined px-3 py-1.5 disabled:opacity-40 disabled:cursor-default">Previous</button>
+        <span id="notebook-page-label" role="status" aria-live="polite">Page 1 of 1</span>
+        <button id="notebook-page-next" type="button" class="google-btn-outlined px-3 py-1.5 disabled:opacity-40 disabled:cursor-default">Next</button>
+      </nav>
+
       <!-- NOTEBOOKS MATRIX GRID -->
       <div id="notebooks-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         <!-- Notebook cards dynamically rendered here -->
@@ -636,6 +646,17 @@
             <kbd class="kbd-badge text-[10px]">B</kbd>
           </button>
 
+          <button id="btn-open-fleet-downloads"
+            class="w-full p-2.5 rounded-xl m3-subcard flex items-center justify-between cursor-pointer hover:border-[var(--google-blue)]/50 transition-colors select-none text-left group"
+            type="button" aria-keyshortcuts="F" title="Generate and download Studio artifacts across notebooks (F)">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <div class="w-7 h-7 rounded-lg bg-[var(--google-blue-container)] text-[var(--google-blue)] flex items-center justify-center shrink-0">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i>
+              </div>
+              <span class="truncate text-xs font-medium text-[var(--m3-on-surface)] group-hover:text-[var(--google-blue)] transition-colors">Fleet Batches</span>
+            </div>
+            <kbd class="kbd-badge text-[10px]">F</kbd>
+          </button>
           <!-- Account Usage Limits Button -->
           <button
             id="btn-open-usage-modal"
@@ -837,6 +858,10 @@
             <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
               <span class="text-xs text-[var(--m3-on-surface)]">Open Batch Queue & Rotation Scheduler</span>
               <kbd class="kbd-badge">Q</kbd>
+            </div>
+            <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
+              <span class="text-xs text-[var(--m3-on-surface)]">Open Fleet Batches · Generate &amp; Download</span>
+              <kbd class="kbd-badge">F</kbd>
             </div>
             <div class="flex items-center justify-between p-2.5 rounded-xl m3-subcard">
               <span class="text-xs text-[var(--m3-on-surface)]">Open Account Usage & Quota Limits</span>
@@ -1923,7 +1948,7 @@
   <!-- Toast Notifications Container (Google Snackbar Style) -->
   <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
 
-  <script src="/static/app.js?v=2.3"></script>
+  <script src="/static/app.js?v=2.9"></script>
 
   <div id="auth-key-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 backdrop-blur-sm p-4">
     <div class="w-full max-w-md rounded-3xl border border-[var(--m3-outline-variant)] bg-[var(--m3-surface)] shadow-2xl animate-m3-enter">
@@ -1953,5 +1978,37 @@
     </div>
   </div>
 
+  <dialog id="fleet-dialog" aria-labelledby="fleet-title" class="fleet-dialog">
+    <header class="fleet-header"><div><h2 id="fleet-title">Fleet batches</h2><p>Generate across accounts. Download everything by notebook.</p></div><button id="fleet-close" type="button" aria-label="Close fleet batches">✕</button></header>
+    <form id="fleet-form" method="post" action="/api/fleet/downloads">
+      <label for="fleet-mode">Operation</label>
+      <select id="fleet-mode" name="fleet-mode"><option value="download">Batch download</option><option value="generation">Batch generation</option></select>
+      <label for="fleet-links">Notebook links or IDs · one per line</label>
+      <textarea id="fleet-links" autofocus spellcheck="false" autocapitalize="off" rows="4" required placeholder="Paste NotebookLM notebook links here" name="fleet-links"></textarea>
+      <div class="fleet-actions"><button type="button" id="fleet-use-selected">Use selected notebooks</button><button type="button" id="fleet-use-visible">Use filtered notebooks</button><button type="button" id="fleet-use-all">Use all notebooks</button></div>
+      <section id="fleet-download-options">
+        <label for="fleet-root">Download folder on this host</label><div class="fleet-path"><input id="fleet-root" spellcheck="false" autocapitalize="off" type="text" placeholder="Absolute folder path" name="fleet-root"><button id="fleet-browse" type="button">Browse</button></div>
+        <label for="fleet-concurrency">Connection speed / simultaneous downloads</label>
+        <select id="fleet-concurrency" name="fleet-concurrency"><option value="auto">Auto · adapt to observed download throughput</option><option value="1" selected>Slow connection · sequential (1 artifact)</option><option value="2">Parallel · 2 artifacts</option><option value="3">Parallel · 3 artifacts</option><option value="4">Parallel · 4 artifacts</option><option value="6">Fast connection · 6 artifacts</option></select>
+        <p class="fleet-hint">Finish each notebook before starting the next. Auto starts with 1 transfer and adapts up to 6 using completed downloads.</p>
+        <fieldset><legend>Artifact types · all selected by default</legend><div id="fleet-types" class="fleet-types"></div></fieldset>
+        <label class="fleet-checkbox"><input id="fleet-skip" type="checkbox" checked name="fleet-skip"> Skip files already downloaded</label>
+      </section>
+      <section id="fleet-generation-options" hidden>
+        <div class="fleet-columns"><div><label for="fleet-artifact">Artifact type</label><select id="fleet-artifact" name="fleet-artifact"></select></div><div><label for="fleet-format">Format</label><select id="fleet-format" name="fleet-format" aria-describedby="fleet-format-help"></select><span id="fleet-format-help" class="fleet-hint">Use the provider default or choose a format.</span></div><div><label for="fleet-style">Video style</label><select id="fleet-style" name="fleet-style"><option>auto_select</option><option>whiteboard</option><option>classic</option><option>anime</option></select></div></div>
+        <label for="fleet-prompts">Prompts · separate multiple prompts with a line containing ---</label><textarea id="fleet-prompts" rows="4" placeholder="Explain {notebook_title} to an engineering audience" name="fleet-prompts"></textarea>
+        <label for="fleet-exclusions">Exclude source filenames or IDs (one per line)</label><textarea id="fleet-exclusions" rows="2" placeholder="seed.sql" name="fleet-exclusions"></textarea>
+        <details><summary>Optional source IDs per notebook</summary><label for="fleet-source-map">JSON mapping notebook ID to selected source IDs</label><textarea id="fleet-source-map" rows="3" placeholder='{"notebook-uuid": ["source-uuid"]}' name="fleet-source-map"></textarea></details>
+        <p class="fleet-hint">One generation per notebook per prompt. Blank source settings use all sources; source checkboxes in NotebookLM are not read by this CLI.</p>
+      </section>
+      <div class="fleet-actions"><button id="fleet-preview" type="button">Check &amp; preview</button><button id="fleet-start" type="submit" class="google-btn-primary">Start batch</button></div>
+    </form>
+    <p id="fleet-message" role="status" aria-live="polite"></p>
+    <div id="fleet-preview-results"></div>
+    <section class="fleet-progress"><label for="fleet-history">Saved download batches</label><select id="fleet-history" name="fleet-history"><option value="">Choose a batch</option></select><div id="fleet-batch-status" aria-live="polite"></div><progress id="fleet-progress" max="1" value="0" aria-label="Downloaded artifacts"></progress><div class="fleet-actions"><button id="fleet-resume" type="button">Resume / sync missing</button><button id="fleet-pause" type="button">Pause downloads</button><button id="fleet-open-folder" type="button">Open folder</button><button id="fleet-download-generated" type="button" hidden><i data-lucide="download" class="w-3.5 h-3.5" aria-hidden="true"></i><span>Download last generation batch</span></button></div><div id="fleet-results"></div></section>
+    <details><summary>Generation queue controls</summary><div class="fleet-actions"><button type="button" data-fleet-queue="pause">Pause dispatch</button><button type="button" data-fleet-queue="resume">Resume dispatch</button><button type="button" data-fleet-queue="retry-failed">Retry failed jobs</button><button type="button" data-fleet-queue="clear-failed-history">Clear failed history</button></div></details>
+  </dialog>
+  <link rel="stylesheet" href="/static/fleet.css?v=2">
+  <script src="/static/fleet.js?v=3"></script>
 </body>
 </html>

@@ -28,7 +28,7 @@ def test_corrupt_state_skips_bad_records_and_keeps_valid_jobs(tmp_path, monkeypa
     assert list(scheduler._jobs) == ["valid"]
 
 
-def test_restart_requeues_in_progress_jobs(tmp_path, monkeypatch):
+def test_restart_blocks_legacy_jobs_without_submission_ids(tmp_path, monkeypatch):
     state = tmp_path / "scheduled.json"
     state.write_text(json.dumps([_job("restart", "in_progress").model_dump()]))
     monkeypatch.setattr(scheduler_module, "SCHEDULED_JOBS_FILE", state)
@@ -36,7 +36,8 @@ def test_restart_requeues_in_progress_jobs(tmp_path, monkeypatch):
     scheduler = JobScheduler()
     scheduler.load_jobs_from_disk()
 
-    assert scheduler.get_job("restart").status == "queued"
+    assert scheduler.get_job("restart").status == "failed"
+    assert scheduler.get_job("restart").error_details["stage"] == "restart_recovery"
     assert scheduler.get_job("restart").started_at is None
 
 
@@ -69,7 +70,7 @@ def test_interrupted_execution_requeues_job_and_releases_profile(monkeypatch):
             entered.set()
             await asyncio.Event().wait()
 
-        monkeypatch.setattr(scheduler_module, "ensure_notebook_shared", block)
+        monkeypatch.setattr(scheduler_module, "source_scope", block)
         task = asyncio.create_task(scheduler._execute_job(job, profile))
         await entered.wait()
         task.cancel()
@@ -92,8 +93,9 @@ def test_generated_artifact_with_failed_download_is_retryable(tmp_path, monkeypa
         profile = type("Profile", (), {"id": "profile-1", "email": ""})()
         original_sleep = asyncio.sleep
         monkeypatch.setattr(scheduler_module, "DOWNLOADS_DIR", tmp_path)
-        monkeypatch.setattr(scheduler_module, "create_studio_artifact", lambda **kwargs: original_sleep(0, result={"success": True}))
-        monkeypatch.setattr(scheduler_module, "get_studio_status", lambda *args: original_sleep(
+        monkeypatch.setattr(scheduler_module, "source_scope", lambda *args: original_sleep(0, result=["source"]))
+        monkeypatch.setattr(scheduler_module, "create_studio_artifact", lambda **kwargs: original_sleep(0, result={"success": True, "stdout": '{"artifact_id":"artifact-1"}'}))
+        monkeypatch.setattr(scheduler_module, "artifacts", lambda *args: original_sleep(
             0, result=[{"id": "artifact-1", "type": "video", "status": "ready"}]
         ))
         monkeypatch.setattr(scheduler_module, "download_studio_artifact", lambda **kwargs: original_sleep(

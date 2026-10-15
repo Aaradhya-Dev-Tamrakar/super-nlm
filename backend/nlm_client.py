@@ -1,22 +1,28 @@
-import sys
 import asyncio
+import datetime
 import json
 import logging
-import subprocess
+import os
 import re
-from typing import List, Dict, Any, Optional
+import subprocess
+import sys
+from typing import Any, Dict, List, Optional
+
 import httpx
+
 from backend.config import (
-    NLM_EXECUTABLE,
     GEMINI_API_KEY,
-    DEFAULT_SYNTHESIS_MODEL,
-    SYNTHESIS_FALLBACK_MODELS
+    NLM_EXECUTABLE,
+    SYNTHESIS_FALLBACK_MODELS,
 )
-import datetime
 from backend.models import (
-    AccountProfile, Notebook, NotebookRef,
-    UsageWindow, ProfileUsage, FleetUsageResponse,
-    detect_course_info
+    AccountProfile,
+    FleetUsageResponse,
+    Notebook,
+    NotebookRef,
+    ProfileUsage,
+    UsageWindow,
+    detect_course_info,
 )
 
 logger = logging.getLogger(__name__)
@@ -26,7 +32,7 @@ logger = logging.getLogger(__name__)
 # for background CLI execution on Windows, reducing latency significantly.
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
-def _run_subprocess_sync(cmd: List[str], timeout: int) -> Dict[str, Any]:
+def _run_subprocess_sync(cmd: List[str], timeout: int, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     extra_kwargs = {}
     if sys.platform == "win32":
         extra_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
@@ -40,6 +46,7 @@ def _run_subprocess_sync(cmd: List[str], timeout: int) -> Dict[str, Any]:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=env,
             **extra_kwargs
         )
         out = res.stdout.replace("\r\n", "\n").strip()
@@ -67,18 +74,31 @@ def _run_subprocess_sync(cmd: List[str], timeout: int) -> Dict[str, Any]:
             "success": False
         }
 
-async def run_nlm_cmd(args: List[str], timeout: int = 60) -> Dict[str, Any]:
+async def run_nlm_cmd(args: List[str], timeout: int = 60, profile_id: Optional[str] = None) -> Dict[str, Any]:
+    env = None
+    if profile_id is not None:
+        env = os.environ.copy()
+        env["NLM_PROFILE"] = profile_id
+        # Explicit account selection takes precedence over inherited cookie auth.
+        env.pop("NOTEBOOKLM_COOKIES", None)
     cmd = [NLM_EXECUTABLE] + args
     logger.info(f"Running command: {' '.join(cmd)}")
     try:
         # On Windows, synchronous subprocess in thread pool is immune to IOCP pipe/reloader conflicts
         if sys.platform == "win32":
-            return await asyncio.to_thread(_run_subprocess_sync, cmd, timeout)
+            task = asyncio.create_task(asyncio.to_thread(_run_subprocess_sync, cmd, timeout, env))
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                # A Python thread cannot be cancelled: retain output-file locks until it exits.
+                await task
+                raise
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
+            env=env
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         out_str = stdout.decode("utf-8", errors="replace").replace("\r\n", "\n").strip()
@@ -94,7 +114,7 @@ async def run_nlm_cmd(args: List[str], timeout: int = 60) -> Dict[str, Any]:
         }
     except NotImplementedError:
         logger.info("Current event loop does not support create_subprocess_exec, falling back to to_thread")
-        return await asyncio.to_thread(_run_subprocess_sync, cmd, timeout)
+        return await asyncio.to_thread(_run_subprocess_sync, cmd, timeout, env)
     except asyncio.TimeoutError:
         try:
             proc.kill()
@@ -421,19 +441,28 @@ async def ensure_notebook_shared(notebook_id: str, source_profile_id: str, targe
     """
     if not target_email or not source_profile_id:
         return False
+    from backend.studio_service import StudioCommandError, diagnostic
 
     # Check current sharing status
     status_res = await run_nlm_cmd(["share", "status", notebook_id, "--profile", source_profile_id, "--json"], timeout=20)
     if status_res["success"]:
         try:
             data = json.loads(status_res["stdout"])
+            if not isinstance(data, dict) or not isinstance(data.get("collaborators"), list):
+                raise ValueError("Missing collaborators list")
             collaborators = data.get("collaborators", [])
             for c in collaborators:
                 if c.get("email", "").lower() == target_email.lower():
+                    if c.get("is_pending"):
+                        raise StudioCommandError({"stage": "sharing_status", "notebook_id": notebook_id,
+                            "profile_id": source_profile_id, "message": "Recipient already has a pending invitation; it has not confirmed access"})
                     logger.info(f"Notebook {notebook_id} is already shared with {target_email}")
                     return True
-        except Exception as e:
-            logger.warning(f"Could not parse share status for notebook {notebook_id}: {e}")
+        except (ValueError, TypeError) as error:
+            raise StudioCommandError({**diagnostic(status_res, "sharing_status", notebook_id, source_profile_id),
+                                      "message": f"Invalid sharing-status response: {error}"}) from error
+    else:
+        raise StudioCommandError(diagnostic(status_res, "sharing_status", notebook_id, source_profile_id))
 
     # Invite target account as editor
     logger.info(f"Inviting {target_email} to notebook {notebook_id} via profile {source_profile_id}")
@@ -443,7 +472,9 @@ async def ensure_notebook_shared(notebook_id: str, source_profile_id: str, targe
         "--profile", source_profile_id
     ], timeout=25)
 
-    return invite_res["success"]
+    if not invite_res["success"]:
+        raise StudioCommandError(diagnostic(invite_res, "sharing_invite", notebook_id, source_profile_id))
+    return True
 
 async def batch_share_notebooks_to_accounts(
     notebook_ids: List[str],
@@ -454,7 +485,7 @@ async def batch_share_notebooks_to_accounts(
     Batch shares multiple notebooks across specified (or all registered) Google accounts.
     Optimized to fetch share status once per notebook and only issue invitations for missing collaborators.
     """
-    from backend.storage import get_profiles, get_cached_notebooks
+    from backend.storage import get_cached_notebooks, get_profiles
 
     profiles = await get_profiles()
     profile_map = {p.id: p for p in profiles}
@@ -485,6 +516,7 @@ async def batch_share_notebooks_to_accounts(
         owner_email = profile_map[owner_profile_id].email.lower() if owner_profile_id in profile_map and profile_map[owner_profile_id].email else ""
 
         existing_collaborators = set()
+        status_error = None
         status_res = await run_nlm_cmd(["share", "status", nb_id, "--profile", owner_profile_id, "--json"], timeout=20)
         if status_res["success"]:
             try:
@@ -495,8 +527,13 @@ async def batch_share_notebooks_to_accounts(
                         existing_collaborators.add(c_email)
                     if c.get("role") == "owner" and c_email:
                         owner_email = c_email
-            except Exception as e:
+            except (ValueError, TypeError, AttributeError) as e:
                 logger.warning(f"Could not parse share status for notebook {nb_id}: {e}")
+                from backend.studio_service import diagnostic
+                status_error = {**diagnostic(status_res, "sharing_status", nb_id, owner_profile_id), "message": str(e)}
+        else:
+            from backend.studio_service import diagnostic
+            status_error = diagnostic(status_res, "sharing_status", nb_id, owner_profile_id)
 
         if target_profile_ids:
             target_profiles = [profile_map[pid] for pid in target_profile_ids if pid in profile_map]
@@ -506,6 +543,12 @@ async def batch_share_notebooks_to_accounts(
         for target in target_profiles:
             target_email = (target.email or "").strip().lower()
             if not target_email:
+                continue
+            if status_error:
+                total_failed += 1
+                results.append({"notebookId": nb_id, "notebookTitle": nb_title, "targetProfileId": target.id,
+                    "targetEmail": target.email, "status": "unknown", "message": "Sharing status could not be read; no invitation attempted",
+                    "error_details": status_error})
                 continue
 
             if target_email == owner_email:
@@ -551,19 +594,21 @@ async def batch_share_notebooks_to_accounts(
                 })
             else:
                 total_failed += 1
+                from backend.studio_service import diagnostic
                 results.append({
                     "notebookId": nb_id,
                     "notebookTitle": nb_title,
                     "targetProfileId": target.id,
                     "targetEmail": target.email,
                     "status": "failed",
-                    "message": invite_res.get("stderr") or "Invitation failed"
+                    "message": invite_res.get("stderr") or invite_res.get("stdout") or "Invitation failed",
+                    "error_details": diagnostic(invite_res, "sharing_invite", nb_id, owner_profile_id)
                 })
 
     # Populate local cache entries for shared notebooks so UI displays them immediately under target profiles
     try:
-        from backend.storage import save_cached_notebooks
         from backend.models import Notebook
+        from backend.storage import save_cached_notebooks
         existing_keys = {(n.id, n.profileId) for n in cached_notebooks}
         new_entries = []
         for r in results:
@@ -1090,14 +1135,20 @@ async def create_studio_artifact(
     style: Optional[str] = None,
     custom_prompt: Optional[str] = None,
     quantity: Optional[int] = None,
-    difficulty: Optional[str] = None
+    difficulty: Optional[str] = None,
+    source_ids: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
     Triggers creation of a studio artifact (video, audio, report, quiz, flashcards, mindmap, slides, etc.)
     using 'nlm <artifact_type> create <notebook_id> --profile <profile_id> --confirm [flags]'.
     """
     artifact_type_lower = artifact_type.lower().strip()
-    args = [artifact_type_lower, "create", notebook_id, "--profile", profile_id, "--confirm", "--json"]
+    command_type = artifact_type_lower
+    args = [command_type, "create", notebook_id, "--profile", profile_id, "--confirm", "--json"]
+    if source_ids is not None:
+        if not source_ids:
+            raise ValueError("source_ids must contain at least one source")
+        args.extend(["--source-ids", ",".join(source_ids)])
 
     if artifact_type_lower == "video":
         if format_option:
@@ -1118,9 +1169,20 @@ async def create_studio_artifact(
             args.extend(["--prompt", custom_prompt])
     elif artifact_type_lower in ("quiz", "flashcards"):
         if difficulty:
-            args.extend(["--difficulty", difficulty])
+            args.extend(["--difficulty", str({"easy": 1, "medium": 3, "hard": 5}.get(difficulty, difficulty))])
         if quantity and artifact_type_lower == "quiz":
             args.extend(["--count", str(quantity)])
+        if custom_prompt:
+            args.extend(["--focus", custom_prompt])
+    elif artifact_type_lower in ("slides", "infographic"):
+        if custom_prompt:
+            args.extend(["--focus", custom_prompt])
+        if artifact_type_lower == "slides" and format_option:
+            args.extend(["--format", format_option])
+    elif artifact_type_lower == "mindmap" and custom_prompt:
+        args.extend(["--title", custom_prompt])
+    elif artifact_type_lower == "data-table":
+        args.insert(3, custom_prompt or "Summarize the key facts and comparisons from the selected sources")
 
     logger.info(f"[Studio Create] Dispatching '{artifact_type_lower}' for notebook '{notebook_id}' on profile '{profile_id}'")
     res = await run_nlm_cmd(args, timeout=90)
@@ -1171,10 +1233,15 @@ async def download_studio_artifact(
         "data-table": "data-table"
     }
     cmd_type = cmd_type_map.get(artifact_type_lower, artifact_type_lower)
-    args = ["download", cmd_type, notebook_id, "--output", output_filepath, "--no-progress"]
+    # Download commands lack --profile; select the account only in this child process.
+    args = ["download", cmd_type, notebook_id, "--output", output_filepath]
+    if artifact_type_lower in ("audio", "video", "slides", "infographic"):
+        args.append("--no-progress")
+    if artifact_type_lower in ("quiz", "flashcards"):
+        args.extend(["--format", "markdown"])
     if artifact_id:
         args.extend(["--id", artifact_id])
 
     logger.info(f"[Studio Download] Downloading '{cmd_type}' for notebook '{notebook_id}' to '{output_filepath}'")
-    res = await run_nlm_cmd(args, timeout=180)
+    res = await run_nlm_cmd(args, timeout=180, profile_id=profile_id)
     return res
