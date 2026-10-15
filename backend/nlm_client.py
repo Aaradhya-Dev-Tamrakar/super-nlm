@@ -27,10 +27,119 @@ from backend.models import (
 
 logger = logging.getLogger(__name__)
 
-# Windows Process Optimization Flags:
-# CREATE_NO_WINDOW (0x08000000) prevents spawning unnecessary conhost processes
-# for background CLI execution on Windows, reducing latency significantly.
+# Windows Process Optimization Flags & Job Object Management
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+_NLM_JOB_OBJECT = None
+_NLM_JOB_INITIALIZED = False
+
+
+def _get_nlm_job_object():
+    """Initializes and returns a Win32 Job Object configured to kill children on close."""
+    global _NLM_JOB_OBJECT, _NLM_JOB_INITIALIZED
+    if sys.platform != "win32":
+        return None
+    if _NLM_JOB_INITIALIZED:
+        return _NLM_JOB_OBJECT
+
+    _NLM_JOB_INITIALIZED = True
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_uint64),
+                ("WriteOperationCount", ctypes.c_uint64),
+                ("OtherOperationCount", ctypes.c_uint64),
+                ("ReadTransferCount", ctypes.c_uint64),
+                ("WriteTransferCount", ctypes.c_uint64),
+                ("OtherTransferCount", ctypes.c_uint64),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        h_job = kernel32.CreateJobObjectW(None, None)
+        if not h_job:
+            return None
+
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        JobObjectExtendedLimitInformation = 9
+
+        ok = kernel32.SetInformationJobObject(
+            h_job,
+            JobObjectExtendedLimitInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        if not ok:
+            kernel32.CloseHandle(h_job)
+            return None
+
+        _NLM_JOB_OBJECT = h_job
+        return _NLM_JOB_OBJECT
+    except Exception:
+        return None
+
+
+def _bind_to_nlm_job(proc_or_pid: Any) -> bool:
+    """Assigns a child process or PID to the Windows Job Object."""
+    if sys.platform != "win32":
+        return False
+    h_job = _get_nlm_job_object()
+    if not h_job:
+        return False
+
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+
+        if hasattr(proc_or_pid, "_handle") and proc_or_pid._handle:
+            return bool(kernel32.AssignProcessToJobObject(h_job, int(proc_or_pid._handle)))
+
+        pid = getattr(proc_or_pid, "pid", proc_or_pid if isinstance(proc_or_pid, int) else None)
+        if isinstance(pid, int):
+            PROCESS_SET_QUOTA = 0x0100
+            PROCESS_TERMINATE = 0x0001
+            h_proc = kernel32.OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, False, pid)
+            if h_proc:
+                try:
+                    return bool(kernel32.AssignProcessToJobObject(h_job, h_proc))
+                finally:
+                    kernel32.CloseHandle(h_proc)
+    except Exception:
+        pass
+    return False
+
 
 def _run_subprocess_sync(cmd: List[str], timeout: int, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     extra_kwargs = {}
@@ -38,33 +147,38 @@ def _run_subprocess_sync(cmd: List[str], timeout: int, env: Optional[Dict[str, s
         extra_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
     try:
-        res = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=timeout,
             text=True,
             encoding="utf-8",
             errors="replace",
             env=env,
             **extra_kwargs
         )
-        out = res.stdout.replace("\r\n", "\n").strip()
-        err = res.stderr.replace("\r\n", "\n").strip()
-        if res.returncode != 0 and not err and out:
+        _bind_to_nlm_job(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            return {
+                "returncode": -1,
+                "stdout": "",
+                "stderr": f"Command timed out after {timeout} seconds",
+                "success": False
+            }
+
+        out = stdout.replace("\r\n", "\n").strip()
+        err = stderr.replace("\r\n", "\n").strip()
+        if proc.returncode != 0 and not err and out:
             err = out
         return {
-            "returncode": res.returncode,
+            "returncode": proc.returncode,
             "stdout": out,
             "stderr": err,
-            "success": res.returncode == 0
-        }
-    except subprocess.TimeoutExpired:
-        return {
-            "returncode": -1,
-            "stdout": "",
-            "stderr": f"Command timed out after {timeout} seconds",
-            "success": False
+            "success": proc.returncode == 0
         }
     except Exception as e:
         return {
@@ -73,6 +187,7 @@ def _run_subprocess_sync(cmd: List[str], timeout: int, env: Optional[Dict[str, s
             "stderr": str(e) or type(e).__name__,
             "success": False
         }
+
 
 async def run_nlm_cmd(args: List[str], timeout: int = 60, profile_id: Optional[str] = None) -> Dict[str, Any]:
     env = None
