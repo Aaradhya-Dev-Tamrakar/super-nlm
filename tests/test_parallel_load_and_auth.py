@@ -170,3 +170,21 @@ async def test_watch_cli_login_invalidates_usage_and_syncs_notebooks():
 
     assert app_mod._fleet_usage_cache["data"] is None
     mock_sync.assert_awaited_once_with(profile, auto_share_study=True)
+
+
+def test_trigger_login_defaults_clear_false_and_supports_clear_true():
+    client = TestClient(app)
+    profile = AccountProfile(id="dev83", displayName="Dev83", email="dev83@gmail.com", status="expired")
+    mock_proc = MagicMock()
+
+    with patch("backend.app.get_profile", new_callable=AsyncMock, return_value=profile), \
+         patch("backend.app.save_profile", new_callable=AsyncMock), \
+         patch("backend.app.launch_cli_login", return_value=mock_proc) as mock_launch, \
+         patch("backend.app._watch_cli_login", new_callable=AsyncMock):
+        res_default = client.post("/api/profiles/dev83/login")
+        res_clear = client.post("/api/profiles/dev83/login?clear=true")
+
+    assert res_default.status_code == 200
+    assert res_clear.status_code == 200
+    assert mock_launch.call_args_list[0].kwargs["clear"] is False
+    assert mock_launch.call_args_list[1].kwargs["clear"] is True

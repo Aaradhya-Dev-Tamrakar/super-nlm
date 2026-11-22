@@ -2368,12 +2368,12 @@ function renderAccountsModalList() {
             <span class="pointer-events-none">Edit</span>
           </button>
 
-          <!-- Re-login button -->
+          <!-- Re-login button (reuses warm Chrome profile for faster sign-in) -->
           <button
             type="button"
             data-action="login"
             data-profile-id="${escapeHtml(p.id)}"
-            title="Authenticate with Google Chrome"
+            title="Authenticate with Google Chrome (reuses existing browser profile)"
             class="btn-account-login ${
               isExpired
                 ? 'google-btn-primary bg-[var(--google-red)] hover:bg-[var(--google-red)]/90 text-white shadow-sm'
@@ -2382,6 +2382,18 @@ function renderAccountsModalList() {
           >
             <i data-lucide="log-in" class="w-3.5 h-3.5 inline pointer-events-none ${isExpired ? 'text-white' : 'text-[var(--m3-on-surface-subtle)]'}"></i>
             <span class="pointer-events-none">${isExpired ? 'Re-login' : 'Login'}</span>
+          </button>
+
+          <!-- Switch account (clears Chrome profile data) -->
+          <button
+            type="button"
+            data-action="fresh-login"
+            data-profile-id="${escapeHtml(p.id)}"
+            title="Clear Chrome profile data and sign in with a different Google account"
+            class="btn-account-fresh-login google-btn-outlined px-2 py-1 text-xs font-medium cursor-pointer text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] flex items-center gap-1"
+          >
+            <i data-lucide="user-round-cog" class="w-3.5 h-3.5 inline pointer-events-none"></i>
+            <span class="pointer-events-none">Switch</span>
           </button>
 
           <!-- Toggle Pro button -->
@@ -2466,7 +2478,10 @@ function renderAccountsModalList() {
     form.addEventListener('submit', handleEditProfileSubmit);
   });
   container.querySelectorAll('.btn-account-login').forEach(btn => {
-    btn.addEventListener('click', () => handleTriggerLogin(btn.getAttribute('data-profile-id')));
+    btn.addEventListener('click', () => handleTriggerLogin(btn.getAttribute('data-profile-id'), false));
+  });
+  container.querySelectorAll('.btn-account-fresh-login').forEach(btn => {
+    btn.addEventListener('click', () => handleTriggerLogin(btn.getAttribute('data-profile-id'), true));
   });
   container.querySelectorAll('.btn-account-set-pro').forEach(btn => {
     btn.addEventListener('click', () => handleSetPro(btn.getAttribute('data-profile-id')));
@@ -2707,7 +2722,7 @@ function pollProfileAuthCompletion(profileId, maxAttempts = 100, intervalMs = 30
   }, intervalMs);
 }
 
-async function handleTriggerLogin(profileId) {
+async function handleTriggerLogin(profileId, clear = false) {
   const btn = document.querySelector(`.btn-account-login[data-profile-id="${profileId}"]`);
   const originalHtml = btn ? btn.innerHTML : '';
   if (btn) {
@@ -2718,7 +2733,7 @@ async function handleTriggerLogin(profileId) {
   setGlobalLoading(true);
 
   try {
-    const res = await apiFetch(`/api/profiles/${profileId}/login`, { method: 'POST' });
+    const res = await apiFetch(`/api/profiles/${encodeURIComponent(profileId)}/login?clear=${clear ? 'true' : 'false'}`, { method: 'POST' });
     if (res.ok) {
       await loadProfiles();
       renderAccountsModalList();

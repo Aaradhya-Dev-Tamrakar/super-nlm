@@ -322,7 +322,7 @@ async def remove_profile(profile_id: str, _auth: bool = Depends(verify_api_acces
     return {"success": True, "message": f"Profile '{clean_id}' removed"}
 
 @app.post("/api/profiles/{profile_id}/login")
-async def trigger_profile_login(profile_id: str, clear: bool = True, _auth: bool = Depends(verify_api_access)):
+async def trigger_profile_login(profile_id: str, clear: bool = False, _auth: bool = Depends(verify_api_access)):
     clean_id = validate_profile_id(profile_id)
     profile = await get_profile(clean_id)
     if not profile:
