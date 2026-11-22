@@ -19,13 +19,14 @@ from backend.models import (
     ScheduledJob, SingleScheduleRequest, BatchScheduleRequest,
     BatchScheduleResponse, SchedulerStatusResponse,
     FolderMapping, FolderMappingCreateRequest, FolderStatusResponse,
-    FolderSyncRequest, FolderSyncResponse
+    FolderSyncRequest, FolderSyncResponse, NotebookSharingRule
 )
 from backend.calendar_service import calendar_service
 from backend.storage import (
     get_profiles, get_profile, save_profile, delete_profile,
     get_cached_notebooks, save_cached_notebooks, delete_cached_notebook,
-    get_folder_mappings, get_folder_mapping, save_folder_mapping, delete_folder_mapping
+    get_folder_mappings, get_folder_mapping, save_folder_mapping, delete_folder_mapping,
+    get_sharing_rules, get_notebook_sharing_rule, save_notebook_sharing_rule
 )
 from backend.drive_sync_service import drive_sync_service, normalize_folder_target
 from backend.nlm_client import (
@@ -174,6 +175,7 @@ async def create_profile(req: ProfileCreateRequest, launch_login: bool = True, _
         color=req.color or "#6366f1",
         icon=req.icon or "book-open",
         isDefaultPro=bool(req.isDefaultPro),
+        receiveAutoShare=True if req.receiveAutoShare is None else bool(req.receiveAutoShare),
         status="checking" if launch_login else "not_logged_in"
     )
     await save_profile(profile)
@@ -230,6 +232,8 @@ async def update_profile(profile_id: str, req: ProfileUpdateRequest, _auth: bool
         profile.color = req.color
     if req.icon is not None:
         profile.icon = req.icon
+    if req.receiveAutoShare is not None:
+        profile.receiveAutoShare = req.receiveAutoShare
     if req.isDefaultPro is not None:
         profile.isDefaultPro = req.isDefaultPro
         if req.isDefaultPro:
@@ -454,6 +458,27 @@ async def auto_share_study_endpoint(background_tasks: BackgroundTasks, role: str
     res = await auto_share_study_notebooks(cached, role=role)
     background_tasks.add_task(sync_all_notebooks, False)
     return res
+
+@app.get("/api/sharing-rules", response_model=Dict[str, NotebookSharingRule])
+async def list_sharing_rules(_auth: bool = Depends(verify_api_access)):
+    """Returns per-notebook auto-share exclusion rules."""
+    return await get_sharing_rules()
+
+@app.get("/api/notebooks/{notebook_id}/sharing-rules", response_model=NotebookSharingRule)
+async def read_notebook_sharing_rule(notebook_id: str, _auth: bool = Depends(verify_api_access)):
+    """Returns the auto-share exclusion rule for a specific notebook."""
+    return await get_notebook_sharing_rule(notebook_id)
+
+@app.put("/api/notebooks/{notebook_id}/sharing-rules", response_model=NotebookSharingRule)
+async def write_notebook_sharing_rule(
+    notebook_id: str,
+    rule: NotebookSharingRule,
+    _auth: bool = Depends(verify_api_access)
+):
+    """Updates auto-share exclusion rules for a notebook without affecting manual shares."""
+    rule.notebook_id = notebook_id
+    await save_notebook_sharing_rule(rule)
+    return rule
 
 @app.delete("/api/notebooks/{notebook_id}")
 async def delete_notebook_from_cache(notebook_id: str, _auth: bool = Depends(verify_api_access)):

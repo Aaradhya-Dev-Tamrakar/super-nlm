@@ -2281,6 +2281,12 @@ function renderAccountsModalList() {
                 <span>Set as Default Pro Engine (Primary AI query synthesizer)</span>
               </label>
             </div>
+            <div class="flex items-center gap-2 pt-0.5">
+              <input type="checkbox" id="edit-receive-auto-share-${escapeHtml(p.id)}" name="receiveAutoShare" ${p.receiveAutoShare !== false ? 'checked' : ''} class="rounded bg-[var(--m3-surface-container)] border-[var(--m3-outline)] text-[var(--google-blue)] focus:ring-0">
+              <label for="edit-receive-auto-share-${escapeHtml(p.id)}" class="text-xs text-[var(--m3-on-surface-variant)] cursor-pointer select-none">
+                <span>Auto-receive study &amp; course notebooks (manual sharing still works)</span>
+              </label>
+            </div>
 
             <!-- Actions -->
             <div class="flex items-center justify-end gap-2 pt-2 border-t border-[var(--m3-outline-variant)]">
@@ -2344,6 +2350,11 @@ function renderAccountsModalList() {
                   PRO
                 </span>
               ` : '')}
+              ${p.receiveAutoShare === false ? `
+                <span class="text-[9px] font-medium px-2 py-0.5 rounded-full bg-[var(--m3-surface-container-high)] text-[var(--m3-on-surface-subtle)] border border-[var(--m3-outline-variant)]">
+                  NO AUTO-SHARE
+                </span>
+              ` : ''}
             </div>
             <p class="text-[11px] text-[var(--m3-on-surface-subtle)] font-mono mt-0.5 truncate">${escapeHtml(p.email || 'No email reported yet')}</p>
             ${isExpired && p.lastError ? `
@@ -2487,6 +2498,8 @@ async function handleEditProfileSubmit(e) {
   const tier = form.querySelector('select[name="tier"]').value;
   const color = form.querySelector('input[name="color"]').value;
   const isDefaultPro = form.querySelector('input[name="isDefaultPro"]').checked;
+  const receiveAutoShareEl = form.querySelector('input[name="receiveAutoShare"]');
+  const receiveAutoShare = receiveAutoShareEl ? receiveAutoShareEl.checked : true;
 
   if (!displayName) {
     showToast('Display Label is required', 'error');
@@ -2516,7 +2529,8 @@ async function handleEditProfileSubmit(e) {
         email: email,
         tier: tier,
         color: color,
-        isDefaultPro: isDefaultPro
+        isDefaultPro: isDefaultPro,
+        receiveAutoShare: receiveAutoShare
       })
     });
 
@@ -2555,6 +2569,8 @@ async function handleAddAccountSubmit(e) {
   const tier = document.getElementById('select-account-tier').value;
   const color = document.getElementById('input-account-color').value;
   const launchLogin = document.getElementById('check-launch-login').checked;
+  const receiveAutoShareEl = document.getElementById('check-receive-auto-share');
+  const receiveAutoShare = receiveAutoShareEl ? receiveAutoShareEl.checked : true;
 
   const submitBtn = e.target.querySelector('button[type="submit"]');
   const originalSubmitHtml = submitBtn ? submitBtn.innerHTML : '';
@@ -2574,7 +2590,8 @@ async function handleAddAccountSubmit(e) {
         displayName: name,
         tier: tier,
         color: color,
-        isDefaultPro: tier === 'pro' && state.profiles.length === 0
+        isDefaultPro: tier === 'pro' && state.profiles.length === 0,
+        receiveAutoShare: receiveAutoShare
       })
     });
 

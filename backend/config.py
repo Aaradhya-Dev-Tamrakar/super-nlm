@@ -10,6 +10,7 @@ PROFILES_FILE = DATA_DIR / "profiles.json"
 CACHE_FILE = DATA_DIR / "notebooks_cache.json"
 SCHEDULED_JOBS_FILE = DATA_DIR / "scheduled_jobs.json"
 FOLDER_MAPPINGS_FILE = DATA_DIR / "folder_mappings.json"
+SHARING_RULES_FILE = DATA_DIR / "sharing_rules.json"
 DOWNLOADS_DIR = Path.home() / "Downloads" / "Super-NLM" / "Generated"
 
 # NotebookLM Quotas & Capacity Limits

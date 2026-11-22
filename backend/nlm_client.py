@@ -601,18 +601,21 @@ async def ensure_notebook_shared(notebook_id: str, source_profile_id: str, targe
 async def batch_share_notebooks_to_accounts(
     notebook_ids: List[str],
     target_profile_ids: Optional[List[str]] = None,
-    role: str = "editor"
+    role: str = "editor",
+    respect_auto_share_rules: bool = False
 ) -> Dict[str, Any]:
     """
     Batch shares multiple notebooks across specified (or all registered) Google accounts.
-    Optimized to fetch share status once per notebook and only issue invitations for missing collaborators.
+    When respect_auto_share_rules=True, skips notebooks excluded via sharing_rules.json and
+    excludes target profiles with receiveAutoShare=False or listed in per-notebook exclude_profiles.
     """
-    from backend.storage import get_cached_notebooks, get_profiles
+    from backend.storage import get_cached_notebooks, get_profiles, get_sharing_rules
 
     profiles = await get_profiles()
     profile_map = {p.id: p for p in profiles}
     cached_notebooks = await get_cached_notebooks()
     notebook_map = {n.id: n for n in cached_notebooks}
+    sharing_rules = await get_sharing_rules() if respect_auto_share_rules else {}
 
     results = []
     total_shared = 0
@@ -621,6 +624,10 @@ async def batch_share_notebooks_to_accounts(
     total_skipped_owner = 0
 
     for nb_id in notebook_ids:
+        rule = sharing_rules.get(nb_id) if respect_auto_share_rules else None
+        if rule and rule.exclude_all:
+            continue
+
         nb_entry = notebook_map.get(nb_id)
         nb_title = nb_entry.title if nb_entry else nb_id
 
@@ -661,6 +668,13 @@ async def batch_share_notebooks_to_accounts(
             target_profiles = [profile_map[pid] for pid in target_profile_ids if pid in profile_map]
         else:
             target_profiles = [p for p in profiles if p.id != owner_profile_id]
+
+        if respect_auto_share_rules:
+            excluded_pids = set(rule.exclude_profiles) if rule else set()
+            target_profiles = [
+                p for p in target_profiles
+                if getattr(p, "receiveAutoShare", True) and p.id not in excluded_pids
+            ]
 
         for target in target_profiles:
             target_email = (target.email or "").strip().lower()
@@ -809,8 +823,12 @@ async def auto_share_study_notebooks(
             "details": []
         }
 
-    logger.info(f"Auto-sharing {len(study_ids)} study course notebooks across all registered accounts...")
-    return await batch_share_notebooks_to_accounts(notebook_ids=study_ids, role=role)
+    logger.info(f"Auto-sharing {len(study_ids)} study course notebooks across eligible registered accounts...")
+    return await batch_share_notebooks_to_accounts(
+        notebook_ids=study_ids,
+        role=role,
+        respect_auto_share_rules=True,
+    )
 
 async def check_or_share_with_pro(notebook_id: str, source_profile_id: str, pro_email: str) -> bool:
     """Backward-compatible wrapper for Pro fallback sharing."""
