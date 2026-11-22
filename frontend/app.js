@@ -201,10 +201,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderAccountPills();
   renderCategoryChips();
   showSkeletons(true);
-  await loadProfiles();
-  await loadNotebooks();
-  await loadCalendarAgenda();
+  // Fire non-critical widgets in parallel without blocking initial render
+  loadCalendarAgenda();
   loadFleetUsage(false);
+  await Promise.all([loadProfiles(), loadNotebooks()]);
+  renderAccountPills();
+  renderNotebooksGrid();
   showSkeletons(false);
   if (window.lucide) lucide.createIcons();
 });
@@ -1089,7 +1091,7 @@ function renderAuthAlertBanner() {
   const container = document.getElementById('auth-alert-container');
   if (!container) return;
 
-  const expiredProfiles = state.profiles.filter(p => p.status === 'expired' || p.status === 'not_logged_in');
+  const expiredProfiles = state.profiles.filter(p => p.status === 'expired');
 
   if (expiredProfiles.length === 0) {
     container.classList.add('hidden');
@@ -1258,7 +1260,7 @@ async function handleSyncAll() {
     renderNotebooksGrid();
 
     const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
-    const expiredProfiles = state.profiles.filter(p => p.status === 'expired' || p.status === 'not_logged_in');
+    const expiredProfiles = state.profiles.filter(p => p.status === 'expired');
     if (expiredProfiles.length > 0) {
       const names = expiredProfiles.map(p => p.displayName || p.id).join(', ');
       showToast(`⚠️ Sync notice: Auth expired for ${names}. Re-login required.`, 'error', 8000);
@@ -1315,7 +1317,7 @@ function renderAccountPills() {
 
   // Individual Account Pills
   state.profiles.forEach(p => {
-    const isExpired = p.status === 'expired' || p.status === 'not_logged_in';
+    const isExpired = p.status === 'expired';
     const count = state.notebooks.filter(n => n.profileId === p.id).length;
     const pill = createPill({
       id: p.id,
@@ -1385,7 +1387,7 @@ function renderSidebarAccounts() {
   `;
 
   state.profiles.forEach(p => {
-    const isExpired = p.status === 'expired' || p.status === 'not_logged_in';
+    const isExpired = p.status === 'expired';
     const count = state.notebooks.filter(n => n.profileId === p.id).length;
     const isActive = state.activeProfileFilter === p.id;
     const isPro = p.isDefaultPro || p.tier === 'pro';
@@ -1839,7 +1841,7 @@ function renderNotebooksGrid() {
     emptyState.classList.add('flex');
 
     const activeProfile = state.activeProfileFilter !== 'all' ? state.profiles.find(x => x.id === state.activeProfileFilter) : null;
-    const isFilteredExpired = activeProfile && (activeProfile.status === 'expired' || activeProfile.status === 'not_logged_in');
+    const isFilteredExpired = activeProfile && activeProfile.status === 'expired';
 
     if (isFilteredExpired) {
       emptyState.innerHTML = `
@@ -2302,7 +2304,9 @@ function renderAccountsModalList() {
       `;
     }
 
-    const isExpired = p.status === 'expired' || p.status === 'not_logged_in';
+    const isExpired = p.status === 'expired';
+    const isNotLoggedIn = p.status === 'not_logged_in';
+    const isChecking = p.status === 'checking';
 
     return `
       <div class="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-2xl m3-subcard transition-all gap-3 ${
@@ -2322,7 +2326,15 @@ function renderAccountsModalList() {
                 <span class="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[var(--google-red-container)] text-[var(--google-red)] border border-[var(--google-red)]/30 flex items-center gap-1">
                   <i data-lucide="alert-triangle" class="w-2.5 h-2.5"></i> AUTH EXPIRED
                 </span>
-              ` : ''}
+              ` : (isChecking ? `
+                <span class="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[var(--google-blue-container)]/60 text-[var(--google-blue)] border border-[var(--google-blue)]/30 flex items-center gap-1">
+                  <i data-lucide="loader-2" class="w-2.5 h-2.5 animate-spin"></i> SIGNING IN
+                </span>
+              ` : (isNotLoggedIn ? `
+                <span class="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[var(--m3-surface-container-high)] text-[var(--m3-on-surface-subtle)] border border-[var(--m3-outline-variant)] flex items-center gap-1">
+                  NOT LOGGED IN
+                </span>
+              ` : ''))}
               ${isPro ? `
                 <span class="text-[9px] font-medium px-2 py-0.5 rounded-full bg-[var(--google-yellow-container)]/50 text-[var(--google-yellow)] border border-[var(--google-yellow)]/30 flex items-center gap-1">
                   <i data-lucide="sparkles" class="w-2.5 h-2.5"></i> DEFAULT PRO
@@ -2567,10 +2579,14 @@ async function handleAddAccountSubmit(e) {
     });
 
     if (res.ok) {
+      const createdProfile = await res.json();
       document.getElementById('form-add-account').reset();
       await loadProfiles();
       renderAccountsModalList();
       showToast(`Account profile '${name}' added. ${launchLogin ? 'Opening sign-in window...' : ''}`, 'success');
+      if (launchLogin && createdProfile && createdProfile.id) {
+        pollProfileAuthCompletion(createdProfile.id);
+      }
     } else {
       const err = await res.json();
       showToast('Failed: ' + (err.detail || 'Could not add account'), 'error');
@@ -2587,6 +2603,40 @@ async function handleAddAccountSubmit(e) {
   }
 }
 
+const _activeAuthPollers = new Set();
+
+function pollProfileAuthCompletion(profileId, maxAttempts = 40, intervalMs = 3000) {
+  if (_activeAuthPollers.has(profileId)) return;
+  _activeAuthPollers.add(profileId);
+
+  let attempts = 0;
+  const timer = setInterval(async () => {
+    attempts += 1;
+    try {
+      const res = await apiFetch(`/api/profiles/${encodeURIComponent(profileId)}/check-auth`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.is_valid) {
+          clearInterval(timer);
+          _activeAuthPollers.delete(profileId);
+          await Promise.all([loadProfiles(), loadNotebooks()]);
+          renderAccountsModalList();
+          renderAccountPills();
+          renderNotebooksGrid();
+          showToast(`Account '${profileId}' signed in and verified!`, 'success');
+          return;
+        }
+      }
+    } catch (_) {
+      // Ignore transient errors while user completes browser login
+    }
+    if (attempts >= maxAttempts) {
+      clearInterval(timer);
+      _activeAuthPollers.delete(profileId);
+    }
+  }, intervalMs);
+}
+
 async function handleTriggerLogin(profileId) {
   const btn = document.querySelector(`.btn-account-login[data-profile-id="${profileId}"]`);
   const originalHtml = btn ? btn.innerHTML : '';
@@ -2600,7 +2650,10 @@ async function handleTriggerLogin(profileId) {
   try {
     const res = await apiFetch(`/api/profiles/${profileId}/login`, { method: 'POST' });
     if (res.ok) {
+      await loadProfiles();
+      renderAccountsModalList();
       showToast(`Sign-in window launched for '${profileId}'`, 'info');
+      pollProfileAuthCompletion(profileId);
     }
   } catch (err) {
     showToast('Failed to launch login: ' + err.message, 'error');
