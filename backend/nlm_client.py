@@ -380,6 +380,13 @@ async def check_profile_auth_status(profile: AccountProfile, timeout: int = 20) 
     if is_valid:
         profile.status = "connected"
         profile.lastError = None
+        for line in out.splitlines():
+            stripped = line.strip()
+            if stripped.lower().startswith("account:"):
+                parsed_email = stripped.split(":", 1)[1].strip()
+                if parsed_email and "@" in parsed_email:
+                    profile.email = parsed_email
+                break
         return {
             "profile_id": profile.id,
             "status": "connected",
@@ -1110,13 +1117,13 @@ def launch_cli_login(profile_id: str, clear: bool = True):
     if sys.platform == "win32":
         quoted_cmd = subprocess.list2cmdline(cmd_args)
         console_cmd = f'cmd.exe /k "echo Logging in to Super-NLM profile: {profile_id}... && {quoted_cmd} && echo. && echo Profile auth complete! You can close this window now. && pause"'
-        subprocess.Popen(
+        return subprocess.Popen(
             console_cmd,
             creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
         )
     else:
         logger.info(f"Launching login CLI for profile: {profile_id}")
-        subprocess.Popen(cmd_args)
+        return subprocess.Popen(cmd_args)
 
 async def delete_cli_profile(profile_id: str) -> bool:
     res = await run_nlm_cmd(["login", "profile", "delete", profile_id], timeout=15)

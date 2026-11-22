@@ -46,24 +46,35 @@ from backend.notebook_owners import enrich_notebook_owners
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("super_nlm")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Initializing Super-NLM Hub...")
-    # Sync profiles with CLI profile state
+async def _startup_background_sync():
+    """Reconcile CLI profile emails and run initial notebook sync without blocking server startup."""
     try:
-        cli_profiles = await get_cli_profiles()
-        profiles = await get_profiles()
+        cli_profiles, profiles = await asyncio.gather(get_cli_profiles(), get_profiles())
         for p in profiles:
             if not p.email and p.id in cli_profiles and cli_profiles[p.id]:
                 p.email = cli_profiles[p.id]
-                p.status = "connected"
+                if p.status == "not_logged_in":
+                    p.status = "connected"
                 await save_profile(p)
-        # Background initial sync of notebooks and auto-share study courses
-        asyncio.create_task(sync_all_notebooks(auto_share_study=True))
+    except Exception as e:
+        logger.error(f"Error during background profile reconciliation: {e}")
+
+    try:
+        await sync_all_notebooks(auto_share_study=True)
+    except Exception as e:
+        logger.error(f"Error during startup notebook sync: {e}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Initializing Super-NLM Hub...")
+    try:
+        # Run non-critical startup sync/reconciliation in parallel without blocking readiness
+        asyncio.create_task(_startup_background_sync())
         # Start the background job scheduler daemon
         await scheduler.start()
     except Exception as e:
-        logger.error(f"Error during startup sync: {e}")
+        logger.error(f"Error during startup initialization: {e}")
     yield
     logger.info("Shutting down Super-NLM Hub...")
     from backend.batch_downloads import downloads
@@ -120,12 +131,33 @@ async def sync_all_notebooks(auto_share_study: bool = True) -> List[Notebook]:
 
 @app.get("/api/profiles", response_model=List[AccountProfile])
 async def list_profiles(_auth: bool = Depends(verify_api_access)):
-    cli_profiles = await get_cli_profiles()
     profiles = await get_profiles()
-    for p in profiles:
-        if not p.email and p.id in cli_profiles and cli_profiles[p.id]:
-            p.email = cli_profiles[p.id]
+    if any(not p.email for p in profiles):
+        cli_profiles = await get_cli_profiles()
+        for p in profiles:
+            if not p.email and p.id in cli_profiles and cli_profiles[p.id]:
+                p.email = cli_profiles[p.id]
     return profiles
+
+async def _watch_cli_login(profile_id: str, proc) -> None:
+    """Wait for the spawned CLI login process to exit, then verify auth and persist status."""
+    try:
+        if proc is not None:
+            await asyncio.to_thread(proc.wait, timeout=300)
+    except Exception as e:
+        logger.warning(f"CLI login watcher for '{profile_id}' ended early: {e}")
+    try:
+        profile = await get_profile(profile_id)
+        if not profile:
+            return
+        await check_profile_auth_status(profile)
+        if not profile.email:
+            cli_profiles = await get_cli_profiles()
+            if profile.id in cli_profiles and cli_profiles[profile.id]:
+                profile.email = cli_profiles[profile.id]
+        await save_profile(profile)
+    except Exception as e:
+        logger.warning(f"Post-login auth check failed for '{profile_id}': {e}")
 
 @app.post("/api/profiles", response_model=AccountProfile)
 async def create_profile(req: ProfileCreateRequest, launch_login: bool = True, _auth: bool = Depends(verify_api_access)):
@@ -142,12 +174,13 @@ async def create_profile(req: ProfileCreateRequest, launch_login: bool = True, _
         color=req.color or "#6366f1",
         icon=req.icon or "book-open",
         isDefaultPro=bool(req.isDefaultPro),
-        status="not_logged_in"
+        status="checking" if launch_login else "not_logged_in"
     )
     await save_profile(profile)
 
     if launch_login:
-        launch_cli_login(profile.id, clear=True)
+        proc = launch_cli_login(profile.id, clear=True)
+        asyncio.create_task(_watch_cli_login(profile.id, proc))
 
     return profile
 
@@ -250,7 +283,11 @@ async def trigger_profile_login(profile_id: str, clear: bool = True, _auth: bool
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    launch_cli_login(profile.id, clear=clear)
+    profile.status = "checking"
+    profile.lastError = None
+    await save_profile(profile)
+    proc = launch_cli_login(profile.id, clear=clear)
+    asyncio.create_task(_watch_cli_login(profile.id, proc))
     return {"success": True, "message": f"Login window launched for '{profile.id}'"}
 
 @app.get("/api/profiles/health")
