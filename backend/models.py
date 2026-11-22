@@ -11,6 +11,7 @@ class AccountProfile(BaseModel):
     color: str = Field(default="#6366f1", description="Hex badge color")
     icon: str = Field(default="book-open", description="Lucide icon name")
     isDefaultPro: bool = Field(default=False, description="Whether this profile acts as the primary Pro AI engine")
+    receiveAutoShare: bool = Field(default=True, description="Whether this profile automatically receives auto-shared study/course notebooks")
     status: Literal["connected", "expired", "not_logged_in", "checking"] = "checking"
     notebookCount: int = Field(default=0, description="Total notebooks found in this account")
     lastError: Optional[str] = Field(default=None, description="Last error encountered when syncing or querying this account")
@@ -24,6 +25,7 @@ class ProfileCreateRequest(BaseModel):
     color: Optional[str] = "#6366f1"
     icon: Optional[str] = "book-open"
     isDefaultPro: Optional[bool] = False
+    receiveAutoShare: Optional[bool] = True
 
 class ProfileUpdateRequest(BaseModel):
     newId: Optional[str] = None
@@ -33,6 +35,12 @@ class ProfileUpdateRequest(BaseModel):
     color: Optional[str] = None
     icon: Optional[str] = None
     isDefaultPro: Optional[bool] = None
+    receiveAutoShare: Optional[bool] = None
+
+class NotebookSharingRule(BaseModel):
+    notebook_id: str
+    exclude_all: bool = Field(default=False, description="Skip automatic study-course sharing for this notebook across all accounts")
+    exclude_profiles: List[str] = Field(default_factory=list, description="Profile IDs excluded from automatic sharing for this notebook")
 
 import re
 

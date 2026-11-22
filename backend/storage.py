@@ -4,8 +4,8 @@ import os
 import tempfile
 from typing import List, Dict, Optional, Any
 from pathlib import Path
-from backend.config import PROFILES_FILE, CACHE_FILE, DEFAULT_SEED_PROFILES, FOLDER_MAPPINGS_FILE
-from backend.models import AccountProfile, Notebook, FolderMapping
+from backend.config import PROFILES_FILE, CACHE_FILE, DEFAULT_SEED_PROFILES, FOLDER_MAPPINGS_FILE, SHARING_RULES_FILE
+from backend.models import AccountProfile, Notebook, FolderMapping, NotebookSharingRule
 
 _lock = asyncio.Lock()
 
@@ -172,4 +172,37 @@ async def delete_folder_mapping(notebook_id: str) -> bool:
             await asyncio.to_thread(_save_folder_mappings_sync, mappings)
             return True
         return False
+
+# ----------------- SHARING RULES PERSISTENCE -----------------
+
+def _load_sharing_rules_sync() -> Dict[str, NotebookSharingRule]:
+    if not SHARING_RULES_FILE.exists():
+        return {}
+    try:
+        with open(SHARING_RULES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return {k: NotebookSharingRule(**v) for k, v in data.items()}
+    except Exception as e:
+        logger.error(f"Failed to read sharing rules from {SHARING_RULES_FILE}: {e}")
+        return {}
+
+def _save_sharing_rules_sync(rules: Dict[str, NotebookSharingRule]):
+    _atomic_write_json(SHARING_RULES_FILE, {k: v.model_dump() for k, v in rules.items()})
+
+async def get_sharing_rules() -> Dict[str, NotebookSharingRule]:
+    async with _lock:
+        return await asyncio.to_thread(_load_sharing_rules_sync)
+
+async def get_notebook_sharing_rule(notebook_id: str) -> NotebookSharingRule:
+    rules = await get_sharing_rules()
+    return rules.get(notebook_id, NotebookSharingRule(notebook_id=notebook_id))
+
+async def save_notebook_sharing_rule(rule: NotebookSharingRule):
+    async with _lock:
+        rules = await asyncio.to_thread(_load_sharing_rules_sync)
+        if not rule.exclude_all and not rule.exclude_profiles:
+            rules.pop(rule.notebook_id, None)
+        else:
+            rules[rule.notebook_id] = rule
+        await asyncio.to_thread(_save_sharing_rules_sync, rules)
 
