@@ -208,6 +208,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderAccountPills();
   renderNotebooksGrid();
   showSkeletons(false);
+  initLoginReconcileListeners();
   if (window.lucide) lucide.createIcons();
 });
 
@@ -2378,12 +2379,12 @@ function renderAccountsModalList() {
             <span class="pointer-events-none">Edit</span>
           </button>
 
-          <!-- Re-login button -->
+          <!-- Re-login button (reuses warm Chrome profile for faster sign-in) -->
           <button
             type="button"
             data-action="login"
             data-profile-id="${escapeHtml(p.id)}"
-            title="Authenticate with Google Chrome"
+            title="Authenticate with Google Chrome (reuses existing browser profile)"
             class="btn-account-login ${
               isExpired
                 ? 'google-btn-primary bg-[var(--google-red)] hover:bg-[var(--google-red)]/90 text-white shadow-sm'
@@ -2392,6 +2393,18 @@ function renderAccountsModalList() {
           >
             <i data-lucide="log-in" class="w-3.5 h-3.5 inline pointer-events-none ${isExpired ? 'text-white' : 'text-[var(--m3-on-surface-subtle)]'}"></i>
             <span class="pointer-events-none">${isExpired ? 'Re-login' : 'Login'}</span>
+          </button>
+
+          <!-- Switch account (clears Chrome profile data) -->
+          <button
+            type="button"
+            data-action="fresh-login"
+            data-profile-id="${escapeHtml(p.id)}"
+            title="Clear Chrome profile data and sign in with a different Google account"
+            class="btn-account-fresh-login google-btn-outlined px-2 py-1 text-xs font-medium cursor-pointer text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] flex items-center gap-1"
+          >
+            <i data-lucide="user-round-cog" class="w-3.5 h-3.5 inline pointer-events-none"></i>
+            <span class="pointer-events-none">Switch</span>
           </button>
 
           <!-- Toggle Pro button -->
@@ -2476,7 +2489,10 @@ function renderAccountsModalList() {
     form.addEventListener('submit', handleEditProfileSubmit);
   });
   container.querySelectorAll('.btn-account-login').forEach(btn => {
-    btn.addEventListener('click', () => handleTriggerLogin(btn.getAttribute('data-profile-id')));
+    btn.addEventListener('click', () => handleTriggerLogin(btn.getAttribute('data-profile-id'), false));
+  });
+  container.querySelectorAll('.btn-account-fresh-login').forEach(btn => {
+    btn.addEventListener('click', () => handleTriggerLogin(btn.getAttribute('data-profile-id'), true));
   });
   container.querySelectorAll('.btn-account-set-pro').forEach(btn => {
     btn.addEventListener('click', () => handleSetPro(btn.getAttribute('data-profile-id')));
@@ -2621,14 +2637,83 @@ async function handleAddAccountSubmit(e) {
 }
 
 const _activeAuthPollers = new Set();
+let _reconcileInFlight = false;
+let _lastReconcileAt = 0;
 
-function pollProfileAuthCompletion(profileId, maxAttempts = 40, intervalMs = 3000) {
+async function applyPostLoginRefresh(profileId, { notify = true } = {}) {
+  try {
+    await apiFetch(`/api/profiles/${encodeURIComponent(profileId)}/sync`, { method: 'POST' });
+  } catch (syncErr) {
+    console.warn(`Post-login sync failed for '${profileId}':`, syncErr);
+  }
+  await Promise.all([loadProfiles(), loadNotebooks()]);
+  renderAccountsModalList();
+  renderAccountPills();
+  renderCategoryChips();
+  renderNotebooksGrid();
+  renderAuthAlertBanner();
+  loadFleetUsage(true);
+  if (notify) {
+    showToast(`Account '${profileId}' signed in and synced!`, 'success');
+  }
+}
+
+async function reconcileProfilesOnFocus(force = false) {
+  if (_reconcileInFlight) return;
+  const hasPending = state.profiles.some(p => ['checking', 'expired', 'not_logged_in'].includes(p.status));
+  const cooldownMs = hasPending ? 1500 : 15000;
+  const now = Date.now();
+  if (!force && (now - _lastReconcileAt) < cooldownMs) return;
+
+  _reconcileInFlight = true;
+  _lastReconcileAt = now;
+  try {
+    const res = await apiFetch('/api/profiles/reconcile', { method: 'POST' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.changed || (data.newly_connected && data.newly_connected.length > 0)) {
+      await Promise.all([loadProfiles(), loadNotebooks()]);
+      renderAccountsModalList();
+      renderAccountPills();
+      renderCategoryChips();
+      renderNotebooksGrid();
+      renderAuthAlertBanner();
+      loadFleetUsage(true);
+      if (data.newly_connected && data.newly_connected.length > 0) {
+        showToast(`New login detected for ${data.newly_connected.join(', ')} — notebooks synced!`, 'success');
+      }
+    }
+  } catch (_) {
+    // Ignore transient errors during background focus reconciliation
+  } finally {
+    _reconcileInFlight = false;
+  }
+}
+
+function initLoginReconcileListeners() {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      reconcileProfilesOnFocus();
+    }
+  });
+  window.addEventListener('focus', () => {
+    reconcileProfilesOnFocus();
+  });
+}
+
+function pollProfileAuthCompletion(profileId, maxAttempts = 100, intervalMs = 3000) {
   if (_activeAuthPollers.has(profileId)) return;
   _activeAuthPollers.add(profileId);
 
   let attempts = 0;
   const timer = setInterval(async () => {
     attempts += 1;
+    // Stop polling if profile was deleted from state
+    if (state.profiles.length > 0 && !state.profiles.some(p => p.id === profileId)) {
+      clearInterval(timer);
+      _activeAuthPollers.delete(profileId);
+      return;
+    }
     try {
       const res = await apiFetch(`/api/profiles/${encodeURIComponent(profileId)}/check-auth`, { method: 'POST' });
       if (res.ok) {
@@ -2636,13 +2721,13 @@ function pollProfileAuthCompletion(profileId, maxAttempts = 40, intervalMs = 300
         if (data.is_valid) {
           clearInterval(timer);
           _activeAuthPollers.delete(profileId);
-          await Promise.all([loadProfiles(), loadNotebooks()]);
-          renderAccountsModalList();
-          renderAccountPills();
-          renderNotebooksGrid();
-          showToast(`Account '${profileId}' signed in and verified!`, 'success');
+          await applyPostLoginRefresh(profileId, { notify: true });
           return;
         }
+      } else if (res.status === 404) {
+        clearInterval(timer);
+        _activeAuthPollers.delete(profileId);
+        return;
       }
     } catch (_) {
       // Ignore transient errors while user completes browser login
@@ -2654,7 +2739,7 @@ function pollProfileAuthCompletion(profileId, maxAttempts = 40, intervalMs = 300
   }, intervalMs);
 }
 
-async function handleTriggerLogin(profileId) {
+async function handleTriggerLogin(profileId, clear = false) {
   const btn = document.querySelector(`.btn-account-login[data-profile-id="${profileId}"]`);
   const originalHtml = btn ? btn.innerHTML : '';
   if (btn) {
@@ -2665,7 +2750,7 @@ async function handleTriggerLogin(profileId) {
   setGlobalLoading(true);
 
   try {
-    const res = await apiFetch(`/api/profiles/${profileId}/login`, { method: 'POST' });
+    const res = await apiFetch(`/api/profiles/${encodeURIComponent(profileId)}/login?clear=${clear ? 'true' : 'false'}`, { method: 'POST' });
     if (res.ok) {
       await loadProfiles();
       renderAccountsModalList();

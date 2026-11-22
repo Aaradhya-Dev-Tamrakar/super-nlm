@@ -2,7 +2,7 @@ import logging
 import asyncio
 from contextlib import asynccontextmanager
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Security, Depends
 from fastapi.staticfiles import StaticFiles
@@ -104,6 +104,43 @@ app.add_middleware(
 )
 
 
+def _invalidate_fleet_usage_cache() -> None:
+    _fleet_usage_cache["data"] = None
+    _fleet_usage_cache["timestamp"] = 0.0
+
+
+async def sync_profile_notebooks(profile: AccountProfile, auto_share_study: bool = True) -> List[Notebook]:
+    """Fetch, enrich, and merge notebooks for a single profile into the cached store."""
+    profile_notebooks = await fetch_notebooks_for_profile(profile)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    profile.lastAuthCheck = now_iso
+    profile.status = "connected"
+    profile.notebookCount = len(profile_notebooks)
+    profile.lastError = None
+    await save_profile(profile)
+
+    cached = await get_cached_notebooks()
+    other_notebooks = [n for n in cached if n.profileId != profile.id]
+    merged = other_notebooks + profile_notebooks
+    merged = await enrich_notebook_owners(merged, cached)
+    for n in merged:
+        is_study, course_code, cat = detect_course_info(n.title, n.id)
+        n.is_study = is_study
+        n.course_code = course_code
+        n.category = cat
+    merged.sort(key=lambda n: n.updated_at or "", reverse=True)
+    await save_cached_notebooks(merged)
+    _invalidate_fleet_usage_cache()
+
+    if auto_share_study:
+        try:
+            asyncio.create_task(auto_share_study_notebooks(merged))
+        except Exception as e:
+            logger.warning(f"Could not trigger background auto-share of study notebooks: {e}")
+
+    return [n for n in merged if n.profileId == profile.id]
+
+
 async def sync_all_notebooks(auto_share_study: bool = True) -> List[Notebook]:
     """Helper to sync all notebooks across all profiles concurrently and auto-share study courses."""
     profiles = await get_profiles()
@@ -118,6 +155,7 @@ async def sync_all_notebooks(auto_share_study: bool = True) -> List[Notebook]:
     for p in profiles:
         await save_profile(p)
     await save_cached_notebooks(notebooks)
+    _invalidate_fleet_usage_cache()
 
     if auto_share_study:
         try:
@@ -141,7 +179,7 @@ async def list_profiles(_auth: bool = Depends(verify_api_access)):
     return profiles
 
 async def _watch_cli_login(profile_id: str, proc) -> None:
-    """Wait for the spawned CLI login process to exit, then verify auth and persist status."""
+    """Wait for the spawned CLI login process to exit, then verify auth, sync notebooks, and persist status."""
     try:
         if proc is not None:
             await asyncio.to_thread(proc.wait, timeout=300)
@@ -157,6 +195,12 @@ async def _watch_cli_login(profile_id: str, proc) -> None:
             if profile.id in cli_profiles and cli_profiles[profile.id]:
                 profile.email = cli_profiles[profile.id]
         await save_profile(profile)
+        _invalidate_fleet_usage_cache()
+        if profile.status == "connected":
+            try:
+                await sync_profile_notebooks(profile, auto_share_study=True)
+            except Exception as sync_err:
+                logger.warning(f"Post-login notebook sync failed for '{profile_id}': {sync_err}")
     except Exception as e:
         logger.warning(f"Post-login auth check failed for '{profile_id}': {e}")
 
@@ -277,11 +321,12 @@ async def remove_profile(profile_id: str, _auth: bool = Depends(verify_api_acces
     notebooks = await get_cached_notebooks()
     filtered = [n for n in notebooks if n.profileId != clean_id]
     await save_cached_notebooks(filtered)
+    _invalidate_fleet_usage_cache()
 
     return {"success": True, "message": f"Profile '{clean_id}' removed"}
 
 @app.post("/api/profiles/{profile_id}/login")
-async def trigger_profile_login(profile_id: str, clear: bool = True, _auth: bool = Depends(verify_api_access)):
+async def trigger_profile_login(profile_id: str, clear: bool = False, _auth: bool = Depends(verify_api_access)):
     clean_id = validate_profile_id(profile_id)
     profile = await get_profile(clean_id)
     if not profile:
@@ -322,6 +367,76 @@ async def get_profiles_health(_auth: bool = Depends(verify_api_access)):
         "profiles": profiles
     }
 
+@app.post("/api/profiles/reconcile")
+async def reconcile_profiles(_auth: bool = Depends(verify_api_access)):
+    """
+    Reconcile stored profiles with active CLI profiles (including external `nlm login` sessions),
+    promote newly authenticated profiles to connected, and sync their notebooks.
+    """
+    cli_profiles, profiles = await asyncio.gather(get_cli_profiles(), get_profiles())
+    existing_by_id = {p.id: p for p in profiles}
+    newly_connected: List[AccountProfile] = []
+    changed = False
+
+    for p in profiles:
+        if p.id in cli_profiles:
+            cli_email = cli_profiles[p.id]
+            p_changed = False
+            if not p.email and cli_email:
+                p.email = cli_email
+                p_changed = True
+                changed = True
+            if p.status in ("checking", "expired", "not_logged_in"):
+                prev_status = p.status
+                await check_profile_auth_status(p)
+                if p.status != prev_status:
+                    changed = True
+                await save_profile(p)
+                if p.status == "connected":
+                    newly_connected.append(p)
+            elif p_changed:
+                await save_profile(p)
+
+    # Discover any brand-new CLI profiles not yet registered in Super-NLM
+    for cli_id, cli_email in cli_profiles.items():
+        if cli_id not in existing_by_id:
+            try:
+                clean_id = validate_profile_id(cli_id)
+            except HTTPException:
+                continue
+            new_profile = AccountProfile(
+                id=clean_id,
+                displayName=clean_id,
+                email=cli_email or "",
+                tier="standard",
+                color="#6366f1",
+                icon="book-open",
+                isDefaultPro=False,
+                status="checking",
+            )
+            await check_profile_auth_status(new_profile)
+            if new_profile.status == "connected":
+                await save_profile(new_profile)
+                newly_connected.append(new_profile)
+                changed = True
+
+    if newly_connected:
+        _invalidate_fleet_usage_cache()
+        for p in newly_connected:
+            try:
+                await sync_profile_notebooks(p, auto_share_study=True)
+            except Exception as sync_err:
+                logger.warning(f"Reconcile notebook sync failed for '{p.id}': {sync_err}")
+    elif changed:
+        _invalidate_fleet_usage_cache()
+
+    return {
+        "changed": changed,
+        "newly_connected": [p.id for p in newly_connected],
+        "profiles": await get_profiles(),
+    }
+
+
 @app.post("/api/profiles/{profile_id}/check-auth")
 async def check_single_profile_auth(profile_id: str, _auth: bool = Depends(verify_api_access)):
     """
@@ -332,9 +447,34 @@ async def check_single_profile_auth(profile_id: str, _auth: bool = Depends(verif
     if not profile:
         raise HTTPException(status_code=404, detail=f"Profile '{clean_id}' not found")
 
+    prev_status = profile.status
     res = await check_profile_auth_status(profile)
     await save_profile(profile)
+    if profile.status != prev_status or res.get("is_valid"):
+        _invalidate_fleet_usage_cache()
     return res
+
+
+@app.post("/api/profiles/{profile_id}/sync")
+async def sync_single_profile(profile_id: str, _auth: bool = Depends(verify_api_access)):
+    """
+    Syncs notebooks for a single profile and merges them into the cached notebook store.
+    """
+    clean_id = validate_profile_id(profile_id)
+    profile = await get_profile(clean_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail=f"Profile '{clean_id}' not found")
+
+    try:
+        synced = await sync_profile_notebooks(profile, auto_share_study=True)
+        return {
+            "success": True,
+            "profile_id": profile.id,
+            "notebook_count": len(synced),
+            "notebooks": synced,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to sync profile '{clean_id}': {e}")
 
 # ----------------- USAGE & QUOTA LIMITS API -----------------
 
