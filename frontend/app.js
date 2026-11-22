@@ -208,6 +208,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderAccountPills();
   renderNotebooksGrid();
   showSkeletons(false);
+  initLoginReconcileListeners();
   if (window.lucide) lucide.createIcons();
 });
 
@@ -2604,14 +2605,83 @@ async function handleAddAccountSubmit(e) {
 }
 
 const _activeAuthPollers = new Set();
+let _reconcileInFlight = false;
+let _lastReconcileAt = 0;
 
-function pollProfileAuthCompletion(profileId, maxAttempts = 40, intervalMs = 3000) {
+async function applyPostLoginRefresh(profileId, { notify = true } = {}) {
+  try {
+    await apiFetch(`/api/profiles/${encodeURIComponent(profileId)}/sync`, { method: 'POST' });
+  } catch (syncErr) {
+    console.warn(`Post-login sync failed for '${profileId}':`, syncErr);
+  }
+  await Promise.all([loadProfiles(), loadNotebooks()]);
+  renderAccountsModalList();
+  renderAccountPills();
+  renderCategoryChips();
+  renderNotebooksGrid();
+  renderAuthAlertBanner();
+  loadFleetUsage(true);
+  if (notify) {
+    showToast(`Account '${profileId}' signed in and synced!`, 'success');
+  }
+}
+
+async function reconcileProfilesOnFocus(force = false) {
+  if (_reconcileInFlight) return;
+  const hasPending = state.profiles.some(p => ['checking', 'expired', 'not_logged_in'].includes(p.status));
+  const cooldownMs = hasPending ? 1500 : 15000;
+  const now = Date.now();
+  if (!force && (now - _lastReconcileAt) < cooldownMs) return;
+
+  _reconcileInFlight = true;
+  _lastReconcileAt = now;
+  try {
+    const res = await apiFetch('/api/profiles/reconcile', { method: 'POST' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.changed || (data.newly_connected && data.newly_connected.length > 0)) {
+      await Promise.all([loadProfiles(), loadNotebooks()]);
+      renderAccountsModalList();
+      renderAccountPills();
+      renderCategoryChips();
+      renderNotebooksGrid();
+      renderAuthAlertBanner();
+      loadFleetUsage(true);
+      if (data.newly_connected && data.newly_connected.length > 0) {
+        showToast(`New login detected for ${data.newly_connected.join(', ')} — notebooks synced!`, 'success');
+      }
+    }
+  } catch (_) {
+    // Ignore transient errors during background focus reconciliation
+  } finally {
+    _reconcileInFlight = false;
+  }
+}
+
+function initLoginReconcileListeners() {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      reconcileProfilesOnFocus();
+    }
+  });
+  window.addEventListener('focus', () => {
+    reconcileProfilesOnFocus();
+  });
+}
+
+function pollProfileAuthCompletion(profileId, maxAttempts = 100, intervalMs = 3000) {
   if (_activeAuthPollers.has(profileId)) return;
   _activeAuthPollers.add(profileId);
 
   let attempts = 0;
   const timer = setInterval(async () => {
     attempts += 1;
+    // Stop polling if profile was deleted from state
+    if (state.profiles.length > 0 && !state.profiles.some(p => p.id === profileId)) {
+      clearInterval(timer);
+      _activeAuthPollers.delete(profileId);
+      return;
+    }
     try {
       const res = await apiFetch(`/api/profiles/${encodeURIComponent(profileId)}/check-auth`, { method: 'POST' });
       if (res.ok) {
@@ -2619,13 +2689,13 @@ function pollProfileAuthCompletion(profileId, maxAttempts = 40, intervalMs = 300
         if (data.is_valid) {
           clearInterval(timer);
           _activeAuthPollers.delete(profileId);
-          await Promise.all([loadProfiles(), loadNotebooks()]);
-          renderAccountsModalList();
-          renderAccountPills();
-          renderNotebooksGrid();
-          showToast(`Account '${profileId}' signed in and verified!`, 'success');
+          await applyPostLoginRefresh(profileId, { notify: true });
           return;
         }
+      } else if (res.status === 404) {
+        clearInterval(timer);
+        _activeAuthPollers.delete(profileId);
+        return;
       }
     } catch (_) {
       // Ignore transient errors while user completes browser login
