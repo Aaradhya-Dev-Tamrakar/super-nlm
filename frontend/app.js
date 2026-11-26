@@ -2805,14 +2805,28 @@ async function handleSetPro(profileId) {
 }
 
 async function handleDeleteAccount(profileId) {
-  if (!confirm(`Are you sure you want to remove profile '${profileId}' and its cached data?`)) return;
+  if (!confirm(`Are you sure you want to remove profile '${profileId}'? This will unshare fleet notebooks from this account and remove its cached data.`)) return;
   try {
-    const res = await apiFetch(`/api/profiles/${profileId}`, { method: 'DELETE' });
+    const res = await apiFetch(`/api/profiles/${encodeURIComponent(profileId)}`, { method: 'DELETE' });
     if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const summary = data.unshareSummary || {};
       await loadProfiles();
       await loadNotebooks();
       renderAccountsModalList();
-      showToast(`Profile '${profileId}' removed`, 'info');
+      if (summary.failed > 0) {
+        showToast(
+          `Profile '${profileId}' removed (unshared ${summary.unshared || 0}, failed ${summary.failed})`,
+          'warn'
+        );
+      } else if (summary.unshared > 0) {
+        showToast(
+          `Profile '${profileId}' removed and unshared from ${summary.unshared} notebook(s)`,
+          'info'
+        );
+      } else {
+        showToast(`Profile '${profileId}' removed`, 'info');
+      }
     }
   } catch (err) {
     showToast('Error: ' + err.message, 'error');
