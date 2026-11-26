@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 import httpx
 
 from backend.config import SUPER_NLM_API_KEY
+from backend.http_pool import get_http_client
 from backend.process_lease import ProcessLease
 
 
@@ -44,14 +45,15 @@ async def forward_queue(action: str, payload: dict | None = None) -> dict:
         {"Authorization": f"Bearer {SUPER_NLM_API_KEY}"} if SUPER_NLM_API_KEY else {}
     )
     try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{root}/api/fleet/scheduler/{action}",
-                json=payload or {},
-                headers=headers,
-            )
-            response.raise_for_status()
-            return response.json()
+        client = await get_http_client()
+        response = await client.post(
+            f"{root}/api/fleet/scheduler/{action}",
+            json=payload or {},
+            headers=headers,
+            timeout=60.0,
+        )
+        response.raise_for_status()
+        return response.json()
     except httpx.HTTPStatusError as error:
         raise RuntimeError(
             f"Queue owner rejected {action}: HTTP {error.response.status_code}: {error.response.text}"

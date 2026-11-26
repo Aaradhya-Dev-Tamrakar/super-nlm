@@ -8,9 +8,8 @@ import logging
 import re
 from typing import Any
 
-import httpx
-
 from backend.config import GEMINI_API_KEY, SYNTHESIS_FALLBACK_MODELS
+from backend.http_pool import get_http_client
 from backend.models import NotebookRef
 
 logger = logging.getLogger("backend.nlm_client")
@@ -319,41 +318,41 @@ async def synthesize_with_gemini(
         },
     }
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        last_error = ""
-        for model in SYNTHESIS_FALLBACK_MODELS:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={active_key}"
-            try:
-                resp = await client.post(url, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        if parts and "text" in parts[0]:
-                            text = parts[0]["text"].strip()
-                            logger.info(f"[Super-NLM Synthesis] Successfully synthesized with model '{model}'")
-                            return {
-                                "success": True,
-                                "synthesizedBrief": text,
-                                "model": model,
-                                "error": None,
-                            }
-                else:
-                    err_json = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-                    err_msg = err_json.get("error", {}).get("message") or resp.text[:200]
-                    last_error = f"Model {model} returned HTTP {resp.status_code}: {err_msg}"
-                    logger.warning(f"[Super-NLM Synthesis] {last_error}. Trying next fallback...")
-            except Exception as e:
-                last_error = f"Model {model} failed with exception: {e}"
+    client = await get_http_client()
+    last_error = ""
+    for model in SYNTHESIS_FALLBACK_MODELS:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={active_key}"
+        try:
+            resp = await client.post(url, json=payload, timeout=60.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts and "text" in parts[0]:
+                        text = parts[0]["text"].strip()
+                        logger.info(f"[Super-NLM Synthesis] Successfully synthesized with model '{model}'")
+                        return {
+                            "success": True,
+                            "synthesizedBrief": text,
+                            "model": model,
+                            "error": None,
+                        }
+            else:
+                err_json = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                err_msg = err_json.get("error", {}).get("message") or resp.text[:200]
+                last_error = f"Model {model} returned HTTP {resp.status_code}: {err_msg}"
                 logger.warning(f"[Super-NLM Synthesis] {last_error}. Trying next fallback...")
+        except Exception as e:
+            last_error = f"Model {model} failed with exception: {e}"
+            logger.warning(f"[Super-NLM Synthesis] {last_error}. Trying next fallback...")
 
-        return {
-            "success": False,
-            "error": last_error or "All Gemini synthesis models were unavailable.",
-            "synthesizedBrief": None,
-            "model": None,
-        }
+    return {
+        "success": False,
+        "error": last_error or "All Gemini synthesis models were unavailable.",
+        "synthesizedBrief": None,
+        "model": None,
+    }
 
 
 async def synthesize_cross_notebook(

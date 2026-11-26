@@ -14,6 +14,7 @@ import {
   clearSelection,
   renderAccountPills,
   renderNotebooksGrid,
+  scheduleNotebooksGridRender,
   toggleSelectAllVisible,
   toggleStudyFilter,
 } from './notebooks.js';
@@ -52,6 +53,7 @@ export function setupEventListeners() {
   const searchInput = document.getElementById('search-input');
   const searchClearBtn = document.getElementById('search-clear-btn');
   const searchPill = document.querySelector('.google-search-pill');
+  let searchDebounceTimer = null;
 
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
@@ -63,13 +65,21 @@ export function setupEventListeners() {
           searchClearBtn.classList.add('hidden');
         }
       }
-      renderNotebooksGrid();
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        searchDebounceTimer = null;
+        scheduleNotebooksGridRender();
+      }, 120);
     });
   }
 
   if (searchClearBtn && searchInput) {
     searchClearBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = null;
+      }
       searchInput.value = '';
       state.searchQuery = '';
       searchClearBtn.classList.add('hidden');

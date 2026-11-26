@@ -9,6 +9,8 @@ import re
 import time
 import uuid
 
+import orjson
+
 from backend.artifact_files import ArtifactCatalog
 from backend.config import DOWNLOADS_DIR, SCHEDULED_JOBS_FILE
 from backend.models import (
@@ -75,7 +77,7 @@ class JobScheduler:
         """Inspect persisted jobs without changing their generation state."""
         if not SCHEDULED_JOBS_FILE.exists():
             return []
-        data = json.loads(SCHEDULED_JOBS_FILE.read_text(encoding="utf-8"))
+        data = orjson.loads(SCHEDULED_JOBS_FILE.read_bytes())
         result = []
         for item in data:
             try:
@@ -90,44 +92,60 @@ class JobScheduler:
         if not SCHEDULED_JOBS_FILE.exists():
             return
         try:
-            with open(SCHEDULED_JOBS_FILE, encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    for item in data:
-                        try:
-                            job = ScheduledJob(**item)
-                            # A persisted artifact ID allows polling to resume without regeneration.
-                            # Legacy running records without an ID need an explicit operator retry.
-                            if job.status == "in_progress" and not job.artifact_id:
-                                job.status = "failed"
-                                job.error_message = "Submission state unknown after restart; inspect Studio before explicitly retrying"
-                                job.error_details = {"stage": "restart_recovery", "message": job.error_message}
-                            self._jobs[job.id] = job
-                        except Exception as parse_err:
-                            logger.warning(f"Skipping corrupted job record: {parse_err}")
+            data = orjson.loads(SCHEDULED_JOBS_FILE.read_bytes())
+            if isinstance(data, list):
+                for item in data:
+                    try:
+                        job = ScheduledJob(**item)
+                        # A persisted artifact ID allows polling to resume without regeneration.
+                        # Legacy running records without an ID need an explicit operator retry.
+                        if job.status == "in_progress" and not job.artifact_id:
+                            job.status = "failed"
+                            job.error_message = "Submission state unknown after restart; inspect Studio before explicitly retrying"
+                            job.error_details = {"stage": "restart_recovery", "message": job.error_message}
+                        self._jobs[job.id] = job
+                    except Exception as parse_err:
+                        logger.warning(f"Skipping corrupted job record: {parse_err}")
             logger.info(f"Loaded {len(self._jobs)} scheduled jobs from disk.")
         except Exception as e:
             logger.error(f"Error loading scheduled jobs: {e}")
 
-    def save_jobs_to_disk(self):
-        """Persists jobs to data/scheduled_jobs.json."""
-        if not self._lease or not self._lease.handle:
-            return
+    @staticmethod
+    def _write_jobs_bytes_sync(payload: bytes) -> None:
+        tmp_path = str(SCHEDULED_JOBS_FILE) + ".tmp"
         try:
-            data = [job.model_dump() for job in self._jobs.values()]
-            tmp_path = str(SCHEDULED_JOBS_FILE) + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+            with open(tmp_path, "wb") as f:
+                f.write(payload)
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp_path, SCHEDULED_JOBS_FILE)
         except Exception as e:
             logger.error(f"Error saving scheduled jobs: {e}")
-            if "tmp_path" in locals() and os.path.exists(tmp_path):
+            if os.path.exists(tmp_path):
                 try:
                     os.remove(tmp_path)
                 except OSError as cleanup_err:
                     logger.debug("Could not remove temp scheduler file %s: %s", tmp_path, cleanup_err)
+
+    def save_jobs_to_disk(self):
+        """Persists jobs to data/scheduled_jobs.json synchronously."""
+        if not self._lease or not self._lease.handle:
+            return
+        payload = orjson.dumps(
+            [job.model_dump() for job in self._jobs.values()],
+            option=orjson.OPT_INDENT_2,
+        )
+        self._write_jobs_bytes_sync(payload)
+
+    async def _save_jobs_async(self) -> None:
+        """Serialize snapshot under the caller's state and persist without blocking the loop."""
+        if not self._lease or not self._lease.handle:
+            return
+        payload = orjson.dumps(
+            [job.model_dump() for job in self._jobs.values()],
+            option=orjson.OPT_INDENT_2,
+        )
+        await asyncio.to_thread(self._write_jobs_bytes_sync, payload)
 
     async def start(self):
         """Starts the background worker daemon."""
@@ -155,7 +173,7 @@ class JobScheduler:
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
             self._active_workers.clear()
-            self.save_jobs_to_disk()
+            await self._save_jobs_async()
             if self._lease:
                 self._lease.release()
             logger.info("Super-NLM JobScheduler stopped.")
@@ -204,7 +222,7 @@ class JobScheduler:
 
         async with self._lock:
             self._jobs[job_id] = job
-            self.save_jobs_to_disk()
+            await self._save_jobs_async()
 
         logger.info(f"Scheduled new job {job_id} ({job.artifact_type}) for notebook '{notebook_title}'")
         return job
@@ -261,7 +279,7 @@ class JobScheduler:
                 self._jobs[job_id] = job
                 queued_jobs.append(job)
 
-            self.save_jobs_to_disk()
+            await self._save_jobs_async()
 
         msg = f"Queued {len(queued_jobs)} {req.artifact_type} generation(s) across {fleet_size} account(s) in {(len(queued_jobs) + fleet_size - 1) // fleet_size} rotation wave(s)."
         logger.info(f"[Batch Schedule] {msg}")
@@ -292,7 +310,7 @@ class JobScheduler:
         async with self._lock:
             if job_id in self._jobs and self._jobs[job_id].status in ("queued", "scheduled"):
                 self._jobs[job_id].status = "cancelled"
-                self.save_jobs_to_disk()
+                await self._save_jobs_async()
                 logger.info(f"Cancelled job {job_id}")
                 return True
         return False
@@ -303,7 +321,7 @@ class JobScheduler:
         async with self._lock:
             if job_id in self._jobs and self._jobs[job_id].status != "in_progress" and job_id not in self._active_workers.values():
                 del self._jobs[job_id]
-                self.save_jobs_to_disk()
+                await self._save_jobs_async()
                 return True
         return False
 
@@ -326,7 +344,7 @@ class JobScheduler:
                     self._jobs[job_id].submitted_at = None
                 elif self._jobs[job_id].submitted_at and not self._jobs[job_id].artifact_id:
                     self._jobs[job_id].submitted_at = None
-                self.save_jobs_to_disk()
+                await self._save_jobs_async()
                 logger.info(f"Forced immediate execution for job {job_id}")
                 return True
         return False
@@ -457,7 +475,7 @@ class JobScheduler:
         job.error_details = None
         attempt = {"at": now_iso, "profile_id": profile.id, "artifact_id": job.artifact_id}
         job.attempts.append(attempt)
-        self.save_jobs_to_disk()
+        await self._save_jobs_async()
         stage = "preflight"
         try:
             if not job.artifact_id:
@@ -508,7 +526,7 @@ class JobScheduler:
                 job.submitted_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
                 job.artifact_id = (payload.get("artifact_id") or payload.get("id") or payload.get("mind_map_id")) if isinstance(payload, dict) else None
                 attempt["artifact_id"] = job.artifact_id
-                self.save_jobs_to_disk()
+                await self._save_jobs_async()
                 if not job.artifact_id:
                     raise StudioCommandError({**diagnostic(result, stage, job.notebook_id, profile.id),
                                               "message": "Submission returned no artifact ID; automatic regeneration is blocked"})
@@ -576,6 +594,6 @@ class JobScheduler:
         finally:
             if profile.id in self._active_workers:
                 self._active_workers[profile.id] = None
-            self.save_jobs_to_disk()
+            await asyncio.shield(self._save_jobs_async())
 
 scheduler = JobScheduler()

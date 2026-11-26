@@ -3,20 +3,52 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import importlib.util
 import logging
 import os
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from backend.config import NLM_EXECUTABLE
+from backend.config import NLM_EXECUTABLE, SUPER_NLM_FLEET_CONCURRENCY
 
 logger = logging.getLogger("backend.nlm_client")
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 _NLM_JOB_STATE: dict[str, Any] = {"handle": None, "initialized": False}
+_EXECUTOR_LOCK = threading.Lock()
+_NLM_EXECUTOR_STATE: dict[str, ThreadPoolExecutor | None] = {"executor": None}
+
+
+def _get_nlm_executor() -> ThreadPoolExecutor:
+    """Return the dedicated bounded ThreadPoolExecutor for NLM CLI subprocesses."""
+    executor = _NLM_EXECUTOR_STATE["executor"]
+    if executor is None:
+        with _EXECUTOR_LOCK:
+            executor = _NLM_EXECUTOR_STATE["executor"]
+            if executor is None:
+                executor = ThreadPoolExecutor(
+                    max_workers=max(4, SUPER_NLM_FLEET_CONCURRENCY * 2),
+                    thread_name_prefix="nlm-exec",
+                )
+                _NLM_EXECUTOR_STATE["executor"] = executor
+    return executor
+
+
+def shutdown_nlm_executor(wait: bool = False) -> None:
+    """Shut down the dedicated NLM subprocess ThreadPoolExecutor."""
+    with _EXECUTOR_LOCK:
+        executor = _NLM_EXECUTOR_STATE["executor"]
+        if executor is not None:
+            executor.shutdown(wait=wait)
+            _NLM_EXECUTOR_STATE["executor"] = None
+
+
+atexit.register(shutdown_nlm_executor, False)
 
 
 def _facade():
@@ -186,9 +218,10 @@ async def _exec_subprocess(cmd: list[str], timeout: int = 60, env: dict[str, str
     proc = None
     run_sync = _facade()._run_subprocess_sync
     try:
-        # On Windows, synchronous subprocess in thread pool is immune to IOCP pipe/reloader conflicts
+        # On Windows, synchronous subprocess in dedicated executor is immune to IOCP pipe/reloader conflicts
         if sys.platform == "win32":
-            task = asyncio.create_task(asyncio.to_thread(run_sync, cmd, timeout, env))
+            loop = asyncio.get_running_loop()
+            task = asyncio.ensure_future(loop.run_in_executor(_get_nlm_executor(), run_sync, cmd, timeout, env))
             try:
                 return await asyncio.shield(task)
             except asyncio.CancelledError:
@@ -215,8 +248,9 @@ async def _exec_subprocess(cmd: list[str], timeout: int = 60, env: dict[str, str
             "success": proc.returncode == 0,
         }
     except NotImplementedError:
-        logger.info("Current event loop does not support create_subprocess_exec, falling back to to_thread")
-        return await asyncio.to_thread(run_sync, cmd, timeout, env)
+        logger.info("Current event loop does not support create_subprocess_exec, falling back to NLM executor")
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_get_nlm_executor(), run_sync, cmd, timeout, env)
     except asyncio.TimeoutError:
         if proc is not None:
             try:

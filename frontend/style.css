@@ -167,6 +167,9 @@ body {
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
+  contain: layout style paint;
 }
 
 .m3-card:hover {
@@ -174,6 +177,7 @@ body {
   border-color: var(--m3-outline);
   transform: translateY(-2px);
   box-shadow: var(--m3-shadow-card-hover);
+  will-change: transform;
 }
 
 .m3-card.selected {
@@ -193,7 +197,7 @@ html.dark .m3-card.selected {
   border: 1px solid var(--m3-outline-variant);
   color: var(--m3-on-surface-variant);
   border-radius: 9999px;
-  transition: all 0.18s var(--ease-m3);
+  transition: background-color 0.18s var(--ease-m3), border-color 0.18s var(--ease-m3), color 0.18s var(--ease-m3), transform 0.18s var(--ease-m3);
 }
 
 .m3-chip:hover {
@@ -215,7 +219,7 @@ html.dark .m3-card.selected {
   color: #ffffff;
   font-weight: 500;
   border-radius: 9999px;
-  transition: all 0.18s var(--ease-m3);
+  transition: background-color 0.18s var(--ease-m3), box-shadow 0.18s var(--ease-m3), transform 0.18s var(--ease-m3);
 }
 
 html.dark .google-btn-primary {
@@ -237,7 +241,7 @@ html.dark .google-btn-primary {
   font-weight: 500;
   border-radius: 9999px;
   border: 1px solid transparent;
-  transition: all 0.18s var(--ease-m3);
+  transition: background-color 0.18s var(--ease-m3), color 0.18s var(--ease-m3), filter 0.18s var(--ease-m3), transform 0.18s var(--ease-m3);
 }
 
 .google-btn-tonal:hover {
@@ -263,7 +267,7 @@ html.dark .google-btn-tonal:hover {
   color: var(--m3-on-surface-variant);
   border: 1px solid var(--m3-outline-variant);
   border-radius: 9999px;
-  transition: all 0.18s var(--ease-m3);
+  transition: background-color 0.18s var(--ease-m3), border-color 0.18s var(--ease-m3), color 0.18s var(--ease-m3), transform 0.18s var(--ease-m3);
 }
 
 .google-btn-outlined:hover {
@@ -309,6 +313,7 @@ html.dark .google-btn-tonal:hover {
 .m3-dialog.modal-open {
   transform: scale(1);
   opacity: 1;
+  will-change: transform, opacity;
 }
 
 /* ==========================================================================
@@ -340,6 +345,7 @@ html.dark .google-btn-tonal:hover {
 /* Tactile Micro-Interactions */
 .m3-card:active {
   transform: translateY(-1px) scale(0.992) !important;
+  will-change: transform;
 }
 
 .m3-chip:active,
@@ -573,7 +579,7 @@ html.dark .google-skeleton {
   font-weight: 500;
   border-radius: 8px;
   color: var(--m3-on-surface-variant);
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
   cursor: pointer;
   background: transparent;
   border: none;
@@ -803,7 +809,7 @@ html.dark .m3-menu-item.active {
   border-radius: 6px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
   user-select: none;
-  transition: all 0.15s ease;
+  transition: border-color 0.15s ease, color 0.15s ease;
 }
 
 .kbd-badge:hover {
@@ -898,7 +904,7 @@ html.dark .m3-menu-item.active {
   border-radius: 12px;
   background-color: var(--m3-surface-container-high);
   border: 1px solid var(--m3-outline-variant);
-  transition: all 0.2s ease;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .agenda-matched-chip:hover {
@@ -1022,7 +1028,7 @@ html.dark .m3-menu-item.active {
   font-size: 11px;
   font-weight: 500;
   border: 1px solid transparent;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 
 .folder-badge-new {
@@ -1050,7 +1056,7 @@ html.dark .m3-menu-item.active {
 }
 
 .folder-card-pill {
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
 .folder-card-pill:hover {
@@ -1075,7 +1081,7 @@ html.dark .m3-menu-item.active {
   border: 1px solid rgba(242, 139, 130, 0.45);
   box-shadow: 0 4px 16px -2px rgba(242, 139, 130, 0.15);
   border-radius: 1rem;
-  transition: all 0.25s cubic-bezier(0.2, 0.0, 0.0, 1.0);
+  transition: border-color 0.25s cubic-bezier(0.2, 0.0, 0.0, 1.0), box-shadow 0.25s cubic-bezier(0.2, 0.0, 0.0, 1.0), opacity 0.25s cubic-bezier(0.2, 0.0, 0.0, 1.0);
 }
 
 html.dark .auth-alert-banner {
@@ -1120,5 +1126,15 @@ html.dark .auth-alert-banner {
     opacity: 0;
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 
 

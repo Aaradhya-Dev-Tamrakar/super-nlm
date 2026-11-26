@@ -1,6 +1,6 @@
 // Notebook grid rendering, tier grouping, account pills, category filters, and selection.
 import { getCourseCode, isStudyNotebook, state } from './state.js';
-import { escapeHtml, highlightMatch, openModal, showToast } from './ui.js';
+import { escapeHtml, highlightMatch, openModal, refreshIcons, showToast } from './ui.js';
 
 let notebookHooks = {
   renderAccountsModalList: () => {},
@@ -156,7 +156,7 @@ export function renderAccountPills() {
 
   renderSidebarAccounts();
 
-  if (window.lucide) lucide.createIcons();
+  refreshIcons(container);
 }
 
 export function renderSidebarAccounts() {
@@ -573,11 +573,27 @@ export function toggleSelectAllVisible() {
 }
 
 export const NOTEBOOKS_PER_PAGE = 8;
+let gridRenderRaf = null;
+
+export function scheduleNotebooksGridRender() {
+  if (gridRenderRaf !== null) {
+    cancelAnimationFrame(gridRenderRaf);
+  }
+  gridRenderRaf = requestAnimationFrame(() => {
+    gridRenderRaf = null;
+    renderNotebooksGrid();
+  });
+}
+
 export function getNotebookPage(notebooks = getVisibleNotebooks()) {
   return notebooks.slice(state.notebookPage * NOTEBOOKS_PER_PAGE, (state.notebookPage + 1) * NOTEBOOKS_PER_PAGE);
 }
 
 export function renderNotebooksGrid() {
+  if (gridRenderRaf !== null) {
+    cancelAnimationFrame(gridRenderRaf);
+    gridRenderRaf = null;
+  }
   const grid = document.getElementById('notebooks-grid');
   const emptyState = document.getElementById('empty-state');
   const visibleCountLabel = document.getElementById('visible-count');
@@ -670,7 +686,7 @@ export function renderNotebooksGrid() {
           </button>
         </div>
       `;
-      if (window.lucide) lucide.createIcons({ root: emptyState });
+      refreshIcons(emptyState);
     } else {
       emptyState.innerHTML = `
         <div class="w-12 h-12 rounded-full m3-subcard flex items-center justify-center text-[var(--m3-on-surface-subtle)]">
@@ -684,7 +700,7 @@ export function renderNotebooksGrid() {
           Sync Notebooks Now
         </button>
       `;
-      if (window.lucide) lucide.createIcons({ root: emptyState });
+      refreshIcons(emptyState);
     }
     return;
   }
@@ -874,7 +890,7 @@ export function renderNotebooksGrid() {
     });
   });
 
-  if (window.lucide) lucide.createIcons();
+  refreshIcons(grid);
 }
 
 export function updateSelectionBanner() {

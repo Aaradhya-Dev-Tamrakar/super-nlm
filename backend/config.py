@@ -142,3 +142,9 @@ SUPER_NLM_ALLOWED_ORIGINS = [
 # Google Drive OAuth Configuration for Folder Sync
 GDRIVE_CREDENTIALS_PATH = os.environ.get("GDRIVE_CREDENTIALS_PATH", "").strip() or str(Path.home() / ".gdrive-server-credentials.json")
 GDRIVE_OAUTH_PATH = os.environ.get("GDRIVE_OAUTH_PATH", "").strip() or str(Path.home() / ".gdrive-credentials.json")
+
+# Bounded parallelism for fleet CLI/network fan-out operations
+SUPER_NLM_FLEET_CONCURRENCY = max(
+    1,
+    int(os.environ.get("SUPER_NLM_FLEET_CONCURRENCY", str(min(8, max(4, (os.cpu_count() or 4)))))),
+)
