@@ -10,8 +10,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from backend.config import (
     CODE_ADAPTER_EXTENSIONS,
     EXCEL_EXTENSIONS,
@@ -23,6 +21,7 @@ from backend.config import (
     NOTEBOOKLM_PRO_SOURCE_LIMIT,
     NOTEBOOKLM_STANDARD_SOURCE_LIMIT,
 )
+from backend.http_pool import get_http_client
 from backend.models import (
     FolderFileItem,
     FolderStatusResponse,
@@ -178,16 +177,16 @@ async def get_drive_access_token() -> str | None:
                 "refresh_token": creds["refresh_token"],
                 "grant_type": "refresh_token",
             }
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                res = await client.post("https://oauth2.googleapis.com/token", data=refresh_data)
-                if res.status_code == 200:
-                    token_data = res.json()
-                    creds["access_token"] = token_data["access_token"]
-                    if "expires_in" in token_data:
-                        creds["expiry_date"] = int((time.time() + token_data["expires_in"]) * 1000)
-                    await asyncio.to_thread(_atomic_write_json_file_sync, cred_file, creds)
-                else:
-                    logger.warning(f"Failed to refresh Drive token: {res.text}")
+            client = await get_http_client()
+            res = await client.post("https://oauth2.googleapis.com/token", data=refresh_data, timeout=15.0)
+            if res.status_code == 200:
+                token_data = res.json()
+                creds["access_token"] = token_data["access_token"]
+                if "expires_in" in token_data:
+                    creds["expiry_date"] = int((time.time() + token_data["expires_in"]) * 1000)
+                await asyncio.to_thread(_atomic_write_json_file_sync, cred_file, creds)
+            else:
+                logger.warning(f"Failed to refresh Drive token: {res.text}")
 
         return creds.get("access_token")
     except Exception as e:
@@ -217,71 +216,83 @@ class DriveSyncService:
         page_token = None
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                while True:
-                    params: dict[str, Any] = {
-                        "q": f"'{folder_id}' in parents and trashed = false",
-                        "fields": "nextPageToken, files(id, name, mimeType, modifiedTime, size)",
-                        "pageSize": 100
-                    }
-                    if page_token:
-                        params["pageToken"] = page_token
+            client = await get_http_client()
+            while True:
+                params: dict[str, Any] = {
+                    "q": f"'{folder_id}' in parents and trashed = false",
+                    "fields": "nextPageToken, files(id, name, mimeType, modifiedTime, size)",
+                    "pageSize": 100
+                }
+                if page_token:
+                    params["pageToken"] = page_token
 
-                    res = await client.get("https://www.googleapis.com/drive/v3/files", params=params, headers=headers)
-                    if res.status_code != 200:
-                        logger.error(f"Drive API returned {res.status_code}: {res.text}")
-                        break
+                res = await client.get(
+                    "https://www.googleapis.com/drive/v3/files",
+                    params=params,
+                    headers=headers,
+                    timeout=30.0,
+                )
+                if res.status_code != 200:
+                    logger.error(f"Drive API returned {res.status_code}: {res.text}")
+                    break
 
-                    data = res.json()
-                    files = data.get("files", [])
+                data = res.json()
+                files = data.get("files", [])
+                sub_folder_ids: list[str] = []
 
-                    for f in files:
-                        mime = f.get("mimeType", "")
-                        name = f.get("name", "")
-                        f_id = f.get("id", "")
+                for f in files:
+                    mime = f.get("mimeType", "")
+                    name = f.get("name", "")
+                    f_id = f.get("id", "")
 
-                        if mime == "application/vnd.google-apps.folder":
-                            if recursive:
-                                sub_files = await self.scan_drive_folder(f_id, recursive=True)
-                                items_found.extend(sub_files)
-                            continue
+                    if mime == "application/vnd.google-apps.folder":
+                        if recursive:
+                            sub_folder_ids.append(f_id)
+                        continue
 
-                        ext = Path(name).suffix.lower()
-                        if not ext:
-                            if mime == "application/vnd.google-apps.document":
-                                ext = ".gdoc"
-                            elif mime == "application/vnd.google-apps.spreadsheet":
-                                ext = ".gsheet"
-                            elif mime == "application/vnd.google-apps.presentation":
-                                ext = ".gslides"
+                    ext = Path(name).suffix.lower()
+                    if not ext:
+                        if mime == "application/vnd.google-apps.document":
+                            ext = ".gdoc"
+                        elif mime == "application/vnd.google-apps.spreadsheet":
+                            ext = ".gsheet"
+                        elif mime == "application/vnd.google-apps.presentation":
+                            ext = ".gslides"
 
-                        category, status, req_adapter = categorize_file(name if ext else f"{name}{ext}")
-                        if mime.startswith("application/vnd.google-apps."):
-                            if "document" in mime or "presentation" in mime:
-                                category = "document"
-                                status = "new"
-                            elif "spreadsheet" in mime:
-                                category = "spreadsheet"
-                                status = "new"
+                    category, status, req_adapter = categorize_file(name if ext else f"{name}{ext}")
+                    if mime.startswith("application/vnd.google-apps."):
+                        if "document" in mime or "presentation" in mime:
+                            category = "document"
+                            status = "new"
+                        elif "spreadsheet" in mime:
+                            category = "spreadsheet"
+                            status = "new"
 
-                        size_b = int(f.get("size") or 0)
-                        mod_iso = f.get("modifiedTime") or datetime.now(timezone.utc).isoformat()
+                    size_b = int(f.get("size") or 0)
+                    mod_iso = f.get("modifiedTime") or datetime.now(timezone.utc).isoformat()
 
-                        items_found.append(FolderFileItem(
-                            name=name,
-                            path_or_id=f_id,
-                            extension=ext,
-                            size_bytes=size_b,
-                            modified_at=mod_iso,
-                            status=status,
-                            category=category,
-                            requires_code_adapter=req_adapter,
-                            detail="Drive file"
-                        ))
+                    items_found.append(FolderFileItem(
+                        name=name,
+                        path_or_id=f_id,
+                        extension=ext,
+                        size_bytes=size_b,
+                        modified_at=mod_iso,
+                        status=status,
+                        category=category,
+                        requires_code_adapter=req_adapter,
+                        detail="Drive file"
+                    ))
 
-                    page_token = data.get("nextPageToken")
-                    if not page_token:
-                        break
+                if sub_folder_ids:
+                    sub_batches = await asyncio.gather(
+                        *(self.scan_drive_folder(fid, recursive=True) for fid in sub_folder_ids)
+                    )
+                    for sub_files in sub_batches:
+                        items_found.extend(sub_files)
+
+                page_token = data.get("nextPageToken")
+                if not page_token:
+                    break
 
         except Exception as e:
             logger.error(f"Error scanning Drive folder {folder_id}: {e}")
@@ -296,14 +307,18 @@ class DriveSyncService:
             return False
         headers = {"Authorization": f"Bearer {token}"}
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                res = await client.get(f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media", headers=headers)
-                if res.status_code == 200:
-                    await asyncio.to_thread(dest_path.write_bytes, res.content)
-                    return True
-                else:
-                    logger.warning(f"Failed to download Drive file {file_id}: HTTP {res.status_code}")
-                    return False
+            client = await get_http_client()
+            res = await client.get(
+                f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media",
+                headers=headers,
+                timeout=60.0,
+            )
+            if res.status_code == 200:
+                await asyncio.to_thread(dest_path.write_bytes, res.content)
+                return True
+            else:
+                logger.warning(f"Failed to download Drive file {file_id}: HTTP {res.status_code}")
+                return False
         except Exception as e:
             logger.error(f"Error downloading Drive file {file_id}: {e}")
             return False
@@ -338,20 +353,15 @@ class DriveSyncService:
         return stale_items
 
     async def scan_local_folder(self, folder_path: str, recursive: bool = False) -> list[FolderFileItem]:
-        """Scans local filesystem folder for files."""
-        def _scan_sync() -> list[FolderFileItem]:
-            dir_path = Path(folder_path)
-            if not dir_path.exists() or not dir_path.is_dir():
-                return []
-
-            files: list[FolderFileItem] = []
-            pattern = "**/*" if recursive else "*"
-
-            try:
-                for entry in dir_path.glob(pattern):
-                    if entry.is_file() and not entry.name.startswith((".", "~$")):
+        """Scans local filesystem folder using os.scandir in a worker thread."""
+        def _scan_dir(current_dir: Path, files: list[FolderFileItem]) -> None:
+            with os.scandir(current_dir) as entries:
+                for entry in entries:
+                    if entry.is_file(follow_symlinks=False):
+                        if entry.name.startswith((".", "~$")):
+                            continue
                         category, status, req_adapter = categorize_file(entry.name)
-                        stat = entry.stat()
+                        stat = entry.stat(follow_symlinks=False)
                         mod_iso = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
                         detail = ""
                         if req_adapter:
@@ -361,15 +371,26 @@ class DriveSyncService:
 
                         files.append(FolderFileItem(
                             name=entry.name,
-                            path_or_id=str(entry.resolve()),
-                            extension=entry.suffix.lower(),
+                            path_or_id=str(Path(entry.path).resolve()),
+                            extension=Path(entry.name).suffix.lower(),
                             size_bytes=stat.st_size,
                             modified_at=mod_iso,
                             status=status,
                             category=category,
                             requires_code_adapter=req_adapter,
-                            detail=detail
+                            detail=detail,
                         ))
+                    elif recursive and entry.is_dir(follow_symlinks=False) and not entry.name.startswith("."):
+                        _scan_dir(Path(entry.path), files)
+
+        def _scan_sync() -> list[FolderFileItem]:
+            dir_path = Path(folder_path)
+            if not dir_path.exists() or not dir_path.is_dir():
+                return []
+
+            files: list[FolderFileItem] = []
+            try:
+                _scan_dir(dir_path, files)
             except Exception as e:
                 logger.error(f"Error scanning local folder {folder_path}: {e}")
 
@@ -380,8 +401,10 @@ class DriveSyncService:
 
     async def get_folder_status(self, notebook_id: str) -> FolderStatusResponse:
         """Compares mapped folder contents against live NotebookLM sources and quota limits."""
-        mapping = await get_folder_mapping(notebook_id)
-        cached_notebooks = await get_cached_notebooks()
+        mapping, cached_notebooks = await asyncio.gather(
+            get_folder_mapping(notebook_id),
+            get_cached_notebooks(),
+        )
         nb = next((n for n in cached_notebooks if n.id == notebook_id), None)
         nb_title = nb.title if nb else f"Notebook {notebook_id[:8]}"
         profile_id = nb.profileId if nb else "default"
@@ -389,10 +412,23 @@ class DriveSyncService:
 
         max_capacity = NOTEBOOKLM_PRO_SOURCE_LIMIT if tier == "pro" else NOTEBOOKLM_STANDARD_SOURCE_LIMIT
 
-        # Fetch current notebook sources
-        sources = await self.get_notebook_sources(notebook_id, profile_id=profile_id)
+        async def _empty_scan() -> list[FolderFileItem]:
+            return []
+
+        if mapping and mapping.folder_type == "local_folder":
+            scan_task = self.scan_local_folder(mapping.target_path, recursive=mapping.recursive)
+        elif mapping and mapping.folder_type == "drive_web":
+            scan_task = self.scan_drive_folder(mapping.target_path, recursive=mapping.recursive)
+        else:
+            scan_task = _empty_scan()
+
+        # Run independent NLM CLI source queries and folder scan concurrently
+        sources, stale_source_indicators, scanned_files = await asyncio.gather(
+            self.get_notebook_sources(notebook_id, profile_id=profile_id),
+            self.get_stale_drive_sources(notebook_id, profile_id=profile_id),
+            scan_task,
+        )
         current_source_count = len(sources) if sources else (nb.source_count if nb else 0)
-        stale_source_indicators = await self.get_stale_drive_sources(notebook_id, profile_id=profile_id)
 
         # Build lookup sets and normalized dictionaries of existing source titles and IDs
         existing_titles = {s.get("title", "").strip().lower(): s for s in sources if s.get("title")}
@@ -403,11 +439,10 @@ class DriveSyncService:
         files: list[FolderFileItem] = []
         if mapping:
             if mapping.folder_type == "local_folder":
-                files = await self.scan_local_folder(mapping.target_path, recursive=mapping.recursive)
+                files = scanned_files
             elif mapping.folder_type == "drive_web":
-                drive_files = await self.scan_drive_folder(mapping.target_path, recursive=mapping.recursive)
-                if drive_files:
-                    files = drive_files
+                if scanned_files:
+                    files = scanned_files
                 else:
                     # Fallback to existing notebook sources if Drive credentials not configured or folder scan yielded no files
                     for s in sources:

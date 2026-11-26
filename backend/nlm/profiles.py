@@ -11,7 +11,7 @@ import subprocess
 import sys
 from typing import Any
 
-from backend.config import NLM_EXECUTABLE
+from backend.config import NLM_EXECUTABLE, SUPER_NLM_FLEET_CONCURRENCY
 from backend.models import AccountProfile, Notebook
 
 logger = logging.getLogger("backend.nlm_client")
@@ -97,10 +97,10 @@ async def fetch_all_notebooks_concurrently(
     fallback_cached: list[Notebook] | None = None,
 ) -> dict[str, Any]:
     """
-    Fetches notebooks for all profiles with bounded concurrency (Semaphore=3).
+    Fetches notebooks for all profiles with bounded concurrency (SUPER_NLM_FLEET_CONCURRENCY).
     Retains cached notebooks if a profile fails to sync.
     """
-    sem = asyncio.Semaphore(3)
+    sem = asyncio.Semaphore(SUPER_NLM_FLEET_CONCURRENCY)
     facade = _facade()
 
     async def _fetch_with_sem(p: AccountProfile):

@@ -9,7 +9,8 @@ from typing import Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, ORJSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend.auth import verify_api_access
@@ -21,6 +22,7 @@ from backend.config import (
 )
 from backend.drive_sync_service import drive_sync_service, normalize_folder_target
 from backend.fleet_api import router as fleet_router
+from backend.http_pool import close_http_clients
 from backend.models import (
     AccountProfile,
     BatchScheduleRequest,
@@ -45,6 +47,7 @@ from backend.models import (
     SingleScheduleRequest,
     detect_course_info,
 )
+from backend.nlm.process import shutdown_nlm_executor
 from backend.nlm_client import (
     auto_share_study_notebooks,
     batch_share_notebooks_to_accounts,
@@ -128,8 +131,14 @@ async def lifespan(app: FastAPI):
     from backend.batch_downloads import downloads
     await downloads.shutdown()
     await scheduler.stop()
+    await close_http_clients()
+    shutdown_nlm_executor(wait=False)
 
-app = FastAPI(title="Super-Gemini Notebook", lifespan=lifespan)
+app = FastAPI(
+    title="Super-Gemini Notebook",
+    lifespan=lifespan,
+    default_response_class=ORJSONResponse,
+)
 app.include_router(fleet_router)
 
 
@@ -139,6 +148,7 @@ def validate_profile_id(pid: str) -> str:
         raise HTTPException(status_code=400, detail=f"Invalid profile ID '{pid}'. Must be 1-64 alphanumeric characters, dashes, or underscores.")
     return cleaned
 
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 # Allow CORS for local development
 app.add_middleware(
     CORSMiddleware,

@@ -1,12 +1,15 @@
 import asyncio
 import contextlib
-import json
 import logging
 import os
 import tempfile
+import threading
 import time
+import weakref
 from pathlib import Path
 from typing import Any
+
+import orjson
 
 from backend.config import (
     CACHE_FILE,
@@ -17,7 +20,26 @@ from backend.config import (
 )
 from backend.models import AccountProfile, FolderMapping, Notebook, NotebookSharingRule
 
-_lock = asyncio.Lock()
+_file_cache_lock = threading.Lock()
+_loop_file_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[Path, asyncio.Lock]] = weakref.WeakKeyDictionary()
+# Maps resolved file path -> (st_mtime_ns, st_size, cached_models)
+_MODEL_CACHE: dict[Path, tuple[int, int, Any]] = {}
+
+
+def _get_file_lock(file_path: Path | None = None) -> asyncio.Lock:
+    """Return a loop-local, per-file asyncio.Lock so separate files or loops never contend or mismatch loops."""
+    loop = asyncio.get_running_loop()
+    target = file_path.resolve() if file_path is not None else Path("__global__")
+    with _file_cache_lock:
+        per_file = _loop_file_locks.get(loop)
+        if per_file is None:
+            per_file = {}
+            _loop_file_locks[loop] = per_file
+        lock = per_file.get(target)
+        if lock is None:
+            lock = asyncio.Lock()
+            per_file[target] = lock
+        return lock
 
 logger = logging.getLogger(__name__)
 
@@ -120,17 +142,56 @@ def deduplicate_profiles(profiles: list[AccountProfile]) -> tuple[list[AccountPr
     return deduped, merged_records
 
 
+def invalidate_storage_cache(file_path: Path | None = None) -> None:
+    """Clear read-through JSON/model cache entries for one file or all files."""
+    with _file_cache_lock:
+        if file_path is None:
+            _MODEL_CACHE.clear()
+        else:
+            _MODEL_CACHE.pop(file_path.resolve(), None)
+
+
+def _read_cached_models(file_path: Path, builder):
+    """Load Pydantic models via SIMD orjson with (mtime_ns, size) cache validation."""
+    resolved = file_path.resolve()
+    stat = file_path.stat()
+    key = (stat.st_mtime_ns, stat.st_size)
+
+    with _file_cache_lock:
+        entry = _MODEL_CACHE.get(resolved)
+        if entry is not None and entry[0] == key[0] and entry[1] == key[1]:
+            cached = entry[2]
+            if isinstance(cached, dict):
+                return {k: v.model_copy(deep=True) for k, v in cached.items()}
+            return [m.model_copy(deep=True) for m in cached]
+
+    raw_bytes = file_path.read_bytes()
+    data = orjson.loads(raw_bytes)
+    models = builder(data)
+
+    with _file_cache_lock:
+        if isinstance(models, dict):
+            _MODEL_CACHE[resolved] = (key[0], key[1], {k: v.model_copy(deep=True) for k, v in models.items()})
+        else:
+            _MODEL_CACHE[resolved] = (key[0], key[1], tuple(m.model_copy(deep=True) for m in models))
+
+    return models
+
+
 def _atomic_write_json(file_path: Path, data: Any):
     """
-    Performs atomic file write on Windows Dev Drive (ReFS) using a temp file + os.replace.
+    Performs atomic file write on Windows Dev Drive (ReFS) using SIMD orjson + os.replace.
     Prevents Windows file-locking collisions (ERROR_SHARING_VIOLATION) with retry backoff.
     """
+    resolved = file_path.resolve()
+    invalidate_storage_cache(resolved)
     dir_path = file_path.parent
     dir_path.mkdir(parents=True, exist_ok=True)
+    payload = orjson.dumps(data, option=orjson.OPT_INDENT_2)
     temp_fd, temp_path = tempfile.mkstemp(dir=dir_path, prefix=f"{file_path.stem}_", suffix=".tmp")
     try:
-        with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        with os.fdopen(temp_fd, "wb") as f:
+            f.write(payload)
 
         # Retry loop for Windows file-locking collisions
         max_attempts = 3
@@ -142,6 +203,7 @@ def _atomic_write_json(file_path: Path, data: Any):
                 if attempt == max_attempts - 1:
                     raise
                 time.sleep(0.05 * (attempt + 1))
+        invalidate_storage_cache(resolved)
     except Exception:
         if os.path.exists(temp_path):
             with contextlib.suppress(OSError):
@@ -153,9 +215,7 @@ def _load_profiles_sync() -> list[AccountProfile]:
         _atomic_write_json(PROFILES_FILE, DEFAULT_SEED_PROFILES)
         return [AccountProfile(**p) for p in DEFAULT_SEED_PROFILES]
     try:
-        with open(PROFILES_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-            return [AccountProfile(**p) for p in data]
+        return _read_cached_models(PROFILES_FILE, lambda data: [AccountProfile(**p) for p in data])
     except Exception as e:
         logger.error(f"Failed to read profiles from {PROFILES_FILE}: {e}")
         # If file is empty or corrupted, only then fallback to seed
@@ -170,9 +230,7 @@ def _load_cache_sync() -> list[Notebook]:
     if not CACHE_FILE.exists():
         return []
     try:
-        with open(CACHE_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-            return [Notebook(**n) for n in data]
+        return _read_cached_models(CACHE_FILE, lambda data: [Notebook(**n) for n in data])
     except Exception:
         return []
 
@@ -180,7 +238,7 @@ def _save_cache_sync(notebooks: list[Notebook]):
     _atomic_write_json(CACHE_FILE, [n.model_dump() for n in notebooks])
 
 async def get_profiles() -> list[AccountProfile]:
-    async with _lock:
+    async with _get_file_lock(PROFILES_FILE):
         return await asyncio.to_thread(_load_profiles_sync)
 
 async def get_profile(profile_id: str) -> AccountProfile | None:
@@ -191,7 +249,7 @@ async def get_profile(profile_id: str) -> AccountProfile | None:
     return None
 
 async def save_profile(profile: AccountProfile, old_id: str | None = None):
-    async with _lock:
+    async with _get_file_lock(PROFILES_FILE):
         profiles = await asyncio.to_thread(_load_profiles_sync)
         # If this is set as default pro, unset others
         if profile.isDefaultPro:
@@ -212,7 +270,7 @@ async def save_profile(profile: AccountProfile, old_id: str | None = None):
         await asyncio.to_thread(_save_profiles_sync, profiles)
 
 async def delete_profile(profile_id: str) -> bool:
-    async with _lock:
+    async with _get_file_lock(PROFILES_FILE):
         profiles = await asyncio.to_thread(_load_profiles_sync)
         new_profiles = [p for p in profiles if p.id != profile_id]
         if len(new_profiles) < len(profiles):
@@ -221,16 +279,16 @@ async def delete_profile(profile_id: str) -> bool:
         return False
 
 async def get_cached_notebooks() -> list[Notebook]:
-    async with _lock:
+    async with _get_file_lock(CACHE_FILE):
         return await asyncio.to_thread(_load_cache_sync)
 
 async def save_cached_notebooks(notebooks: list[Notebook]):
-    async with _lock:
+    async with _get_file_lock(CACHE_FILE):
         await asyncio.to_thread(_save_cache_sync, notebooks)
 
 async def delete_cached_notebook(notebook_id: str) -> int:
     """Removes all cached instances of a notebook across all profiles."""
-    async with _lock:
+    async with _get_file_lock(CACHE_FILE):
         notebooks = await asyncio.to_thread(_load_cache_sync)
         remaining = [n for n in notebooks if n.id != notebook_id]
         removed = len(notebooks) - len(remaining)
@@ -244,9 +302,10 @@ def _load_folder_mappings_sync() -> dict[str, FolderMapping]:
     if not FOLDER_MAPPINGS_FILE.exists():
         return {}
     try:
-        with open(FOLDER_MAPPINGS_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-            return {k: FolderMapping(**v) for k, v in data.items()}
+        return _read_cached_models(
+            FOLDER_MAPPINGS_FILE,
+            lambda data: {k: FolderMapping(**v) for k, v in data.items()},
+        )
     except Exception as e:
         logger.error(f"Failed to read folder mappings from {FOLDER_MAPPINGS_FILE}: {e}")
         return {}
@@ -255,7 +314,7 @@ def _save_folder_mappings_sync(mappings: dict[str, FolderMapping]):
     _atomic_write_json(FOLDER_MAPPINGS_FILE, {k: v.model_dump() for k, v in mappings.items()})
 
 async def get_folder_mappings() -> dict[str, FolderMapping]:
-    async with _lock:
+    async with _get_file_lock(FOLDER_MAPPINGS_FILE):
         return await asyncio.to_thread(_load_folder_mappings_sync)
 
 async def get_folder_mapping(notebook_id: str) -> FolderMapping | None:
@@ -263,13 +322,13 @@ async def get_folder_mapping(notebook_id: str) -> FolderMapping | None:
     return mappings.get(notebook_id)
 
 async def save_folder_mapping(mapping: FolderMapping):
-    async with _lock:
+    async with _get_file_lock(FOLDER_MAPPINGS_FILE):
         mappings = await asyncio.to_thread(_load_folder_mappings_sync)
         mappings[mapping.notebook_id] = mapping
         await asyncio.to_thread(_save_folder_mappings_sync, mappings)
 
 async def delete_folder_mapping(notebook_id: str) -> bool:
-    async with _lock:
+    async with _get_file_lock(FOLDER_MAPPINGS_FILE):
         mappings = await asyncio.to_thread(_load_folder_mappings_sync)
         if notebook_id in mappings:
             del mappings[notebook_id]
@@ -283,9 +342,10 @@ def _load_sharing_rules_sync() -> dict[str, NotebookSharingRule]:
     if not SHARING_RULES_FILE.exists():
         return {}
     try:
-        with open(SHARING_RULES_FILE, encoding="utf-8") as f:
-            data = json.load(f)
-            return {k: NotebookSharingRule(**v) for k, v in data.items()}
+        return _read_cached_models(
+            SHARING_RULES_FILE,
+            lambda data: {k: NotebookSharingRule(**v) for k, v in data.items()},
+        )
     except Exception as e:
         logger.error(f"Failed to read sharing rules from {SHARING_RULES_FILE}: {e}")
         return {}
@@ -294,7 +354,7 @@ def _save_sharing_rules_sync(rules: dict[str, NotebookSharingRule]):
     _atomic_write_json(SHARING_RULES_FILE, {k: v.model_dump() for k, v in rules.items()})
 
 async def get_sharing_rules() -> dict[str, NotebookSharingRule]:
-    async with _lock:
+    async with _get_file_lock(SHARING_RULES_FILE):
         return await asyncio.to_thread(_load_sharing_rules_sync)
 
 async def get_notebook_sharing_rule(notebook_id: str) -> NotebookSharingRule:
@@ -302,7 +362,7 @@ async def get_notebook_sharing_rule(notebook_id: str) -> NotebookSharingRule:
     return rules.get(notebook_id, NotebookSharingRule(notebook_id=notebook_id))
 
 async def save_notebook_sharing_rule(rule: NotebookSharingRule):
-    async with _lock:
+    async with _get_file_lock(SHARING_RULES_FILE):
         rules = await asyncio.to_thread(_load_sharing_rules_sync)
         if not rule.exclude_all and not rule.exclude_profiles:
             rules.pop(rule.notebook_id, None)
@@ -313,7 +373,7 @@ async def save_notebook_sharing_rule(rule: NotebookSharingRule):
 
 async def remove_profile_from_sharing_rules(profile_id: str) -> int:
     """Remove a deleted profile ID from all per-notebook sharing exclusion lists."""
-    async with _lock:
+    async with _get_file_lock(SHARING_RULES_FILE):
         rules = await asyncio.to_thread(_load_sharing_rules_sync)
         updated = 0
         for nb_id in list(rules.keys()):
@@ -330,7 +390,7 @@ async def remove_profile_from_sharing_rules(profile_id: str) -> int:
 
 async def deduplicate_stored_profiles() -> dict[str, Any]:
     """Deduplicate persisted profiles by canonical email and remap cached notebooks/rules."""
-    async with _lock:
+    async with _get_file_lock(PROFILES_FILE):
         def _run_dedup() -> dict[str, Any]:
             profiles = _load_profiles_sync()
             total_before = len(profiles)

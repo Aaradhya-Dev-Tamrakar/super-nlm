@@ -267,9 +267,7 @@ export function showToast(message, type = 'info', action = null) {
   }
 
   container.appendChild(toast);
-  if (window.lucide) {
-    lucide.createIcons({ root: toast });
-  }
+  refreshIcons(toast);
 
   requestAnimationFrame(() => {
     toast.classList.remove('translate-y-3', 'scale-95', 'opacity-0');
@@ -282,6 +280,15 @@ export function showToast(message, type = 'info', action = null) {
     toast.classList.add('opacity-0', 'translate-y-3', 'scale-95');
     setTimeout(() => toast.remove(), 300);
   }, duration);
+}
+
+export function refreshIcons(rootEl = null) {
+  if (!window.lucide) return;
+  if (rootEl) {
+    lucide.createIcons({ root: rootEl });
+  } else {
+    lucide.createIcons();
+  }
 }
 
 export function fallbackCopyText(text, callback) {

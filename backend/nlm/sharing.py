@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 from typing import Any
 
+from backend.config import SUPER_NLM_FLEET_CONCURRENCY
 from backend.models import detect_course_info
 
 logger = logging.getLogger("backend.nlm_client")
@@ -110,17 +112,18 @@ async def batch_share_notebooks_to_accounts(
     cached_notebooks = await get_cached_notebooks()
     notebook_map = {n.id: n for n in cached_notebooks}
     sharing_rules = await get_sharing_rules() if respect_auto_share_rules else {}
+    sem = asyncio.Semaphore(SUPER_NLM_FLEET_CONCURRENCY)
 
-    results = []
-    total_shared = 0
-    total_already_shared = 0
-    total_failed = 0
-    total_skipped_owner = 0
+    async def _process_notebook(nb_id: str) -> tuple[list[dict[str, Any]], int, int, int, int]:
+        nb_results: list[dict[str, Any]] = []
+        nb_shared = 0
+        nb_already_shared = 0
+        nb_failed = 0
+        nb_skipped_owner = 0
 
-    for nb_id in notebook_ids:
         rule = sharing_rules.get(nb_id) if respect_auto_share_rules else None
         if rule and rule.exclude_all:
-            continue
+            return nb_results, nb_shared, nb_already_shared, nb_failed, nb_skipped_owner
 
         nb_entry = notebook_map.get(nb_id)
         nb_title = nb_entry.title if nb_entry else nb_id
@@ -137,28 +140,6 @@ async def batch_share_notebooks_to_accounts(
 
         owner_email = profile_map[owner_profile_id].email.lower() if owner_profile_id in profile_map and profile_map[owner_profile_id].email else ""
 
-        existing_collaborators = set()
-        status_error = None
-        status_res = await facade.run_nlm_cmd(["share", "status", nb_id, "--profile", owner_profile_id, "--json"], timeout=20)
-        if status_res["success"]:
-            try:
-                data = json.loads(status_res["stdout"])
-                for c in data.get("collaborators", []):
-                    c_email = (c.get("email") or "").strip().lower()
-                    if c_email:
-                        existing_collaborators.add(c_email)
-                    if c.get("role") == "owner" and c_email:
-                        owner_email = c_email
-            except (ValueError, TypeError, AttributeError) as e:
-                logger.warning(f"Could not parse share status for notebook {nb_id}: {e}")
-                from backend.studio_service import diagnostic
-
-                status_error = {**diagnostic(status_res, "sharing_status", nb_id, owner_profile_id), "message": str(e)}
-        else:
-            from backend.studio_service import diagnostic
-
-            status_error = diagnostic(status_res, "sharing_status", nb_id, owner_profile_id)
-
         if target_profile_ids:
             target_profiles = [profile_map[pid] for pid in target_profile_ids if pid in profile_map]
         else:
@@ -172,95 +153,133 @@ async def batch_share_notebooks_to_accounts(
                 if getattr(p, "receiveAutoShare", True) and p.id not in excluded_pids
             ]
 
-        for target in target_profiles:
-            target_email = (target.email or "").strip().lower()
-            if not target_email:
-                continue
-            if status_error:
-                total_failed += 1
-                results.append(
-                    {
-                        "notebookId": nb_id,
-                        "notebookTitle": nb_title,
-                        "targetProfileId": target.id,
-                        "targetEmail": target.email,
-                        "status": "unknown",
-                        "message": "Sharing status could not be read; no invitation attempted",
-                        "error_details": status_error,
-                    }
-                )
-                continue
+        async with sem:
+            existing_collaborators = set()
+            status_error = None
+            status_res = await facade.run_nlm_cmd(["share", "status", nb_id, "--profile", owner_profile_id, "--json"], timeout=20)
+            if status_res["success"]:
+                try:
+                    data = json.loads(status_res["stdout"])
+                    for c in data.get("collaborators", []):
+                        c_email = (c.get("email") or "").strip().lower()
+                        if c_email:
+                            existing_collaborators.add(c_email)
+                        if c.get("role") == "owner" and c_email:
+                            owner_email = c_email
+                except (ValueError, TypeError, AttributeError) as e:
+                    logger.warning(f"Could not parse share status for notebook {nb_id}: {e}")
+                    from backend.studio_service import diagnostic
 
-            if target_email == owner_email:
-                total_skipped_owner += 1
-                results.append(
-                    {
-                        "notebookId": nb_id,
-                        "notebookTitle": nb_title,
-                        "targetProfileId": target.id,
-                        "targetEmail": target.email,
-                        "status": "owner",
-                        "message": "Account is already notebook owner",
-                    }
-                )
-                continue
-
-            if target_email in existing_collaborators:
-                total_already_shared += 1
-                results.append(
-                    {
-                        "notebookId": nb_id,
-                        "notebookTitle": nb_title,
-                        "targetProfileId": target.id,
-                        "targetEmail": target.email,
-                        "status": "already_shared",
-                        "message": "Account already has access",
-                    }
-                )
-                continue
-
-            invite_res = await facade.run_nlm_cmd(
-                [
-                    "share",
-                    "invite",
-                    nb_id,
-                    target_email,
-                    "--role",
-                    role,
-                    "--profile",
-                    owner_profile_id,
-                ],
-                timeout=25,
-            )
-
-            if invite_res["success"]:
-                total_shared += 1
-                existing_collaborators.add(target_email)
-                results.append(
-                    {
-                        "notebookId": nb_id,
-                        "notebookTitle": nb_title,
-                        "targetProfileId": target.id,
-                        "targetEmail": target.email,
-                        "status": "shared",
-                        "message": f"Successfully invited as {role}",
-                    }
-                )
+                    status_error = {**diagnostic(status_res, "sharing_status", nb_id, owner_profile_id), "message": str(e)}
             else:
-                total_failed += 1
                 from backend.studio_service import diagnostic
 
-                results.append(
-                    {
-                        "notebookId": nb_id,
-                        "notebookTitle": nb_title,
-                        "targetProfileId": target.id,
-                        "targetEmail": target.email,
-                        "status": "failed",
-                        "message": invite_res.get("stderr") or invite_res.get("stdout") or "Invitation failed",
-                        "error_details": diagnostic(invite_res, "sharing_invite", nb_id, owner_profile_id),
-                    }
+                status_error = diagnostic(status_res, "sharing_status", nb_id, owner_profile_id)
+
+            for target in target_profiles:
+                target_email = (target.email or "").strip().lower()
+                if not target_email:
+                    continue
+                if status_error:
+                    nb_failed += 1
+                    nb_results.append(
+                        {
+                            "notebookId": nb_id,
+                            "notebookTitle": nb_title,
+                            "targetProfileId": target.id,
+                            "targetEmail": target.email,
+                            "status": "unknown",
+                            "message": "Sharing status could not be read; no invitation attempted",
+                            "error_details": status_error,
+                        }
+                    )
+                    continue
+
+                if target_email == owner_email:
+                    nb_skipped_owner += 1
+                    nb_results.append(
+                        {
+                            "notebookId": nb_id,
+                            "notebookTitle": nb_title,
+                            "targetProfileId": target.id,
+                            "targetEmail": target.email,
+                            "status": "owner",
+                            "message": "Account is already notebook owner",
+                        }
+                    )
+                    continue
+
+                if target_email in existing_collaborators:
+                    nb_already_shared += 1
+                    nb_results.append(
+                        {
+                            "notebookId": nb_id,
+                            "notebookTitle": nb_title,
+                            "targetProfileId": target.id,
+                            "targetEmail": target.email,
+                            "status": "already_shared",
+                            "message": "Account already has access",
+                        }
+                    )
+                    continue
+
+                invite_res = await facade.run_nlm_cmd(
+                    [
+                        "share",
+                        "invite",
+                        nb_id,
+                        target_email,
+                        "--role",
+                        role,
+                        "--profile",
+                        owner_profile_id,
+                    ],
+                    timeout=25,
                 )
+
+                if invite_res["success"]:
+                    nb_shared += 1
+                    existing_collaborators.add(target_email)
+                    nb_results.append(
+                        {
+                            "notebookId": nb_id,
+                            "notebookTitle": nb_title,
+                            "targetProfileId": target.id,
+                            "targetEmail": target.email,
+                            "status": "shared",
+                            "message": f"Successfully invited as {role}",
+                        }
+                    )
+                else:
+                    nb_failed += 1
+                    from backend.studio_service import diagnostic
+
+                    nb_results.append(
+                        {
+                            "notebookId": nb_id,
+                            "notebookTitle": nb_title,
+                            "targetProfileId": target.id,
+                            "targetEmail": target.email,
+                            "status": "failed",
+                            "message": invite_res.get("stderr") or invite_res.get("stdout") or "Invitation failed",
+                            "error_details": diagnostic(invite_res, "sharing_invite", nb_id, owner_profile_id),
+                        }
+                    )
+
+        return nb_results, nb_shared, nb_already_shared, nb_failed, nb_skipped_owner
+
+    per_notebook_outcomes = await asyncio.gather(*(_process_notebook(nb_id) for nb_id in notebook_ids))
+    results = []
+    total_shared = 0
+    total_already_shared = 0
+    total_failed = 0
+    total_skipped_owner = 0
+    for nb_results, nb_shared, nb_already_shared, nb_failed, nb_skipped_owner in per_notebook_outcomes:
+        results.extend(nb_results)
+        total_shared += nb_shared
+        total_already_shared += nb_already_shared
+        total_failed += nb_failed
+        total_skipped_owner += nb_skipped_owner
 
     try:
         from backend.models import Notebook
@@ -422,13 +441,9 @@ async def unshare_account_from_fleet(profile_id: str, target_email: str) -> dict
             seen_ids.add(n.id)
             candidate_ids.append(n.id)
 
-    unshared = 0
-    skipped_owner = 0
-    skipped_not_shared = 0
-    failed = 0
-    results: list[dict[str, Any]] = []
+    sem = asyncio.Semaphore(SUPER_NLM_FLEET_CONCURRENCY)
 
-    for nb_id in candidate_ids:
+    async def _unshare_candidate(nb_id: str) -> tuple[str, dict[str, Any]]:
         nb_entries = [n for n in cached_notebooks if n.id == nb_id]
         nb_title = next((n.title for n in nb_entries if n.title), nb_id)
 
@@ -438,16 +453,15 @@ async def unshare_account_from_fleet(profile_id: str, target_email: str) -> dict
             if getattr(n, "ownerEmail", None)
         ]
         if email_lower in cached_owner_emails:
-            skipped_owner += 1
-            results.append(
+            return (
+                "skipped_owner",
                 {
                     "notebookId": nb_id,
                     "notebookTitle": nb_title,
                     "status": "skipped_owner",
                     "message": "Leaving account owns this notebook",
-                }
+                },
             )
-            continue
 
         owner_profile_id = next(
             (email_to_profile[oe] for oe in cached_owner_emails if oe in email_to_profile),
@@ -467,116 +481,118 @@ async def unshare_account_from_fleet(profile_id: str, target_email: str) -> dict
                 owner_profile_id = holding_remaining[0]
 
         if not owner_profile_id:
-            skipped_owner += 1
-            results.append(
+            return (
+                "skipped_owner",
                 {
                     "notebookId": nb_id,
                     "notebookTitle": nb_title,
                     "status": "skipped_no_owner",
                     "message": "No remaining profile has access to revoke sharing",
-                }
+                },
             )
-            continue
 
-        status_res = await facade.run_nlm_cmd(
-            ["share", "status", nb_id, "--profile", owner_profile_id, "--json"],
-            timeout=20,
-        )
-        if not status_res.get("success"):
-            failed += 1
-            results.append(
-                {
-                    "notebookId": nb_id,
-                    "notebookTitle": nb_title,
-                    "ownerProfileId": owner_profile_id,
-                    "status": "failed",
-                    "message": status_res.get("stderr") or status_res.get("stdout") or "Failed to read share status",
-                }
+        async with sem:
+            status_res = await facade.run_nlm_cmd(
+                ["share", "status", nb_id, "--profile", owner_profile_id, "--json"],
+                timeout=20,
             )
-            continue
+            if not status_res.get("success"):
+                return (
+                    "failed",
+                    {
+                        "notebookId": nb_id,
+                        "notebookTitle": nb_title,
+                        "ownerProfileId": owner_profile_id,
+                        "status": "failed",
+                        "message": status_res.get("stderr") or status_res.get("stdout") or "Failed to read share status",
+                    },
+                )
 
-        try:
-            data = json.loads(status_res["stdout"])
-            collaborators = data.get("collaborators")
-            if not isinstance(collaborators, list):
-                raise TypeError("Missing collaborators list")
-        except (ValueError, TypeError, AttributeError) as e:
-            failed += 1
-            results.append(
-                {
-                    "notebookId": nb_id,
-                    "notebookTitle": nb_title,
-                    "ownerProfileId": owner_profile_id,
-                    "status": "failed",
-                    "message": f"Invalid share status response: {e}",
-                }
+            try:
+                data = json.loads(status_res["stdout"])
+                collaborators = data.get("collaborators")
+                if not isinstance(collaborators, list):
+                    raise TypeError("Missing collaborators list")
+            except (ValueError, TypeError, AttributeError) as e:
+                return (
+                    "failed",
+                    {
+                        "notebookId": nb_id,
+                        "notebookTitle": nb_title,
+                        "ownerProfileId": owner_profile_id,
+                        "status": "failed",
+                        "message": f"Invalid share status response: {e}",
+                    },
+                )
+
+            target_collab = next(
+                (c for c in collaborators if isinstance(c, dict) and (c.get("email") or "").strip().lower() == email_lower),
+                None,
             )
-            continue
+            if target_collab is not None and target_collab.get("role") == "owner":
+                return (
+                    "skipped_owner",
+                    {
+                        "notebookId": nb_id,
+                        "notebookTitle": nb_title,
+                        "ownerProfileId": owner_profile_id,
+                        "status": "skipped_owner",
+                        "message": "Leaving account owns this notebook",
+                    },
+                )
 
-        target_collab = next(
-            (c for c in collaborators if isinstance(c, dict) and (c.get("email") or "").strip().lower() == email_lower),
-            None,
-        )
-        if target_collab is not None and target_collab.get("role") == "owner":
-            skipped_owner += 1
-            results.append(
-                {
-                    "notebookId": nb_id,
-                    "notebookTitle": nb_title,
-                    "ownerProfileId": owner_profile_id,
-                    "status": "skipped_owner",
-                    "message": "Leaving account owns this notebook",
-                }
+            if target_collab is None:
+                return (
+                    "skipped_not_shared",
+                    {
+                        "notebookId": nb_id,
+                        "notebookTitle": nb_title,
+                        "ownerProfileId": owner_profile_id,
+                        "status": "skipped_not_shared",
+                        "message": "Account is not a collaborator on this notebook",
+                    },
+                )
+
+            live_owner_email = next(
+                (
+                    (c.get("email") or "").strip().lower()
+                    for c in collaborators
+                    if isinstance(c, dict) and c.get("role") == "owner" and c.get("email")
+                ),
+                None,
             )
-            continue
+            if live_owner_email and live_owner_email in email_to_profile:
+                owner_profile_id = email_to_profile[live_owner_email]
 
-        if target_collab is None:
-            skipped_not_shared += 1
-            results.append(
-                {
-                    "notebookId": nb_id,
-                    "notebookTitle": nb_title,
-                    "ownerProfileId": owner_profile_id,
-                    "status": "skipped_not_shared",
-                    "message": "Account is not a collaborator on this notebook",
-                }
-            )
-            continue
-
-        live_owner_email = next(
-            (
-                (c.get("email") or "").strip().lower()
-                for c in collaborators
-                if isinstance(c, dict) and c.get("role") == "owner" and c.get("email")
-            ),
-            None,
-        )
-        if live_owner_email and live_owner_email in email_to_profile:
-            owner_profile_id = email_to_profile[live_owner_email]
-
-        remove_res = await facade.remove_notebook_collaborator(nb_id, owner_profile_id, email_lower)
-        if remove_res.get("success"):
-            unshared += 1
-            results.append(
-                {
-                    "notebookId": nb_id,
-                    "notebookTitle": nb_title,
-                    "ownerProfileId": owner_profile_id,
-                    "status": "unshared",
-                    "message": "Collaborator access revoked",
-                }
-            )
-        else:
-            failed += 1
-            results.append(
+            remove_res = await facade.remove_notebook_collaborator(nb_id, owner_profile_id, email_lower)
+            if remove_res.get("success"):
+                return (
+                    "unshared",
+                    {
+                        "notebookId": nb_id,
+                        "notebookTitle": nb_title,
+                        "ownerProfileId": owner_profile_id,
+                        "status": "unshared",
+                        "message": "Collaborator access revoked",
+                    },
+                )
+            return (
+                "failed",
                 {
                     "notebookId": nb_id,
                     "notebookTitle": nb_title,
                     "ownerProfileId": owner_profile_id,
                     "status": "failed",
                     "message": remove_res.get("error") or "Failed to revoke collaborator access",
-                }
+                },
             )
+
+    outcomes = await asyncio.gather(*(_unshare_candidate(nb_id) for nb_id in candidate_ids))
+    unshared = sum(1 for kind, _ in outcomes if kind == "unshared")
+    skipped_owner = sum(1 for kind, _ in outcomes if kind == "skipped_owner")
+    skipped_not_shared = sum(1 for kind, _ in outcomes if kind == "skipped_not_shared")
+    failed = sum(1 for kind, _ in outcomes if kind == "failed")
+    results = [item for _, item in outcomes]
 
     return {
         "success": failed == 0,

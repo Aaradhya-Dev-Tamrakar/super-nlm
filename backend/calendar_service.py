@@ -1,9 +1,9 @@
 import asyncio
+import hashlib
 import logging
 import re
 from datetime import date, datetime, time, timedelta, timezone
 
-import httpx
 import icalendar
 import recurring_ical_events
 from dateutil import tz
@@ -14,6 +14,7 @@ from backend.config import (
     SUPER_NLM_DEFAULT_EMAIL,
     load_user_catalog,
 )
+from backend.http_pool import get_http_client
 from backend.models import (
     BIASAPERTURE_NOTEBOOK_ID,
     DEFAULT_COURSE_NOTEBOOK_MAP,
@@ -45,7 +46,24 @@ class CalendarService:
     def __init__(self):
         self._cache_raw_ics: str | None = None
         self._last_fetch_time: float = 0.0
+        self._parsed_cal_hash: str | None = None
+        self._parsed_cal: icalendar.Calendar | None = None
         self._lock = asyncio.Lock()
+
+    def _extract_events_in_range(
+        self,
+        raw_ics: str,
+        today_start: datetime,
+        window_end: datetime,
+    ):
+        """Parse iCal feed (cached by content SHA-256) and expand recurring events."""
+        ics_hash = hashlib.sha256(raw_ics.encode("utf-8")).hexdigest()
+        cal = self._parsed_cal if self._parsed_cal_hash == ics_hash else None
+        if cal is None:
+            cal = icalendar.Calendar.from_ical(raw_ics)
+            self._parsed_cal = cal
+            self._parsed_cal_hash = ics_hash
+        return recurring_ical_events.of(cal).between(today_start, window_end)
 
     def is_configured(self) -> bool:
         return bool(GOOGLE_CALENDAR_ICAL_URL and GOOGLE_CALENDAR_ICAL_URL.startswith("http"))
@@ -76,13 +94,18 @@ class CalendarService:
                 return self._cache_raw_ics
 
             logger.info("Fetching fresh Google Calendar iCal feed...")
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-                resp = await client.get(GOOGLE_CALENDAR_ICAL_URL, headers={
+            client = await get_http_client()
+            resp = await client.get(
+                GOOGLE_CALENDAR_ICAL_URL,
+                headers={
                     "User-Agent": "SuperNLM-Calendar-Sync/1.0",
-                    "Accept": "text/calendar, text/plain, */*"
-                })
-                resp.raise_for_status()
-                raw_ics = resp.text
+                    "Accept": "text/calendar, text/plain, */*",
+                },
+                timeout=15.0,
+                follow_redirects=True,
+            )
+            resp.raise_for_status()
+            raw_ics = resp.text
 
             self._cache_raw_ics = raw_ics
             self._last_fetch_time = now_ts
@@ -331,14 +354,18 @@ class CalendarService:
             )
 
         raw_ics = await self.fetch_raw_ics(force_refresh=force_refresh)
-        cal = icalendar.Calendar.from_ical(raw_ics)
 
         local_tz = tz.tzlocal()
         now = datetime.now(local_tz)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         window_end = today_start + timedelta(days=days + 1)
 
-        events_in_range = recurring_ical_events.of(cal).between(today_start, window_end)
+        events_in_range = await asyncio.to_thread(
+            self._extract_events_in_range,
+            raw_ics,
+            today_start,
+            window_end,
+        )
 
         today_events: list[CalendarAgendaEvent] = []
         upcoming_events: list[CalendarAgendaEvent] = []

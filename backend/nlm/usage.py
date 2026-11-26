@@ -7,6 +7,7 @@ import datetime
 import json
 import logging
 
+from backend.config import SUPER_NLM_FLEET_CONCURRENCY
 from backend.models import AccountProfile, FleetUsageResponse, ProfileUsage, UsageWindow
 
 logger = logging.getLogger("backend.nlm_client")
@@ -85,11 +86,11 @@ async def fetch_profile_usage(profile: AccountProfile, timeout: int = 25) -> Pro
 
 async def fetch_fleet_usage(profiles: list[AccountProfile]) -> FleetUsageResponse:
     """
-    Concurrently fetches usage limits for all profiles with bounded concurrency (Semaphore=3).
+    Concurrently fetches usage limits for all profiles with bounded concurrency (SUPER_NLM_FLEET_CONCURRENCY).
     Computes aggregate metrics (average rolling usage, healthy/warning/critical counts).
     """
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    sem = asyncio.Semaphore(3)
+    sem = asyncio.Semaphore(SUPER_NLM_FLEET_CONCURRENCY)
     facade = _facade()
 
     async def _fetch_with_sem(p: AccountProfile) -> ProfileUsage:
