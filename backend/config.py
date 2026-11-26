@@ -1,6 +1,12 @@
-from pathlib import Path
-import shutil
+import json
+import logging
 import os
+import shutil
+import sys
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger("super_nlm.config")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -11,6 +17,7 @@ CACHE_FILE = DATA_DIR / "notebooks_cache.json"
 SCHEDULED_JOBS_FILE = DATA_DIR / "scheduled_jobs.json"
 FOLDER_MAPPINGS_FILE = DATA_DIR / "folder_mappings.json"
 SHARING_RULES_FILE = DATA_DIR / "sharing_rules.json"
+USER_CATALOG_FILE = DATA_DIR / "user_catalog.json"
 DOWNLOADS_DIR = Path.home() / "Downloads" / "Super-NLM" / "Generated"
 
 # NotebookLM Quotas & Capacity Limits
@@ -32,40 +39,22 @@ IGNORED_EXTENSIONS = {".zip", ".rar", ".7z", ".tar", ".gz", ".exe", ".dll", ".so
 DATA_DIR.mkdir(exist_ok=True)
 DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
-import sys
-
 # Locate nlm binary cross-platform
 NLM_EXECUTABLE = shutil.which("nlm")
 if not NLM_EXECUTABLE:
     home_dir = Path.home()
     binary_name = "nlm.exe" if sys.platform == "win32" else "nlm"
     fallback = home_dir / ".local" / "bin" / binary_name
-    if fallback.exists():
-        NLM_EXECUTABLE = str(fallback)
-    else:
-        NLM_EXECUTABLE = "nlm"
+    NLM_EXECUTABLE = str(fallback) if fallback.exists() else "nlm"
 
-# Default seed profile for aaradhyadevtmr@gmail.com (Pro AI)
-DEFAULT_SEED_PROFILES = [
-    {
-        "id": "default",
-        "displayName": "Personal / Student",
-        "email": "aaradhyadevtmr@gmail.com",
-        "tier": "pro",
-        "color": "#3b82f6",  # Blue
-        "icon": "sparkles",
-        "isDefaultPro": True,
-        "status": "connected"
-    }
-]
 
 def _load_env_file():
     env_file = BASE_DIR / ".env"
     if env_file.exists():
         try:
-            with open(env_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
+            with open(env_file, encoding="utf-8") as f:
+                for raw_line in f:
+                    line = raw_line.strip()
                     if not line or line.startswith("#") or "=" not in line:
                         continue
                     key, val = line.split("=", 1)
@@ -73,10 +62,55 @@ def _load_env_file():
                     val = val.strip("\"' ")
                     if key and key not in os.environ:
                         os.environ[key] = val
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.debug("Could not read .env file: %s", exc)
+
 
 _load_env_file()
+
+
+def load_user_catalog() -> dict[str, Any]:
+    """Load optional user-local course/project notebook catalog from data/user_catalog.json."""
+    default_catalog: dict[str, Any] = {
+        "course_notebook_ids": [],
+        "default_course_notebook_map": {},
+        "project_notebooks": {},
+        "acronym_to_keywords": {},
+    }
+    if not USER_CATALOG_FILE.exists():
+        return default_catalog
+    try:
+        with open(USER_CATALOG_FILE, encoding="utf-8") as f:
+            raw = json.load(f)
+        if not isinstance(raw, dict):
+            return default_catalog
+        return {
+            "course_notebook_ids": list(raw.get("course_notebook_ids") or []),
+            "default_course_notebook_map": dict(raw.get("default_course_notebook_map") or {}),
+            "project_notebooks": dict(raw.get("project_notebooks") or {}),
+            "acronym_to_keywords": dict(raw.get("acronym_to_keywords") or {}),
+        }
+    except (OSError, ValueError, TypeError) as exc:
+        logger.warning("Failed to load user catalog from %s: %s", USER_CATALOG_FILE, exc)
+        return default_catalog
+
+
+SUPER_NLM_DEFAULT_EMAIL = os.environ.get("SUPER_NLM_DEFAULT_EMAIL", "").strip()
+SUPER_NLM_DEFAULT_DISPLAY_NAME = os.environ.get("SUPER_NLM_DEFAULT_DISPLAY_NAME", "Personal / Student").strip() or "Personal / Student"
+
+# Default seed profile (uses SUPER_NLM_DEFAULT_EMAIL if configured)
+DEFAULT_SEED_PROFILES = [
+    {
+        "id": "default",
+        "displayName": SUPER_NLM_DEFAULT_DISPLAY_NAME,
+        "email": SUPER_NLM_DEFAULT_EMAIL,
+        "tier": "pro",
+        "color": "#3b82f6",  # Blue
+        "icon": "sparkles",
+        "isDefaultPro": True,
+        "status": "connected"
+    }
+]
 
 # Google Gemini Pro/Flash API for 2nd-stage multi-notebook synthesis
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()

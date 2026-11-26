@@ -1,12 +1,15 @@
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import pytest
 from fastapi.testclient import TestClient
-from backend.app import app
-from backend.nlm_client import launch_cli_login, _run_subprocess_sync, query_notebook
-from backend.models import ProfileCreateRequest
+
 import backend.tunnel as tunnel
+from backend.app import app
+from backend.nlm_client import launch_cli_login, query_notebook
+
 
 def test_regression_security():
     client = TestClient(app)
@@ -30,11 +33,8 @@ def test_regression_security():
     print('  [PASS] Security: Command injection payloads successfully blocked by validator.')
 
     # 2. Test launch_cli_login rejection directly
-    try:
+    with pytest.raises(ValueError):
         launch_cli_login('bad & id')
-        assert False, 'Expected ValueError on bad profile_id'
-    except ValueError:
-        pass
     print('  [PASS] Security: launch_cli_login rejects invalid profile IDs.')
 
 def test_regression_cache_sync():

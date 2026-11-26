@@ -48,3 +48,4 @@ tools/
 *.lnk
 
 data/artifact_indexes/
+!data/user_catalog.example.json

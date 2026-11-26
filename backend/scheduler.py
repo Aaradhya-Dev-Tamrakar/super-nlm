@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import datetime
 import hashlib
 import json
@@ -7,7 +8,6 @@ import os
 import re
 import time
 import uuid
-from typing import Dict, List, Optional
 
 from backend.artifact_files import ArtifactCatalog
 from backend.config import DOWNLOADS_DIR, SCHEDULED_JOBS_FILE
@@ -52,12 +52,12 @@ class JobScheduler:
     """
 
     def __init__(self):
-        self._jobs: Dict[str, ScheduledJob] = {}
-        self._active_workers: Dict[str, Optional[str]] = {}  # profile_id -> job_id
+        self._jobs: dict[str, ScheduledJob] = {}
+        self._active_workers: dict[str, str | None] = {}  # profile_id -> job_id
         self._lock = asyncio.Lock()
         self._dispatch_lock = asyncio.Lock()
         self._execution_tasks: set[asyncio.Task] = set()
-        self._worker_task: Optional[asyncio.Task] = None
+        self._worker_task: asyncio.Task | None = None
         self._running: bool = False
         self.dispatch_paused = False
         self._lease = None
@@ -90,7 +90,7 @@ class JobScheduler:
         if not SCHEDULED_JOBS_FILE.exists():
             return
         try:
-            with open(SCHEDULED_JOBS_FILE, "r", encoding="utf-8") as f:
+            with open(SCHEDULED_JOBS_FILE, encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, list):
                     for item in data:
@@ -123,11 +123,11 @@ class JobScheduler:
             os.replace(tmp_path, SCHEDULED_JOBS_FILE)
         except Exception as e:
             logger.error(f"Error saving scheduled jobs: {e}")
-            try:
-                if 'tmp_path' in locals() and os.path.exists(tmp_path):
+            if "tmp_path" in locals() and os.path.exists(tmp_path):
+                try:
                     os.remove(tmp_path)
-            except Exception:
-                pass
+                except OSError as cleanup_err:
+                    logger.debug("Could not remove temp scheduler file %s: %s", tmp_path, cleanup_err)
 
     async def start(self):
         """Starts the background worker daemon."""
@@ -147,10 +147,8 @@ class JobScheduler:
             self._running = False
             if self._worker_task:
                 self._worker_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await self._worker_task
-                except asyncio.CancelledError:
-                    pass
             tasks = list(self._execution_tasks)
             for task in tasks:
                 task.cancel()
@@ -211,7 +209,7 @@ class JobScheduler:
         logger.info(f"Scheduled new job {job_id} ({job.artifact_type}) for notebook '{notebook_title}'")
         return job
 
-    async def schedule_batch(self, req: BatchScheduleRequest, notebooks_map: Dict[str, str]) -> BatchScheduleResponse:
+    async def schedule_batch(self, req: BatchScheduleRequest, notebooks_map: dict[str, str]) -> BatchScheduleResponse:
         """
         Schedules a batch of creation jobs across multiple notebooks.
         Assigns initial rotation waves based on active fleet size.
@@ -230,7 +228,7 @@ class JobScheduler:
         profiles = await get_profiles()
         fleet_size = max(1, len([p for p in profiles if p.status != "expired"]))
 
-        queued_jobs: List[ScheduledJob] = []
+        queued_jobs: list[ScheduledJob] = []
         async with self._lock:
             for idx, (nb_id, prompt) in enumerate(expanded):
                 job_id = str(uuid.uuid4())
@@ -277,7 +275,7 @@ class JobScheduler:
             message=msg
         )
 
-    def get_jobs(self, status_filter: Optional[str] = None) -> List[ScheduledJob]:
+    def get_jobs(self, status_filter: str | None = None) -> list[ScheduledJob]:
         """Returns sorted list of jobs (newest created first)."""
         jobs = list(self._jobs.values()) if self._lease and self._lease.handle else self.read_jobs()
         if status_filter:
@@ -285,7 +283,7 @@ class JobScheduler:
         jobs.sort(key=lambda x: x.created_at, reverse=True)
         return jobs
 
-    def get_job(self, job_id: str) -> Optional[ScheduledJob]:
+    def get_job(self, job_id: str) -> ScheduledJob | None:
         return self._jobs.get(job_id)
 
     async def cancel_job(self, job_id: str) -> bool:
@@ -367,7 +365,7 @@ class JobScheduler:
             try:
                 await self._process_queue_tick()
             except Exception as e:
-                logger.error(f"[cheduler Worker] Unexpected error in tick: {e}", exc_info=True)
+                logger.exception("[Scheduler Worker] Unexpected error in tick: %s", e)
             await asyncio.sleep(12)
 
     async def _process_queue_tick(self):
@@ -382,13 +380,12 @@ class JobScheduler:
         now_iso = now.isoformat()
 
         # Find pending jobs that are due
-        pending_jobs: List[ScheduledJob] = []
+        pending_jobs: list[ScheduledJob] = []
         for job in self._jobs.values():
             if job.id in self._active_workers.values():
                 continue
-            if job.status in ("queued", "scheduled", "in_progress"):
-                if not job.scheduled_time or job.scheduled_time <= now_iso:
-                    pending_jobs.append(job)
+            if job.status in ("queued", "scheduled", "in_progress") and (not job.scheduled_time or job.scheduled_time <= now_iso):
+                pending_jobs.append(job)
 
         if not pending_jobs:
             return
@@ -418,10 +415,7 @@ class JobScheduler:
             for idx, job in enumerate(pending_jobs):
                 if job.preferred_profile_id and job.preferred_profile_id != profile.id:
                     continue
-                if job.assigned_profile_id == profile.id:
-                    matched_job_idx = idx
-                    break
-                elif not job.assigned_profile_id:
+                if job.assigned_profile_id == profile.id or not job.assigned_profile_id:
                     matched_job_idx = idx
                     break
                 else:
@@ -480,7 +474,7 @@ class JobScheduler:
                     attempt["initial_access_error"] = access_error.details
                     stage = "sharing"
                     if not await ensure_notebook_shared(job.notebook_id, associated[0], profile.email):
-                        raise ValueError("Invitation did not confirm access; inspect sharing status before generation")
+                        raise ValueError("Invitation did not confirm access; inspect sharing status before generation") from access_error
                     stage = "source_lookup"
                     job.source_ids = await source_scope(job.notebook_id, profile.id, job.source_ids, job.exclude_sources)
                 stage = "creation"

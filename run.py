@@ -1,20 +1,22 @@
+import argparse
+import asyncio
+import atexit
 import os
-import sys
+import shutil
 import socket
-import webbrowser
+import subprocess
+import sys
 import threading
 import time
-import asyncio
-import argparse
-import subprocess
-import shutil
+import webbrowser
 
 # --- Windows Console & Runtime Performance Optimizations ---
 # When running under pythonw.exe, sys.stdout and sys.stderr are None
 if sys.stdout is None or sys.stderr is None:
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
     os.makedirs(log_dir, exist_ok=True)
-    _log_f = open(os.path.join(log_dir, "server.log"), "a", encoding="utf-8", buffering=1)
+    _log_f = open(os.path.join(log_dir, "server.log"), "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+    atexit.register(_log_f.close)
     if sys.stdout is None:
         sys.stdout = _log_f
     if sys.stderr is None:
@@ -53,10 +55,7 @@ def upgrade_notebooklm_cli():
     uv_bin = shutil.which("uv")
     if not uv_bin:
         fallback = os.path.join(os.environ.get("USERPROFILE", ""), ".local", "bin", "uv.exe")
-        if os.path.exists(fallback):
-            uv_bin = fallback
-        else:
-            uv_bin = "uv"
+        uv_bin = fallback if os.path.exists(fallback) else "uv"
     print("📦 Checking for updates to Gemini Notebook CLI engine (notebooklm-mcp-cli)...")
     try:
         res = subprocess.run(
@@ -87,18 +86,21 @@ if __name__ == "__main__":
     if not args.no_upgrade and not skip_upgrade:
         upgrade_notebooklm_cli()
 
-    desired_port = args.port or int(os.environ.get("SUPER_NLM_PORT", 8000))
+    desired_port = args.port or int(os.environ.get("SUPER_NLM_PORT", "8000"))
     port = find_available_port(desired_port, HOST)
 
     url = f"http://{HOST}:{port}"
 
-    print("\n" + "="*65)
+    from backend.config import SUPER_NLM_DEFAULT_EMAIL
+
+    print("\n" + "=" * 65)
     print(" 🚀 Super-NLM Hub (Optimized for Windows Dev Drive & ReFS)")
-    print(" ⭐️ Pro AI Engine : aaradhyadevtmr@gmail.com")
+    if SUPER_NLM_DEFAULT_EMAIL:
+        print(f" ⭐️ Pro AI Engine : {SUPER_NLM_DEFAULT_EMAIL}")
     if port != desired_port:
         print(f" ℹ️  Port {desired_port} was busy. Automatically switched to port {port}!")
     print(f" 🌐 Dashboard URL  : {url}")
-    print("="*65 + "\n")
+    print("=" * 65 + "\n")
 
     if args.tunnel:
         from backend.tunnel import start_cloudflare_tunnel

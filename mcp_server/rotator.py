@@ -2,17 +2,16 @@ import asyncio
 import datetime
 import logging
 import time
-from typing import List, Dict, Any, Optional, Set, Tuple
+from typing import Any
 
-from backend.models import AccountProfile, Notebook
-from backend.storage import get_profiles, get_cached_notebooks
+from backend.models import AccountProfile
 from backend.nlm_client import (
-    query_notebook,
-    ensure_notebook_shared,
-    is_rate_limit_or_quota_error,
     classify_quota_error,
-    get_cli_profiles
+    ensure_notebook_shared,
+    get_cli_profiles,
+    query_notebook,
 )
+from backend.storage import get_cached_notebooks, get_profiles
 
 logger = logging.getLogger("super_nlm.rotator")
 
@@ -39,15 +38,15 @@ class AccountRotator:
         self._counter: int = 0
         self._burst_cooldown_duration = burst_cooldown_duration
         # profile_id -> {"expires_at": float, "reason": "burst" | "daily", "details": str}
-        self._cooldowns: Dict[str, Dict[str, Any]] = {}
+        self._cooldowns: dict[str, dict[str, Any]] = {}
         # (notebook_id, target_email) -> True if sharing has been verified
-        self._shared_cache: Set[Tuple[str, str]] = set()
+        self._shared_cache: set[tuple[str, str]] = set()
         # conversation_id -> profile_id to pin multi-turn chat sessions to the same Google account
-        self._conversation_owners: Dict[str, str] = {}
+        self._conversation_owners: dict[str, str] = {}
         # profile_id -> current in-flight concurrent queries
-        self._inflight: Dict[str, int] = {}
+        self._inflight: dict[str, int] = {}
         # profile_id -> stats
-        self._stats: Dict[str, Dict[str, int]] = {}
+        self._stats: dict[str, dict[str, int]] = {}
 
     def _ensure_stats_entry(self, profile_id: str):
         if profile_id not in self._stats:
@@ -66,7 +65,7 @@ class AccountRotator:
         if profile_id in self._inflight:
             self._inflight[profile_id] = max(0, self._inflight[profile_id] - 1)
 
-    async def get_active_profiles(self) -> List[AccountProfile]:
+    async def get_active_profiles(self) -> list[AccountProfile]:
         """
         Retrieves all valid accounts from storage and syncs their emails with CLI state.
         """
@@ -74,7 +73,7 @@ class AccountRotator:
         try:
             cli_profiles = await get_cli_profiles()
             for p in profiles:
-                if p.id in cli_profiles and cli_profiles[p.id]:
+                if cli_profiles.get(p.id):
                     p.email = cli_profiles[p.id]
                     p.status = "connected"
         except Exception as e:
@@ -84,7 +83,7 @@ class AccountRotator:
         connected = [p for p in profiles if p.status == "connected"]
         return connected
 
-    async def get_pro_profiles(self) -> List[AccountProfile]:
+    async def get_pro_profiles(self) -> list[AccountProfile]:
         """Returns all active profiles with pro tier."""
         profiles = await self.get_active_profiles()
         pro_pool = [p for p in profiles if getattr(p, "tier", "").lower() == "pro"]
@@ -92,9 +91,9 @@ class AccountRotator:
 
     async def pick_next_profile(
         self,
-        exclude_ids: Optional[Set[str]] = None,
+        exclude_ids: set[str] | None = None,
         require_pro: bool = False
-    ) -> Tuple[AccountProfile, int]:
+    ) -> tuple[AccountProfile, int]:
         """
         Atomically selects the next account profile using least-loaded round-robin order.
         If require_pro is True, restricts candidates to the Pro fleet pool.
@@ -166,7 +165,7 @@ class AccountRotator:
         profile_id: str,
         error_type: str = "burst",
         details: str = "",
-        custom_duration: Optional[float] = None
+        custom_duration: float | None = None
     ):
         """
         Places an account into cooldown based on limit classification:
@@ -256,13 +255,13 @@ class AccountRotator:
         self,
         notebook_id: str,
         question: str,
-        conversation_id: Optional[str] = None,
-        source_ids: Optional[Any] = None,
+        conversation_id: str | None = None,
+        source_ids: Any | None = None,
         timeout: int = 120,
         new_conversation: bool = False,
-        max_attempts: Optional[int] = None,
-        require_pro: Optional[bool] = None
-    ) -> Dict[str, Any]:
+        max_attempts: int | None = None,
+        require_pro: bool | None = None
+    ) -> dict[str, Any]:
         """
         Executes a query with intelligent multi-account load balancing, in-flight concurrency
         tracking, Pro fleet equalization, and automatic multi-node failover.
@@ -286,7 +285,7 @@ class AccountRotator:
             async with self._lock:
                 pinned_profile_id = self._conversation_owners.get(conversation_id)
 
-        excluded: Set[str] = set()
+        excluded: set[str] = set()
         attempt_history = []
 
         for attempt in range(1, limit_attempts + 1):
@@ -406,7 +405,7 @@ class AccountRotator:
             }
         }
 
-    async def check_all_profiles_health(self) -> Dict[str, Any]:
+    async def check_all_profiles_health(self) -> dict[str, Any]:
         """
         Proactively probes all configured profiles to verify authentication and CLI connectivity.
         Returns a structured health report identifying active vs degraded accounts.
@@ -476,7 +475,7 @@ class AccountRotator:
             "profiles": health_results
         }
 
-    async def get_status(self) -> Dict[str, Any]:
+    async def get_status(self) -> dict[str, Any]:
         """Returns the current state of rotation, in-flight concurrency, cooldowns, and per-profile counts."""
         async with self._lock:
             now = time.time()

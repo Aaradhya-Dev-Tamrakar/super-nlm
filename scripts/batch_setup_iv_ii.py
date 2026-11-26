@@ -6,14 +6,12 @@ Executes batch creation, folder mapping, local exam hub creation, source ingesti
 and cross-profile sharing across the multi-account fleet.
 """
 
-import os
-import sys
 import json
-import time
-import shutil
 import subprocess
-from pathlib import Path
+import sys
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -71,14 +69,14 @@ CORE_SUBJECTS = [
 ]
 
 def run_cmd(args: list, timeout: int = 60) -> dict:
-    cmd = [NLM_EXECUTABLE] + args
+    cmd = [NLM_EXECUTABLE, *args]
     print(f"[CMD] {' '.join(cmd)}")
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False)
     return {"code": res.returncode, "stdout": res.stdout.strip(), "stderr": res.stderr.strip()}
 
 def main(dry_run: bool = False):
     print("=== Super-NLM: IV-II Core Notebooks Fleet Setup ===")
-    print(f"Owner Profile: default (aaradhyadevtmr@gmail.com)")
+    print("Owner Profile: default")
     print(f"Dry Run: {dry_run}")
 
     # Load existing folder mappings
@@ -97,20 +95,21 @@ def main(dry_run: bool = False):
             items = json.loads(res["stdout"])
             for it in items:
                 existing_notebooks[it.get("title", "").strip()] = it.get("id")
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: could not parse existing notebooks JSON: {e}")
 
     # Discover collaborator emails from profiles.json
     collaborators = []
     if PROFILES_FILE.exists():
         try:
             p_data = json.loads(PROFILES_FILE.read_text(encoding="utf-8"))
+            owner_email = next((p.get("email", "").strip() for p in p_data if p.get("id") == "default"), "")
             for p in p_data:
                 em = p.get("email", "").strip()
-                if em and em != "aaradhyadevtmr@gmail.com":
+                if em and em != owner_email:
                     collaborators.append(em)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: could not read profiles.json: {e}")
 
     collaborator_str = ",".join(collaborators)
     print(f"Discovered {len(collaborators)} fleet collaborators: {collaborator_str}")
@@ -132,17 +131,16 @@ def main(dry_run: bool = False):
 
         # 2. Check or Create Notebook
         notebook_id = existing_notebooks.get(title)
-        if not notebook_id:
+        if not notebook_id and NOTEBOOKS_CACHE_FILE.exists():
             # Check cache file directly
-            if NOTEBOOKS_CACHE_FILE.exists():
-                try:
-                    c_data = json.loads(NOTEBOOKS_CACHE_FILE.read_text(encoding="utf-8"))
-                    for it in c_data:
-                        if it.get("title", "").strip() == title:
-                            notebook_id = it.get("id")
-                            break
-                except Exception:
-                    pass
+            try:
+                c_data = json.loads(NOTEBOOKS_CACHE_FILE.read_text(encoding="utf-8"))
+                for it in c_data:
+                    if it.get("title", "").strip() == title:
+                        notebook_id = it.get("id")
+                        break
+            except Exception as e:
+                print(f"Warning: could not read notebooks cache: {e}")
 
         if notebook_id:
             print(f"Found active notebook for '{title}': ID = {notebook_id}")
@@ -155,7 +153,7 @@ def main(dry_run: bool = False):
                         c_data = json.loads(create_res["stdout"])
                         notebook_id = c_data.get("id") or c_data.get("notebook_id")
                         print(f"Created notebook '{title}' -> ID: {notebook_id}")
-                    except Exception as e:
+                    except Exception:
                         print(f"Failed to parse create response: {create_res['stdout']}")
                 else:
                     print(f"ERROR creating notebook: {create_res['stderr']}")
@@ -199,7 +197,7 @@ def main(dry_run: bool = False):
             print(f"Sharing notebook {notebook_id} with fleet collaborators: {collaborator_str}...")
             share_res = run_cmd(["share", "batch", notebook_id, collaborator_str, "--role", "editor", "-p", "default"])
             if share_res["code"] == 0:
-                print(f"  -> Shared successfully with editor role.")
+                print("  -> Shared successfully with editor role.")
             else:
                 print(f"  -> Warning during share batch: {share_res['stderr']}")
 

@@ -39,9 +39,9 @@ def check_commit_sha_integrity(root: Path) -> list[str]:
             if ext in scanned_extensions:
                 file_path = os.path.join(root_dir, file)
                 try:
-                    with open(file_path, "r", encoding="utf-8", errors="ignore") as fh:
+                    with open(file_path, encoding="utf-8", errors="ignore") as fh:
                         content = fh.read()
-                except Exception:
+                except OSError:
                     continue
 
                 for m in commit_url_pattern.finditer(content):
@@ -77,7 +77,7 @@ def main() -> int:
     print("=" * 60)
 
     # 1. Commit SHA Integrity
-    print("\n[1/2] Commit SHA & placeholder integrity")
+    print("\n[1/3] Commit SHA & placeholder integrity")
     bad_shas = check_commit_sha_integrity(root)
     if bad_shas:
         for b in bad_shas:
@@ -86,9 +86,22 @@ def main() -> int:
     else:
         print("  [PASS] All commit references are authentic 7-40 hex SHAs (0 placeholders)")
 
-    # 2. Pytest Suite
-    print("\n[2/2] Pytest execution")
+    # 2. Ruff Lint Gate
+    print("\n[2/3] Ruff lint check")
     uv = shutil.which("uv")
+    if uv is not None:
+        ruff_exec = [uv, "run", "--isolated", "--locked", "--group", "dev", "ruff", "check", "."]
+    else:
+        ruff_exec = [sys.executable, "-m", "ruff", "check", "."]
+
+    ruff_res = subprocess.run(ruff_exec, cwd=root, check=False)
+    if ruff_res.returncode != 0:
+        print("  [FAIL] Ruff reported lint errors.")
+        return ruff_res.returncode
+    print("  [PASS] Ruff lint check passed with 0 errors")
+
+    # 3. Pytest Suite
+    print("\n[3/3] Pytest execution")
     relative_junit_path = Path("verification-results") / "pytest.xml"
     if uv is not None:
         command = [
@@ -99,13 +112,12 @@ def main() -> int:
             "--group",
             "dev",
             "pytest",
-            "--ignore=tests/test_api.py",
             "--junitxml",
             str(relative_junit_path),
         ]
         cmd_exec = [uv, *command[1:]]
     else:
-        command = [sys.executable, "-m", "pytest", "--ignore=tests/test_api.py", "--junitxml", str(relative_junit_path)]
+        command = [sys.executable, "-m", "pytest", "--junitxml", str(relative_junit_path)]
         cmd_exec = command
 
     started_at = utc_now()

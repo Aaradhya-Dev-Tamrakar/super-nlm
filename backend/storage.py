@@ -1,18 +1,124 @@
-import json
 import asyncio
+import contextlib
+import json
+import logging
 import os
 import tempfile
-from typing import List, Dict, Optional, Any
+import time
 from pathlib import Path
-from backend.config import PROFILES_FILE, CACHE_FILE, DEFAULT_SEED_PROFILES, FOLDER_MAPPINGS_FILE, SHARING_RULES_FILE
-from backend.models import AccountProfile, Notebook, FolderMapping, NotebookSharingRule
+from typing import Any
+
+from backend.config import (
+    CACHE_FILE,
+    DEFAULT_SEED_PROFILES,
+    FOLDER_MAPPINGS_FILE,
+    PROFILES_FILE,
+    SHARING_RULES_FILE,
+)
+from backend.models import AccountProfile, FolderMapping, Notebook, NotebookSharingRule
 
 _lock = asyncio.Lock()
 
-import time
-import logging
-
 logger = logging.getLogger(__name__)
+
+_STATUS_RANK = {
+    "connected": 3,
+    "checking": 2,
+    "expired": 1,
+    "not_logged_in": 0,
+}
+
+
+def normalize_email_key(email: str) -> str:
+    """Return a canonical deduplication key for an email address.
+
+    For Gmail / Googlemail addresses, strips '+tag' subaddressing, ignores dots in
+    the local part, and normalizes googlemail.com -> gmail.com.
+    """
+    raw = (email or "").strip().lower()
+    if "@" not in raw:
+        return ""
+    local, domain = raw.rsplit("@", 1)
+    if not local or not domain:
+        return ""
+    if domain in ("gmail.com", "googlemail.com"):
+        local = local.split("+", 1)[0].replace(".", "")
+        domain = "gmail.com"
+    return f"{local}@{domain}"
+
+
+def deduplicate_profiles(profiles: list[AccountProfile]) -> tuple[list[AccountProfile], list[dict[str, Any]]]:
+    """Collapse duplicate profiles sharing the same canonical email key.
+
+    Profiles without a valid email are never merged with one another.
+    """
+    groups: dict[str, list[tuple[int, AccountProfile]]] = {}
+    for idx, profile in enumerate(profiles):
+        key = normalize_email_key(profile.email)
+        if key:
+            groups.setdefault(key, []).append((idx, profile))
+
+    loser_to_winner: dict[str, AccountProfile] = {}
+    winner_indices: set[int] = set()
+    merged_records: list[dict[str, Any]] = []
+
+    for key, entries in groups.items():
+        if len(entries) == 1:
+            winner_indices.add(entries[0][0])
+            continue
+
+        def _priority(item: tuple[int, AccountProfile]):
+            idx, prof = item
+            return (
+                1 if prof.isDefaultPro else 0,
+                _STATUS_RANK.get(prof.status, 0),
+                1 if (prof.tier or "").lower() == "pro" else 0,
+                prof.notebookCount or 0,
+                1 if prof.id == "default" else 0,
+                -idx,
+            )
+
+        best_idx, winner = max(entries, key=_priority)
+        winner = winner.model_copy(deep=True)
+        winner_indices.add(best_idx)
+
+        for idx, candidate in entries:
+            if idx == best_idx:
+                continue
+            if not winner.displayName.strip() and candidate.displayName.strip():
+                winner.displayName = candidate.displayName
+            if not winner.lastAuthCheck and candidate.lastAuthCheck:
+                winner.lastAuthCheck = candidate.lastAuthCheck
+            if not winner.receiveAutoShare and candidate.receiveAutoShare and winner.status != "connected":
+                winner.receiveAutoShare = True
+            loser_to_winner[candidate.id] = winner
+            merged_records.append({
+                "removedId": candidate.id,
+                "keptId": winner.id,
+                "email": candidate.email,
+                "canonicalEmail": key,
+                "removedStatus": candidate.status,
+                "keptStatus": winner.status,
+            })
+
+    deduped: list[AccountProfile] = []
+    winners_by_key = {}
+    for idx, prof in enumerate(profiles):
+        key = normalize_email_key(prof.email)
+        if not key:
+            deduped.append(prof)
+        elif idx in winner_indices:
+            # Replace with enriched winner if this group had duplicates
+            winner_obj = next(
+                (w for w in loser_to_winner.values() if normalize_email_key(w.email) == key),
+                prof,
+            )
+            if key not in winners_by_key:
+                winners_by_key[key] = winner_obj
+                deduped.append(winner_obj)
+
+    return deduped, merged_records
+
 
 def _atomic_write_json(file_path: Path, data: Any):
     """
@@ -38,18 +144,16 @@ def _atomic_write_json(file_path: Path, data: Any):
                 time.sleep(0.05 * (attempt + 1))
     except Exception:
         if os.path.exists(temp_path):
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(temp_path)
-            except Exception:
-                pass
         raise
 
-def _load_profiles_sync() -> List[AccountProfile]:
+def _load_profiles_sync() -> list[AccountProfile]:
     if not PROFILES_FILE.exists():
         _atomic_write_json(PROFILES_FILE, DEFAULT_SEED_PROFILES)
         return [AccountProfile(**p) for p in DEFAULT_SEED_PROFILES]
     try:
-        with open(PROFILES_FILE, "r", encoding="utf-8") as f:
+        with open(PROFILES_FILE, encoding="utf-8") as f:
             data = json.load(f)
             return [AccountProfile(**p) for p in data]
     except Exception as e:
@@ -57,36 +161,36 @@ def _load_profiles_sync() -> List[AccountProfile]:
         # If file is empty or corrupted, only then fallback to seed
         if PROFILES_FILE.stat().st_size == 0:
             return [AccountProfile(**p) for p in DEFAULT_SEED_PROFILES]
-        raise RuntimeError(f"Could not load profiles from {PROFILES_FILE}: {e}")
+        raise RuntimeError(f"Could not load profiles from {PROFILES_FILE}: {e}") from e
 
-def _save_profiles_sync(profiles: List[AccountProfile]):
+def _save_profiles_sync(profiles: list[AccountProfile]):
     _atomic_write_json(PROFILES_FILE, [p.model_dump() for p in profiles])
 
-def _load_cache_sync() -> List[Notebook]:
+def _load_cache_sync() -> list[Notebook]:
     if not CACHE_FILE.exists():
         return []
     try:
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+        with open(CACHE_FILE, encoding="utf-8") as f:
             data = json.load(f)
             return [Notebook(**n) for n in data]
     except Exception:
         return []
 
-def _save_cache_sync(notebooks: List[Notebook]):
+def _save_cache_sync(notebooks: list[Notebook]):
     _atomic_write_json(CACHE_FILE, [n.model_dump() for n in notebooks])
 
-async def get_profiles() -> List[AccountProfile]:
+async def get_profiles() -> list[AccountProfile]:
     async with _lock:
         return await asyncio.to_thread(_load_profiles_sync)
 
-async def get_profile(profile_id: str) -> Optional[AccountProfile]:
+async def get_profile(profile_id: str) -> AccountProfile | None:
     profiles = await get_profiles()
     for p in profiles:
         if p.id == profile_id:
             return p
     return None
 
-async def save_profile(profile: AccountProfile, old_id: Optional[str] = None):
+async def save_profile(profile: AccountProfile, old_id: str | None = None):
     async with _lock:
         profiles = await asyncio.to_thread(_load_profiles_sync)
         # If this is set as default pro, unset others
@@ -116,11 +220,11 @@ async def delete_profile(profile_id: str) -> bool:
             return True
         return False
 
-async def get_cached_notebooks() -> List[Notebook]:
+async def get_cached_notebooks() -> list[Notebook]:
     async with _lock:
         return await asyncio.to_thread(_load_cache_sync)
 
-async def save_cached_notebooks(notebooks: List[Notebook]):
+async def save_cached_notebooks(notebooks: list[Notebook]):
     async with _lock:
         await asyncio.to_thread(_save_cache_sync, notebooks)
 
@@ -136,25 +240,25 @@ async def delete_cached_notebook(notebook_id: str) -> int:
 
 # ----------------- FOLDER MAPPINGS PERSISTENCE -----------------
 
-def _load_folder_mappings_sync() -> Dict[str, FolderMapping]:
+def _load_folder_mappings_sync() -> dict[str, FolderMapping]:
     if not FOLDER_MAPPINGS_FILE.exists():
         return {}
     try:
-        with open(FOLDER_MAPPINGS_FILE, "r", encoding="utf-8") as f:
+        with open(FOLDER_MAPPINGS_FILE, encoding="utf-8") as f:
             data = json.load(f)
             return {k: FolderMapping(**v) for k, v in data.items()}
     except Exception as e:
         logger.error(f"Failed to read folder mappings from {FOLDER_MAPPINGS_FILE}: {e}")
         return {}
 
-def _save_folder_mappings_sync(mappings: Dict[str, FolderMapping]):
+def _save_folder_mappings_sync(mappings: dict[str, FolderMapping]):
     _atomic_write_json(FOLDER_MAPPINGS_FILE, {k: v.model_dump() for k, v in mappings.items()})
 
-async def get_folder_mappings() -> Dict[str, FolderMapping]:
+async def get_folder_mappings() -> dict[str, FolderMapping]:
     async with _lock:
         return await asyncio.to_thread(_load_folder_mappings_sync)
 
-async def get_folder_mapping(notebook_id: str) -> Optional[FolderMapping]:
+async def get_folder_mapping(notebook_id: str) -> FolderMapping | None:
     mappings = await get_folder_mappings()
     return mappings.get(notebook_id)
 
@@ -175,21 +279,21 @@ async def delete_folder_mapping(notebook_id: str) -> bool:
 
 # ----------------- SHARING RULES PERSISTENCE -----------------
 
-def _load_sharing_rules_sync() -> Dict[str, NotebookSharingRule]:
+def _load_sharing_rules_sync() -> dict[str, NotebookSharingRule]:
     if not SHARING_RULES_FILE.exists():
         return {}
     try:
-        with open(SHARING_RULES_FILE, "r", encoding="utf-8") as f:
+        with open(SHARING_RULES_FILE, encoding="utf-8") as f:
             data = json.load(f)
             return {k: NotebookSharingRule(**v) for k, v in data.items()}
     except Exception as e:
         logger.error(f"Failed to read sharing rules from {SHARING_RULES_FILE}: {e}")
         return {}
 
-def _save_sharing_rules_sync(rules: Dict[str, NotebookSharingRule]):
+def _save_sharing_rules_sync(rules: dict[str, NotebookSharingRule]):
     _atomic_write_json(SHARING_RULES_FILE, {k: v.model_dump() for k, v in rules.items()})
 
-async def get_sharing_rules() -> Dict[str, NotebookSharingRule]:
+async def get_sharing_rules() -> dict[str, NotebookSharingRule]:
     async with _lock:
         return await asyncio.to_thread(_load_sharing_rules_sync)
 
@@ -222,4 +326,76 @@ async def remove_profile_from_sharing_rules(profile_id: str) -> int:
         if updated > 0:
             await asyncio.to_thread(_save_sharing_rules_sync, rules)
         return updated
+
+
+async def deduplicate_stored_profiles() -> dict[str, Any]:
+    """Deduplicate persisted profiles by canonical email and remap cached notebooks/rules."""
+    async with _lock:
+        def _run_dedup() -> dict[str, Any]:
+            profiles = _load_profiles_sync()
+            total_before = len(profiles)
+            deduped, merged_records = deduplicate_profiles(profiles)
+            if not merged_records:
+                return {
+                    "changed": False,
+                    "totalBefore": total_before,
+                    "totalAfter": total_before,
+                    "removedCount": 0,
+                    "merged": [],
+                }
+
+            _save_profiles_sync(deduped)
+
+            winner_by_id = {p.id: p for p in deduped}
+            remap = {rec["removedId"]: rec["keptId"] for rec in merged_records}
+
+            notebooks = _load_cache_sync()
+            seen_pairs: set[tuple[str, str]] = set()
+            updated_notebooks: list[Notebook] = []
+            for nb in notebooks:
+                target_pid = remap.get(nb.profileId, nb.profileId)
+                pair = (nb.id, target_pid)
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                if target_pid != nb.profileId and target_pid in winner_by_id:
+                    winner = winner_by_id[target_pid]
+                    updated_nb = nb.model_copy(update={
+                        "profileId": winner.id,
+                        "profileName": winner.displayName,
+                        "profileEmail": winner.email,
+                        "tier": winner.tier,
+                        "color": winner.color,
+                    })
+                    updated_notebooks.append(updated_nb)
+                else:
+                    updated_notebooks.append(nb)
+
+            if CACHE_FILE.exists() or updated_notebooks:
+                _save_cache_sync(updated_notebooks)
+
+            removed_ids = set(remap.keys())
+            rules = _load_sharing_rules_sync()
+            rules_changed = False
+            for nb_id in list(rules.keys()):
+                rule = rules[nb_id]
+                filtered = [pid for pid in rule.exclude_profiles if pid not in removed_ids]
+                if len(filtered) != len(rule.exclude_profiles):
+                    rule.exclude_profiles = filtered
+                    rules_changed = True
+                    if not rule.exclude_all and not rule.exclude_profiles:
+                        del rules[nb_id]
+            if rules_changed:
+                _save_sharing_rules_sync(rules)
+
+            return {
+                "changed": True,
+                "totalBefore": total_before,
+                "totalAfter": len(deduped),
+                "removedCount": len(merged_records),
+                "merged": merged_records,
+            }
+
+        return await asyncio.to_thread(_run_dedup)
+
 

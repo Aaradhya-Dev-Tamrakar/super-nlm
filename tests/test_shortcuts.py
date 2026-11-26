@@ -1,5 +1,5 @@
-import re
 from pathlib import Path
+
 
 def test_shortcuts_in_html():
     html_path = Path(__file__).resolve().parent.parent / "frontend" / "index.html"

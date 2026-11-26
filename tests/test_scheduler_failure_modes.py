@@ -1,6 +1,6 @@
 import asyncio
+import contextlib
 import json
-from pathlib import Path
 
 import backend.scheduler as scheduler_module
 from backend.models import ScheduledJob, SingleScheduleRequest
@@ -74,10 +74,8 @@ def test_interrupted_execution_requeues_job_and_releases_profile(monkeypatch):
         task = asyncio.create_task(scheduler._execute_job(job, profile))
         await entered.wait()
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
         assert job.status == "queued"
         assert job.started_at is None

@@ -1,49 +1,88 @@
-import logging
 import asyncio
+import logging
+import re
+import time
 from contextlib import asynccontextmanager
-from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Security, Depends
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, Response
+from typing import Any
+
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from backend.auth import verify_api_access
-from backend.config import FRONTEND_DIR, NLM_EXECUTABLE, DOWNLOADS_DIR, SUPER_NLM_ALLOWED_ORIGINS
-from backend.models import (
-    AccountProfile, ProfileCreateRequest, ProfileUpdateRequest,
-    Notebook, QueryRequest, CrossQueryRequest, detect_course_info,
-    BatchShareRequest, CalendarAgendaResponse,
-    FleetUsageResponse, ProfileUsage,
-    ScheduledJob, SingleScheduleRequest, BatchScheduleRequest,
-    BatchScheduleResponse, SchedulerStatusResponse,
-    FolderMapping, FolderMappingCreateRequest, FolderStatusResponse,
-    FolderSyncRequest, FolderSyncResponse, NotebookSharingRule
-)
 from backend.calendar_service import calendar_service
-from backend.storage import (
-    get_profiles, get_profile, save_profile, delete_profile,
-    get_cached_notebooks, save_cached_notebooks, delete_cached_notebook,
-    get_folder_mappings, get_folder_mapping, save_folder_mapping, delete_folder_mapping,
-    get_sharing_rules, get_notebook_sharing_rule, save_notebook_sharing_rule,
-    remove_profile_from_sharing_rules
+from backend.config import (
+    DOWNLOADS_DIR,
+    FRONTEND_DIR,
+    SUPER_NLM_ALLOWED_ORIGINS,
 )
 from backend.drive_sync_service import drive_sync_service, normalize_folder_target
+from backend.fleet_api import router as fleet_router
+from backend.models import (
+    AccountProfile,
+    BatchScheduleRequest,
+    BatchScheduleResponse,
+    BatchShareRequest,
+    CalendarAgendaResponse,
+    CrossQueryRequest,
+    FleetUsageResponse,
+    FolderMapping,
+    FolderMappingCreateRequest,
+    FolderStatusResponse,
+    FolderSyncRequest,
+    FolderSyncResponse,
+    Notebook,
+    NotebookSharingRule,
+    ProfileCreateRequest,
+    ProfileUpdateRequest,
+    ProfileUsage,
+    QueryRequest,
+    ScheduledJob,
+    SchedulerStatusResponse,
+    SingleScheduleRequest,
+    detect_course_info,
+)
 from backend.nlm_client import (
-    get_cli_profiles, fetch_all_notebooks_concurrently,
-    fetch_notebooks_for_profile, query_notebook,
+    auto_share_study_notebooks,
+    batch_share_notebooks_to_accounts,
+    check_profile_auth_status,
+    delete_cli_profile,
+    ensure_notebook_shared,
+    fetch_all_notebooks_concurrently,
+    fetch_fleet_usage,
+    fetch_notebooks_for_profile,
+    fetch_profile_usage,
+    get_cli_profiles,
+    launch_cli_login,
     query_notebook_with_pro_fallback,
-    synthesize_cross_notebook, launch_cli_login, delete_cli_profile,
     rename_cli_profile,
-    run_nlm_cmd, ensure_notebook_shared, batch_share_notebooks_to_accounts,
-    auto_share_study_notebooks, unshare_account_from_fleet,
-    fetch_profile_usage, fetch_fleet_usage,
-    check_profile_auth_status
+    synthesize_cross_notebook,
+    unshare_account_from_fleet,
+)
+from backend.notebook_owners import enrich_notebook_owners
+from backend.scheduler import scheduler
+from backend.storage import (
+    deduplicate_stored_profiles,
+    delete_cached_notebook,
+    delete_folder_mapping,
+    delete_profile,
+    get_cached_notebooks,
+    get_folder_mappings,
+    get_notebook_sharing_rule,
+    get_profile,
+    get_profiles,
+    get_sharing_rules,
+    normalize_email_key,
+    remove_profile_from_sharing_rules,
+    save_cached_notebooks,
+    save_folder_mapping,
+    save_notebook_sharing_rule,
+    save_profile,
 )
 from mcp_server.rotator import rotator
-from backend.scheduler import scheduler
-from backend.notebook_owners import enrich_notebook_owners
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("super_nlm")
@@ -60,6 +99,13 @@ async def _startup_background_sync():
                 await save_profile(p)
     except Exception as e:
         logger.error(f"Error during background profile reconciliation: {e}")
+
+    try:
+        dedup_res = await deduplicate_stored_profiles()
+        if dedup_res.get("changed"):
+            logger.info("Startup deduplication merged %d duplicate profile(s).", dedup_res["removedCount"])
+    except Exception as e:
+        logger.error(f"Error during startup profile deduplication: {e}")
 
     try:
         await sync_all_notebooks(auto_share_study=True)
@@ -84,10 +130,8 @@ async def lifespan(app: FastAPI):
     await scheduler.stop()
 
 app = FastAPI(title="Super-Gemini Notebook", lifespan=lifespan)
-from backend.fleet_api import router as fleet_router
 app.include_router(fleet_router)
 
-import re
 
 def validate_profile_id(pid: str) -> str:
     cleaned = pid.strip().lower().replace(" ", "-")
@@ -110,7 +154,7 @@ def _invalidate_fleet_usage_cache() -> None:
     _fleet_usage_cache["timestamp"] = 0.0
 
 
-async def sync_profile_notebooks(profile: AccountProfile, auto_share_study: bool = True) -> List[Notebook]:
+async def sync_profile_notebooks(profile: AccountProfile, auto_share_study: bool = True) -> list[Notebook]:
     """Fetch, enrich, and merge notebooks for a single profile into the cached store."""
     profile_notebooks = await fetch_notebooks_for_profile(profile)
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -142,7 +186,7 @@ async def sync_profile_notebooks(profile: AccountProfile, auto_share_study: bool
     return [n for n in merged if n.profileId == profile.id]
 
 
-async def sync_all_notebooks(auto_share_study: bool = True) -> List[Notebook]:
+async def sync_all_notebooks(auto_share_study: bool = True) -> list[Notebook]:
     """Helper to sync all notebooks across all profiles concurrently and auto-share study courses."""
     profiles = await get_profiles()
     cached = await get_cached_notebooks()
@@ -169,7 +213,7 @@ async def sync_all_notebooks(auto_share_study: bool = True) -> List[Notebook]:
 
 # ----------------- PROFILES API -----------------
 
-@app.get("/api/profiles", response_model=List[AccountProfile])
+@app.get("/api/profiles", response_model=list[AccountProfile])
 async def list_profiles(_auth: bool = Depends(verify_api_access)):
     profiles = await get_profiles()
     if any(not p.email for p in profiles):
@@ -193,7 +237,7 @@ async def _watch_cli_login(profile_id: str, proc) -> None:
         await check_profile_auth_status(profile)
         if not profile.email:
             cli_profiles = await get_cli_profiles()
-            if profile.id in cli_profiles and cli_profiles[profile.id]:
+            if cli_profiles.get(profile.id):
                 profile.email = cli_profiles[profile.id]
         await save_profile(profile)
         _invalidate_fleet_usage_cache()
@@ -212,10 +256,21 @@ async def create_profile(req: ProfileCreateRequest, launch_login: bool = True, _
     if existing:
         raise HTTPException(status_code=400, detail=f"Profile '{clean_id}' already exists")
 
+    email_clean = req.email.strip() if req.email else ""
+    email_key = normalize_email_key(email_clean)
+    if email_key:
+        all_profiles = await get_profiles()
+        dup = next((p for p in all_profiles if normalize_email_key(p.email) == email_key), None)
+        if dup:
+            raise HTTPException(
+                status_code=409,
+                detail=f"An account for '{email_clean}' already exists under profile '{dup.id}'.",
+            )
+
     profile = AccountProfile(
         id=clean_id,
         displayName=req.displayName.strip(),
-        email=req.email.strip() if req.email else "",
+        email=email_clean,
         tier=req.tier,
         color=req.color or "#6366f1",
         icon=req.icon or "book-open",
@@ -268,7 +323,20 @@ async def update_profile(profile_id: str, req: ProfileUpdateRequest, _auth: bool
     if req.displayName is not None:
         profile.displayName = req.displayName.strip()
     if req.email is not None:
-        profile.email = req.email.strip()
+        next_email = req.email.strip()
+        next_key = normalize_email_key(next_email)
+        if next_key:
+            all_profiles = await get_profiles()
+            dup = next(
+                (p for p in all_profiles if p.id not in {clean_id, target_id} and normalize_email_key(p.email) == next_key),
+                None,
+            )
+            if dup:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"An account for '{next_email}' already exists under profile '{dup.id}'.",
+                )
+        profile.email = next_email
     if req.tier is not None:
         profile.tier = req.tier
         if req.tier == "standard" and req.isDefaultPro is None and profile.isDefaultPro:
@@ -424,7 +492,7 @@ async def reconcile_profiles(_auth: bool = Depends(verify_api_access)):
     """
     cli_profiles, profiles = await asyncio.gather(get_cli_profiles(), get_profiles())
     existing_by_id = {p.id: p for p in profiles}
-    newly_connected: List[AccountProfile] = []
+    newly_connected: list[AccountProfile] = []
     changed = False
 
     for p in profiles:
@@ -446,9 +514,17 @@ async def reconcile_profiles(_auth: bool = Depends(verify_api_access)):
             elif p_changed:
                 await save_profile(p)
 
-    # Discover any brand-new CLI profiles not yet registered in Super-NLM
+    # Discover any brand-new CLI profiles not yet registered in Super-NLM (deduped by canonical email)
+    existing_by_email = {
+        normalize_email_key(p.email): p
+        for p in profiles
+        if normalize_email_key(p.email)
+    }
     for cli_id, cli_email in cli_profiles.items():
         if cli_id not in existing_by_id:
+            cli_email_key = normalize_email_key(cli_email or "")
+            if cli_email_key and cli_email_key in existing_by_email:
+                continue
             try:
                 clean_id = validate_profile_id(cli_id)
             except HTTPException:
@@ -465,9 +541,18 @@ async def reconcile_profiles(_auth: bool = Depends(verify_api_access)):
             )
             await check_profile_auth_status(new_profile)
             if new_profile.status == "connected":
+                new_key = normalize_email_key(new_profile.email)
+                if new_key and new_key in existing_by_email:
+                    continue
                 await save_profile(new_profile)
+                if new_key:
+                    existing_by_email[new_key] = new_profile
                 newly_connected.append(new_profile)
                 changed = True
+
+    dedup_summary = await deduplicate_stored_profiles()
+    if dedup_summary.get("changed"):
+        changed = True
 
     if newly_connected:
         _invalidate_fleet_usage_cache()
@@ -482,8 +567,18 @@ async def reconcile_profiles(_auth: bool = Depends(verify_api_access)):
     return {
         "changed": changed,
         "newly_connected": [p.id for p in newly_connected],
+        "deduplicated": dedup_summary,
         "profiles": await get_profiles(),
     }
+
+
+@app.post("/api/profiles/deduplicate")
+async def deduplicate_profiles_endpoint(_auth: bool = Depends(verify_api_access)):
+    """Deduplicates stored profiles using normalized email (Gmail-aware) as primary key."""
+    summary = await deduplicate_stored_profiles()
+    if summary.get("changed"):
+        _invalidate_fleet_usage_cache()
+    return summary
 
 
 @app.post("/api/profiles/{profile_id}/check-auth")
@@ -523,14 +618,11 @@ async def sync_single_profile(profile_id: str, _auth: bool = Depends(verify_api_
             "notebooks": synced,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to sync profile '{clean_id}': {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to sync profile '{clean_id}': {e}") from e
 
 # ----------------- USAGE & QUOTA LIMITS API -----------------
 
-import time
-from typing import Dict, Any
-
-_fleet_usage_cache: Dict[str, Any] = {
+_fleet_usage_cache: dict[str, Any] = {
     "data": None,
     "timestamp": 0.0
 }
@@ -578,12 +670,12 @@ async def get_single_profile_usage(profile_id: str, _auth: bool = Depends(verify
 
 # ----------------- NOTEBOOKS API -----------------
 
-@app.get("/api/notebooks", response_model=List[Notebook])
+@app.get("/api/notebooks", response_model=list[Notebook])
 async def list_notebooks(
-    search: Optional[str] = Query(None),
-    profile_id: Optional[str] = Query(None),
-    tier: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
+    search: str | None = Query(None),
+    profile_id: str | None = Query(None),
+    tier: str | None = Query(None),
+    category: str | None = Query(None),
     _auth: bool = Depends(verify_api_access)
 ):
     notebooks = await get_cached_notebooks()
@@ -617,7 +709,7 @@ async def list_notebooks(
 
     return notebooks
 
-@app.post("/api/notebooks/sync", response_model=List[Notebook])
+@app.post("/api/notebooks/sync", response_model=list[Notebook])
 async def sync_notebooks(_auth: bool = Depends(verify_api_access)):
     notebooks = await sync_all_notebooks()
     return notebooks
@@ -648,7 +740,7 @@ async def auto_share_study_endpoint(background_tasks: BackgroundTasks, role: str
     background_tasks.add_task(sync_all_notebooks, False)
     return res
 
-@app.get("/api/sharing-rules", response_model=Dict[str, NotebookSharingRule])
+@app.get("/api/sharing-rules", response_model=dict[str, NotebookSharingRule])
 async def list_sharing_rules(_auth: bool = Depends(verify_api_access)):
     """Returns per-notebook auto-share exclusion rules."""
     return await get_sharing_rules()
@@ -684,7 +776,7 @@ async def delete_notebook_from_cache(notebook_id: str, _auth: bool = Depends(ver
 
 # ----------------- HYBRID FOLDER MAPPING & SYNC API -----------------
 
-@app.get("/api/folders/mappings", response_model=Dict[str, FolderMapping])
+@app.get("/api/folders/mappings", response_model=dict[str, FolderMapping])
 async def list_all_folder_mappings(_auth: bool = Depends(verify_api_access)):
     """Returns all active folder-to-notebook mappings for dashboard badge rendering."""
     return await get_folder_mappings()
@@ -714,7 +806,7 @@ async def set_notebook_folder_mapping(notebook_id: str, req: FolderMappingCreate
         display_name=req.display_name.strip() if req.display_name else Path(target).name,
         auto_sync=bool(req.auto_sync),
         recursive=bool(req.recursive),
-        last_scanned=datetime.now().isoformat()
+        last_scanned=datetime.now(timezone.utc).isoformat()
     )
     await save_folder_mapping(mapping)
     return await drive_sync_service.get_folder_status(notebook_id)
@@ -833,11 +925,11 @@ async def get_fleet_metrics(_auth: bool = Depends(verify_api_access)):
 async def ask_notebook_rotated(
     notebook_id: str = Query(..., description="Target notebook UUID"),
     question: str = Query(..., description="Question to ask"),
-    conversation_id: Optional[str] = Query(None, description="Optional conversation ID for multi-turn chat"),
-    source_ids: Optional[str] = Query(None, description="Optional comma-separated source IDs"),
+    conversation_id: str | None = Query(None, description="Optional conversation ID for multi-turn chat"),
+    source_ids: str | None = Query(None, description="Optional comma-separated source IDs"),
     timeout: int = Query(120, description="Query timeout in seconds"),
     new_conversation: bool = Query(False, description="Start fresh conversation"),
-    use_pro: Optional[bool] = Query(None, description="Directly route to Pro account without rotation"),
+    use_pro: bool | None = Query(None, description="Directly route to Pro account without rotation"),
     _auth: bool = Depends(verify_api_access)
 ):
     """
@@ -895,8 +987,8 @@ async def schedule_single_creation(req: SingleScheduleRequest, _auth: bool = Dep
     nb_title = next((n.title for n in cached if n.id == req.notebook_id), f"Notebook {req.notebook_id[:8]}")
     return await scheduler.schedule_job(req, nb_title)
 
-@app.get("/api/scheduler/jobs", response_model=List[ScheduledJob])
-async def list_scheduled_jobs(status: Optional[str] = Query(None, description="Filter by status (queued, scheduled, in_progress, completed, failed, download_failed, cancelled)"), _auth: bool = Depends(verify_api_access)):
+@app.get("/api/scheduler/jobs", response_model=list[ScheduledJob])
+async def list_scheduled_jobs(status: str | None = Query(None, description="Filter by status (queued, scheduled, in_progress, completed, failed, download_failed, cancelled)"), _auth: bool = Depends(verify_api_access)):
     """
     Lists all creation jobs with optional status filter.
     """
@@ -944,7 +1036,12 @@ async def download_file(filename: str, _auth: bool = Depends(verify_api_access))
     """
     Serves a downloaded studio artifact file from the local downloads/ directory.
     """
-    file_path = DOWNLOADS_DIR / filename
+    if not filename or Path(filename).name != filename or filename in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    base_dir = DOWNLOADS_DIR.resolve()
+    file_path = (base_dir / filename).resolve()
+    if not file_path.is_relative_to(base_dir):
+        raise HTTPException(status_code=400, detail="Invalid file path.")
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail=f"File '{filename}' not found in downloads.")
     return FileResponse(file_path, filename=filename)

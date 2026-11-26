@@ -113,7 +113,7 @@ async def open_folder(batch_id: str, request: Request):
         raise HTTPException(400, "Open folder is available on the local Super-NLM host")
     batch = downloads.get(batch_id)
     path = Path(batch["output_root"])
-    if not path.is_dir():
+    if not await asyncio.to_thread(path.is_dir):
         raise HTTPException(400, "The download folder has not been created yet")
     if os.name == "nt":
         os.startfile(str(path))

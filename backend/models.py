@@ -1,6 +1,9 @@
-from typing import Any, Dict, List, Literal, Optional
+import re
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+from backend.config import load_user_catalog
 
 
 class AccountProfile(BaseModel):
@@ -14,74 +17,49 @@ class AccountProfile(BaseModel):
     receiveAutoShare: bool = Field(default=True, description="Whether this profile automatically receives auto-shared study/course notebooks")
     status: Literal["connected", "expired", "not_logged_in", "checking"] = "checking"
     notebookCount: int = Field(default=0, description="Total notebooks found in this account")
-    lastError: Optional[str] = Field(default=None, description="Last error encountered when syncing or querying this account")
-    lastAuthCheck: Optional[str] = Field(default=None, description="ISO timestamp of last authentication check")
+    lastError: str | None = Field(default=None, description="Last error encountered when syncing or querying this account")
+    lastAuthCheck: str | None = Field(default=None, description="ISO timestamp of last authentication check")
 
 class ProfileCreateRequest(BaseModel):
     id: str = Field(..., min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_\-\s]+$', description="Alphanumeric slug or name")
     displayName: str
-    email: Optional[str] = ""
+    email: str | None = ""
     tier: Literal["pro", "standard"] = "standard"
-    color: Optional[str] = "#6366f1"
-    icon: Optional[str] = "book-open"
-    isDefaultPro: Optional[bool] = False
-    receiveAutoShare: Optional[bool] = True
+    color: str | None = "#6366f1"
+    icon: str | None = "book-open"
+    isDefaultPro: bool | None = False
+    receiveAutoShare: bool | None = True
 
 class ProfileUpdateRequest(BaseModel):
-    newId: Optional[str] = None
-    displayName: Optional[str] = None
-    email: Optional[str] = None
-    tier: Optional[Literal["pro", "standard"]] = None
-    color: Optional[str] = None
-    icon: Optional[str] = None
-    isDefaultPro: Optional[bool] = None
-    receiveAutoShare: Optional[bool] = None
+    newId: str | None = None
+    displayName: str | None = None
+    email: str | None = None
+    tier: Literal["pro", "standard"] | None = None
+    color: str | None = None
+    icon: str | None = None
+    isDefaultPro: bool | None = None
+    receiveAutoShare: bool | None = None
 
 class NotebookSharingRule(BaseModel):
     notebook_id: str
     exclude_all: bool = Field(default=False, description="Skip automatic study-course sharing for this notebook across all accounts")
-    exclude_profiles: List[str] = Field(default_factory=list, description="Profile IDs excluded from automatic sharing for this notebook")
+    exclude_profiles: list[str] = Field(default_factory=list, description="Profile IDs excluded from automatic sharing for this notebook")
 
-import re
+_USER_CATALOG = load_user_catalog()
+_PROJECT_NOTEBOOKS = _USER_CATALOG.get("project_notebooks", {})
 
-# Known explicit course notebook IDs
-COURSE_NOTEBOOK_IDS = {
-    "96a12a04-073e-43ca-9f6d-ca0048d63486",  # CT653 - Artificial Intelligence (test mock / canonical)
-    "c4a8af46-115b-4dff-81bf-5a22db2fbc64",  # CT653 - Artificial Intelligence (live cache)
-    "c627a211-552e-496b-9ebb-42d22ac05a95",  # EX751 - Wireless Communications
-    "66c34505-a60d-4a24-98df-446d8df12a24",  # CT704 - Digital Signal Analysis and Processing
-    "c3c8ecd4-2884-42a1-aa49-c4de168c1ec7",  # EX752 - RF and Microwave Engineering
-    "94cd4e14-802d-4231-b27d-6a4f4a2e6182",  # ME708 - Organization and Management
-    "56cdad30-13d3-4621-a0b7-8f841858476b",  # EX725 04 - Aeronautical Telecommunication - Elective I
-}
+# Known explicit course notebook IDs (loaded from user-local data/user_catalog.json)
+COURSE_NOTEBOOK_IDS = set(_USER_CATALOG.get("course_notebook_ids", []))
 
-# Canonical primary project notebook IDs
-BIASAPERTURE_NOTEBOOK_ID = "99bee3c6-07ed-4ff0-8ac8-0027b18ad06a"
-SPARK_NOTEBOOK_ID = "2c00f5a4-98dc-4783-96d1-3682fa3cb516"
-PERSONAL_NOTEBOOK_ID = "95a79d26-2f87-42cd-8cb9-8361a1e56059"
-AERO_NOTEBOOK_ID = "56cdad30-13d3-4621-a0b7-8f841858476b"
-ELECTIVE_I_NOTEBOOK_ID = "56cdad30-13d3-4621-a0b7-8f841858476b"
+# Canonical primary project notebook IDs (optional local overrides)
+BIASAPERTURE_NOTEBOOK_ID = _PROJECT_NOTEBOOKS.get("biasaperture", "")
+SPARK_NOTEBOOK_ID = _PROJECT_NOTEBOOKS.get("spark", "")
+PERSONAL_NOTEBOOK_ID = _PROJECT_NOTEBOOKS.get("personal", "")
+AERO_NOTEBOOK_ID = _PROJECT_NOTEBOOKS.get("aero", "")
+ELECTIVE_I_NOTEBOOK_ID = _PROJECT_NOTEBOOKS.get("elective_i", "")
 
 # Canonical default course notebook mapping (Course Code / Acronym -> Canonical Notebook ID)
-DEFAULT_COURSE_NOTEBOOK_MAP = {
-    "CT653": "96a12a04-073e-43ca-9f6d-ca0048d63486",  # Artificial Intelligence
-    "AI": "96a12a04-073e-43ca-9f6d-ca0048d63486",
-    "EX751": "c627a211-552e-496b-9ebb-42d22ac05a95",  # Wireless Communications
-    "WC": "c627a211-552e-496b-9ebb-42d22ac05a95",
-    "CT704": "66c34505-a60d-4a24-98df-446d8df12a24",  # Digital Signal Analysis and Processing (Default)
-    "DSAP": "66c34505-a60d-4a24-98df-446d8df12a24",
-    "EX752": "c3c8ecd4-2884-42a1-aa49-c4de168c1ec7",  # RF and Microwave Engineering
-    "RF": "c3c8ecd4-2884-42a1-aa49-c4de168c1ec7",
-    "ME708": "94cd4e14-802d-4231-b27d-6a4f4a2e6182",  # Organization and Management
-    "OM": "94cd4e14-802d-4231-b27d-6a4f4a2e6182",
-    "O&M": "94cd4e14-802d-4231-b27d-6a4f4a2e6182",
-    "EX725": "56cdad30-13d3-4621-a0b7-8f841858476b",  # Aeronautical Telecommunication
-    "EX725 04": "56cdad30-13d3-4621-a0b7-8f841858476b",
-    "EX72504": "56cdad30-13d3-4621-a0b7-8f841858476b",
-    "AERO": "56cdad30-13d3-4621-a0b7-8f841858476b",
-    "ELECTIVE I": "56cdad30-13d3-4621-a0b7-8f841858476b",
-    "ELECTIVE 1": "56cdad30-13d3-4621-a0b7-8f841858476b",
-}
+DEFAULT_COURSE_NOTEBOOK_MAP = dict(_USER_CATALOG.get("default_course_notebook_map", {}))
 
 # Regex pattern matching academic semester course codes e.g. "CT653", "EX751", "ME708", "EX725 04", "CT704"
 COURSE_CODE_REGEX = re.compile(r'^([A-Z]{2,4}\s*\d{3}(?:\s*\d{2})?)\s*[-:]\s*(.+)', re.IGNORECASE)
@@ -103,20 +81,20 @@ def detect_course_info(title: str, notebook_id: str):
     return False, None, "general"
 
 class Notebook(BaseModel):
-    ownerEmail: Optional[str] = None
-    sharedWith: Optional[List[Dict[str, Any]]] = None
+    ownerEmail: str | None = None
+    sharedWith: list[dict[str, Any]] | None = None
     id: str
     title: str
     source_count: int = 0
-    updated_at: Optional[str] = None
+    updated_at: str | None = None
     profileId: str
     profileName: str
     profileEmail: str
     tier: str = "standard"
     color: str = "#6366f1"
-    category: Optional[str] = "general"
-    is_study: Optional[bool] = False
-    course_code: Optional[str] = None
+    category: str | None = "general"
+    is_study: bool | None = False
+    course_code: str | None = None
 
     def model_post_init(self, __context):
         if not self.is_study or not self.course_code:
@@ -130,17 +108,17 @@ class QueryRequest(BaseModel):
     notebookId: str
     profileId: str
     question: str
-    conversationId: Optional[str] = None
+    conversationId: str | None = None
 
 class NotebookRef(BaseModel):
     notebookId: str
     profileId: str
-    title: Optional[str] = None
+    title: str | None = None
 
 class CrossQueryRequest(BaseModel):
-    notebooks: List[NotebookRef]
+    notebooks: list[NotebookRef]
     question: str
-    synthesizerProfileId: Optional[str] = None
+    synthesizerProfileId: str | None = None
 
 class StudioRequest(BaseModel):
     notebookId: str
@@ -148,8 +126,8 @@ class StudioRequest(BaseModel):
     artifactType: Literal["audio", "video", "slides", "mindmap", "report", "quiz", "flashcards"]
 
 class BatchShareRequest(BaseModel):
-    notebookIds: List[str] = Field(..., min_length=1, description="List of notebook UUIDs to share")
-    targetProfileIds: Optional[List[str]] = Field(default=None, description="Target profile IDs. If omitted, shares with all other registered accounts.")
+    notebookIds: list[str] = Field(..., min_length=1, description="List of notebook UUIDs to share")
+    targetProfileIds: list[str] | None = Field(default=None, description="Target profile IDs. If omitted, shares with all other registered accounts.")
     role: Literal["editor", "viewer"] = Field(default="editor", description="Permission role to grant")
     autoSync: bool = Field(default=True, description="Whether to trigger notebook cache sync after sharing")
 
@@ -159,9 +137,9 @@ class MatchedNotebookSummary(BaseModel):
     id: str
     title: str
     profile_id: str
-    course_code: Optional[str] = None
+    course_code: str | None = None
     color: str = "#6366f1"
-    match_reason: Optional[str] = None
+    match_reason: str | None = None
 
 class CalendarAgendaEvent(BaseModel):
     id: str
@@ -169,25 +147,25 @@ class CalendarAgendaEvent(BaseModel):
     start: str
     end: str
     all_day: bool = False
-    location: Optional[str] = ""
-    description: Optional[str] = ""
+    location: str | None = ""
+    description: str | None = ""
     is_today: bool = False
     is_upcoming: bool = False
     days_until: int = 0
     time_label: str = ""
     date_label: str = ""
     event_type: Literal["exam", "lab", "class", "general"] = "general"
-    matched_notebook: Optional[MatchedNotebookSummary] = None
+    matched_notebook: MatchedNotebookSummary | None = None
 
 class CalendarAgendaResponse(BaseModel):
     configured: bool
-    calendar_email: Optional[str] = ""
-    last_synced: Optional[str] = None
+    calendar_email: str | None = ""
+    last_synced: str | None = None
     today_count: int = 0
     upcoming_count: int = 0
     matched_count: int = 0
-    today_events: List[CalendarAgendaEvent] = []
-    upcoming_events: List[CalendarAgendaEvent] = []
+    today_events: list[CalendarAgendaEvent] = []
+    upcoming_events: list[CalendarAgendaEvent] = []
 
 # ----------------- USAGE & QUOTA LIMITS MODELS -----------------
 
@@ -195,7 +173,7 @@ class UsageWindow(BaseModel):
     window: str = Field(..., description="'rolling' or 'weekly'")
     percent_used: float = Field(default=0.0)
     percent_remaining: float = Field(default=100.0)
-    resets_at: Optional[str] = Field(default=None, description="ISO-8601 UTC reset timestamp")
+    resets_at: str | None = Field(default=None, description="ISO-8601 UTC reset timestamp")
 
 class ProfileUsage(BaseModel):
     profile_id: str
@@ -205,9 +183,9 @@ class ProfileUsage(BaseModel):
     color: str = "#81c995"
     is_default_pro: bool = False
     status: Literal["connected", "error", "expired"] = "connected"
-    windows: List[UsageWindow] = []
-    error: Optional[str] = None
-    fetched_at: Optional[str] = None
+    windows: list[UsageWindow] = []
+    error: str | None = None
+    fetched_at: str | None = None
 
 class FleetUsageResponse(BaseModel):
     total_accounts: int = 0
@@ -216,7 +194,7 @@ class FleetUsageResponse(BaseModel):
     healthy_count: int = 0
     warning_count: int = 0
     critical_count: int = 0
-    profiles: List[ProfileUsage] = []
+    profiles: list[ProfileUsage] = []
     fetched_at: str
 
 # ----------------- SCHEDULED CREATION & QUEUE MODELS -----------------
@@ -225,75 +203,75 @@ class ScheduledJob(BaseModel):
     id: str = Field(..., description="Unique job UUID")
     notebook_id: str
     notebook_title: str
-    assigned_profile_id: Optional[str] = None
+    assigned_profile_id: str | None = None
     preferred_profile_id: str | None = None
     artifact_type: Literal["video", "audio", "report", "quiz", "flashcards", "mindmap", "slides", "infographic", "data-table"] = "video"
-    format_option: Optional[str] = "cinematic"
-    style: Optional[str] = "auto_select"
-    custom_prompt: Optional[str] = None
-    source_ids: Optional[List[str]] = None
-    exclude_sources: List[str] = Field(default_factory=list)
-    batch_id: Optional[str] = None
-    request_key: Optional[str] = None
+    format_option: str | None = "cinematic"
+    style: str | None = "auto_select"
+    custom_prompt: str | None = None
+    source_ids: list[str] | None = None
+    exclude_sources: list[str] = Field(default_factory=list)
+    batch_id: str | None = None
+    request_key: str | None = None
     request_fingerprint: str | None = None
-    submitted_at: Optional[str] = None
-    error_details: Optional[Dict[str, Any]] = None
-    attempts: List[Dict[str, Any]] = Field(default_factory=list)
-    quantity: Optional[int] = None
-    difficulty: Optional[str] = None
+    submitted_at: str | None = None
+    error_details: dict[str, Any] | None = None
+    attempts: list[dict[str, Any]] = Field(default_factory=list)
+    quantity: int | None = None
+    difficulty: str | None = None
     status: Literal["queued", "scheduled", "in_progress", "completed", "failed", "download_failed", "cancelled"] = "queued"
     trigger_type: Literal["immediate", "next_reset_window", "custom_time", "calendar_event"] = "immediate"
-    scheduled_time: Optional[str] = None
+    scheduled_time: str | None = None
     created_at: str
-    started_at: Optional[str] = None
-    completed_at: Optional[str] = None
-    artifact_id: Optional[str] = None
-    local_filepath: Optional[str] = None
-    download_filename: Optional[str] = None
-    error_message: Optional[str] = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    artifact_id: str | None = None
+    local_filepath: str | None = None
+    download_filename: str | None = None
+    error_message: str | None = None
     retry_count: int = 0
-    rotation_wave: Optional[int] = 1
+    rotation_wave: int | None = 1
 
 class BatchScheduleRequest(BaseModel):
-    notebook_ids: List[str] = Field(..., min_length=1, description="Target notebook IDs")
+    notebook_ids: list[str] = Field(..., min_length=1, description="Target notebook IDs")
     artifact_type: Literal["video", "audio", "report", "quiz", "flashcards", "mindmap", "slides", "infographic", "data-table"] = "video"
-    format_option: Optional[str] = None
-    style: Optional[str] = "auto_select"
-    custom_prompt: Optional[str] = None
-    source_ids: Optional[List[str]] = None
-    source_ids_by_notebook: Dict[str, List[str]] = Field(default_factory=dict)
-    exclude_sources: List[str] = Field(default_factory=list)
-    prompts: List[str] = Field(default_factory=list)
-    batch_id: Optional[str] = None
-    request_key: Optional[str] = None
-    quantity: Optional[int] = None
-    difficulty: Optional[str] = None
-    preferred_profile_id: Optional[str] = None
-    scheduled_time: Optional[str] = None
+    format_option: str | None = None
+    style: str | None = "auto_select"
+    custom_prompt: str | None = None
+    source_ids: list[str] | None = None
+    source_ids_by_notebook: dict[str, list[str]] = Field(default_factory=dict)
+    exclude_sources: list[str] = Field(default_factory=list)
+    prompts: list[str] = Field(default_factory=list)
+    batch_id: str | None = None
+    request_key: str | None = None
+    quantity: int | None = None
+    difficulty: str | None = None
+    preferred_profile_id: str | None = None
+    scheduled_time: str | None = None
     trigger_type: Literal["immediate", "next_reset_window", "custom_time", "calendar_event"] = "immediate"
 
 class SingleScheduleRequest(BaseModel):
     notebook_id: str
     artifact_type: Literal["video", "audio", "report", "quiz", "flashcards", "mindmap", "slides", "infographic", "data-table"] = "video"
-    format_option: Optional[str] = None
-    style: Optional[str] = "auto_select"
-    custom_prompt: Optional[str] = None
-    source_ids: Optional[List[str]] = None
-    exclude_sources: List[str] = Field(default_factory=list)
-    batch_id: Optional[str] = None
-    request_key: Optional[str] = None
-    quantity: Optional[int] = None
-    difficulty: Optional[str] = None
-    preferred_profile_id: Optional[str] = None
-    scheduled_time: Optional[str] = None
+    format_option: str | None = None
+    style: str | None = "auto_select"
+    custom_prompt: str | None = None
+    source_ids: list[str] | None = None
+    exclude_sources: list[str] = Field(default_factory=list)
+    batch_id: str | None = None
+    request_key: str | None = None
+    quantity: int | None = None
+    difficulty: str | None = None
+    preferred_profile_id: str | None = None
+    scheduled_time: str | None = None
     trigger_type: Literal["immediate", "next_reset_window", "custom_time", "calendar_event"] = "immediate"
 
 class BatchScheduleResponse(BaseModel):
     success: bool = True
-    batch_id: Optional[str] = None
+    batch_id: str | None = None
     total_queued: int = 0
-    queued_jobs: List[ScheduledJob] = []
-    active_profiles: List[str] = []
+    queued_jobs: list[ScheduledJob] = []
+    active_profiles: list[str] = []
     message: str = ""
 
 class SchedulerStatusResponse(BaseModel):
@@ -303,8 +281,8 @@ class SchedulerStatusResponse(BaseModel):
     completed_count: int = 0
     failed_count: int = 0
     download_failed_count: int = 0
-    active_workers: Dict[str, Optional[str]] = {}
-    jobs: List[ScheduledJob] = []
+    active_workers: dict[str, str | None] = {}
+    jobs: list[ScheduledJob] = []
 
 # ----------------- HYBRID FOLDER MAPPING MODELS -----------------
 
@@ -312,8 +290,8 @@ class FolderMapping(BaseModel):
     notebook_id: str
     folder_type: Literal["local_folder", "drive_web"] = "local_folder"
     target_path: str = Field(..., description="Local path or Google Drive Web Folder URL/ID")
-    display_name: Optional[str] = ""
-    last_scanned: Optional[str] = None
+    display_name: str | None = ""
+    last_scanned: str | None = None
     auto_sync: bool = False
     recursive: bool = False
 
@@ -321,20 +299,20 @@ class FolderFileItem(BaseModel):
     name: str
     path_or_id: str
     extension: str
-    size_bytes: Optional[int] = 0
-    modified_at: Optional[str] = None
+    size_bytes: int | None = 0
+    modified_at: str | None = None
     status: Literal["ingested", "new", "stale", "unsupported"] = "new"
     category: Literal["document", "media", "code", "spreadsheet", "unsupported"] = "document"
-    source_id: Optional[str] = None
+    source_id: str | None = None
     requires_code_adapter: bool = False
-    detail: Optional[str] = ""
+    detail: str | None = ""
 
 class FolderMappingCreateRequest(BaseModel):
     target_path: str
-    folder_type: Optional[Literal["local_folder", "drive_web"]] = None
-    display_name: Optional[str] = ""
-    auto_sync: Optional[bool] = False
-    recursive: Optional[bool] = False
+    folder_type: Literal["local_folder", "drive_web"] | None = None
+    display_name: str | None = ""
+    auto_sync: bool | None = False
+    recursive: bool | None = False
 
 class FolderStatusResponse(BaseModel):
     notebook_id: str
@@ -344,8 +322,8 @@ class FolderStatusResponse(BaseModel):
     max_capacity: int = 300
     current_source_count: int = 0
     capacity_percent: float = 0.0
-    mapping: Optional[FolderMapping] = None
-    files: List[FolderFileItem] = []
+    mapping: FolderMapping | None = None
+    files: list[FolderFileItem] = []
     new_count: int = 0
     ingested_count: int = 0
     stale_count: int = 0
@@ -353,7 +331,7 @@ class FolderStatusResponse(BaseModel):
 
 class FolderSyncRequest(BaseModel):
     action: Literal["ingest_new", "sync_stale", "full_sync"] = "ingest_new"
-    selected_files: Optional[List[str]] = None
+    selected_files: list[str] | None = None
 
 class FolderSyncResponse(BaseModel):
     success: bool = True
@@ -361,5 +339,5 @@ class FolderSyncResponse(BaseModel):
     ingested_count: int = 0
     stale_synced_count: int = 0
     failed_count: int = 0
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     message: str = ""

@@ -1,10 +1,12 @@
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import backend.nlm_client as nlm_client
 import backend.config as config
+import backend.nlm_client as nlm_client
 from backend.models import NotebookRef
 
 SAMPLE_RESULTS = [{

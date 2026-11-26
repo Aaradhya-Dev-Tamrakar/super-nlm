@@ -7,13 +7,15 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def isolated_runtime(tmp_path, monkeypatch):
-    import backend.notebook_owners as owners
     import backend.nlm_client as client
+    import backend.notebook_owners as owners
     import backend.scheduler as scheduler_module
     import backend.studio_service as studio
+    from backend import config as config_module
     from backend import storage
     from backend.process_lease import ProcessLease
 
+    monkeypatch.setattr(config_module, "USER_CATALOG_FILE", tmp_path / "user_catalog.json")
     monkeypatch.setattr(scheduler_module, "SCHEDULED_JOBS_FILE", tmp_path / "jobs.json")
     monkeypatch.setattr(scheduler_module, "DOWNLOADS_DIR", tmp_path / "generated")
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
@@ -31,7 +33,7 @@ def isolated_runtime(tmp_path, monkeypatch):
             }
         ],
     )
-    for name in ("PROFILES_FILE", "CACHE_FILE", "FOLDER_MAPPINGS_FILE"):
+    for name in ("PROFILES_FILE", "CACHE_FILE", "FOLDER_MAPPINGS_FILE", "SHARING_RULES_FILE"):
         monkeypatch.setattr(storage, name, tmp_path / f"{name}.json")
     leases = []
     original = ProcessLease.acquire

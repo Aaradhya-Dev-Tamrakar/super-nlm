@@ -1,5 +1,6 @@
 import secrets
-from fastapi import Request, HTTPException, status
+
+from fastapi import HTTPException, Request, status
 
 from backend.config import SUPER_NLM_API_KEY, SUPER_NLM_REQUIRE_AUTH_LOCAL
 

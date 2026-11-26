@@ -1,11 +1,15 @@
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fastapi.testclient import TestClient
-from backend.app import app
 from unittest.mock import AsyncMock
+
+from fastapi.testclient import TestClient
+
+from backend.app import app
 from backend.models import Notebook
+
 
 def test_api(monkeypatch):
     monkeypatch.setattr("backend.notebook_owners.run_nlm_cmd", AsyncMock(return_value={"success": True, "stdout": '{"collaborators": [{"email": "test@example.invalid", "role": "owner"}]}' }))

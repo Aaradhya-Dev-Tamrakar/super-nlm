@@ -1,17 +1,20 @@
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import asyncio
-import pytest
+
 from fastapi.testclient import TestClient
+
+from backend.app import app
 from backend.models import (
-    ScheduledJob, BatchScheduleRequest, SingleScheduleRequest,
-    SchedulerStatusResponse
+    BatchScheduleRequest,
+    ScheduledJob,
 )
 from backend.scheduler import JobScheduler, sanitize_filename
-from backend.app import app
 from mcp_server.server import create_server
+
 
 def test_sanitize_filename():
     raw = 'CT704: Digital Signal Analysis / Unit 3: FFT <version 1>'

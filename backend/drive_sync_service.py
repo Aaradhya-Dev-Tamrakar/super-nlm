@@ -1,36 +1,40 @@
+import asyncio
+import contextlib
+import json
+import logging
 import os
 import re
-import json
-import time
-import asyncio
-import logging
 import tempfile
+import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime
+from typing import Any
+
 import httpx
 
 from backend.config import (
-    NLM_EXECUTABLE,
-    NOTEBOOKLM_PRO_SOURCE_LIMIT,
-    NOTEBOOKLM_STANDARD_SOURCE_LIMIT,
-    NLM_NATIVE_DOCS,
-    NLM_MEDIA_FORMATS,
     CODE_ADAPTER_EXTENSIONS,
     EXCEL_EXTENSIONS,
-    IGNORED_EXTENSIONS,
     GDRIVE_CREDENTIALS_PATH,
-    GDRIVE_OAUTH_PATH
+    GDRIVE_OAUTH_PATH,
+    IGNORED_EXTENSIONS,
+    NLM_MEDIA_FORMATS,
+    NLM_NATIVE_DOCS,
+    NOTEBOOKLM_PRO_SOURCE_LIMIT,
+    NOTEBOOKLM_STANDARD_SOURCE_LIMIT,
 )
 from backend.models import (
-    FolderMapping, FolderFileItem, FolderStatusResponse,
-    FolderSyncResponse, Notebook
-)
-from backend.storage import (
-    get_folder_mapping, save_folder_mapping, delete_folder_mapping,
-    get_cached_notebooks, save_cached_notebooks, get_profiles
+    FolderFileItem,
+    FolderStatusResponse,
+    FolderSyncResponse,
 )
 from backend.nlm_client import run_nlm_cmd
+from backend.storage import (
+    get_cached_notebooks,
+    get_folder_mapping,
+    save_cached_notebooks,
+    save_folder_mapping,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +45,7 @@ DRIVE_FOLDER_REGEXES = [
     re.compile(r'^[a-zA-Z0-9_-]{25,50}$') # Raw Google Drive ID
 ]
 
-def normalize_folder_target(target: str) -> Tuple[str, str]:
+def normalize_folder_target(target: str) -> tuple[str, str]:
     """
     Determines if target is a local filesystem path or Google Drive Web Folder.
     Returns (folder_type: 'local_folder' | 'drive_web', cleaned_target: str).
@@ -66,7 +70,7 @@ def normalize_folder_target(target: str) -> Tuple[str, str]:
     # Fallback to local_folder if not recognized
     return "local_folder", target
 
-def categorize_file(filename: str) -> Tuple[str, str, bool]:
+def categorize_file(filename: str) -> tuple[str, str, bool]:
     """
     Returns (category, status, requires_code_adapter).
     Categories: 'document', 'media', 'code', 'spreadsheet', 'unsupported'.
@@ -89,7 +93,7 @@ def categorize_file(filename: str) -> Tuple[str, str, bool]:
 def convert_ipynb_to_markdown(filepath: Path) -> str:
     """Extracts Markdown and Code cells from a Jupyter Notebook into clean Markdown text."""
     try:
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+        with open(filepath, encoding="utf-8", errors="replace") as f:
             data = json.load(f)
         cells = data.get("cells", [])
         output = [f"# Jupyter Notebook: {filepath.name}\n"]
@@ -116,14 +120,32 @@ def prepare_code_file_as_markdown(filepath: Path) -> str:
     }.get(ext, ext)
 
     try:
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+        with open(filepath, encoding="utf-8", errors="replace") as f:
             content = f.read()
         return f"# Academic Source Code: {filepath.name}\n\n```{lang}\n{content}\n```\n"
     except Exception as e:
         logger.warning(f"Error reading code file {filepath}: {e}")
         return f"# {filepath.name}\n(Could not read file)\n"
 
-async def get_drive_access_token() -> Optional[str]:
+def _read_json_file_sync(path: Path) -> dict[str, Any]:
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _atomic_write_json_file_sync(path: Path, data: dict[str, Any]) -> None:
+    temp_fd, temp_path = tempfile.mkstemp(dir=path.parent, prefix=f"{path.stem}_", suffix=".tmp")
+    try:
+        with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(temp_path, path)
+    except Exception:
+        if os.path.exists(temp_path):
+            with contextlib.suppress(OSError):
+                os.remove(temp_path)
+        raise
+
+
+async def get_drive_access_token() -> str | None:
     """
     Retrieves or refreshes a valid Google Drive OAuth access token using
     the configured GDRIVE_CREDENTIALS_PATH and GDRIVE_OAUTH_PATH.
@@ -131,23 +153,21 @@ async def get_drive_access_token() -> Optional[str]:
     cred_file = Path(GDRIVE_CREDENTIALS_PATH)
     oauth_file = Path(GDRIVE_OAUTH_PATH)
 
-    if not cred_file.exists():
+    if not await asyncio.to_thread(cred_file.exists):
         logger.debug(f"Drive credentials not found at {cred_file}")
         return None
 
     try:
-        with open(cred_file, "r", encoding="utf-8") as f:
-            creds = json.load(f)
+        creds = await asyncio.to_thread(_read_json_file_sync, cred_file)
 
         expiry = creds.get("expiry_date", 0)
         # Check if expired or expiring within 60s
         if expiry and expiry < (time.time() * 1000 + 60000):
-            if not oauth_file.exists():
+            if not await asyncio.to_thread(oauth_file.exists):
                 logger.warning(f"OAuth client secret file not found at {oauth_file}, cannot refresh Drive token")
                 return creds.get("access_token")
 
-            with open(oauth_file, "r", encoding="utf-8") as f:
-                oauth = json.load(f)
+            oauth = await asyncio.to_thread(_read_json_file_sync, oauth_file)
             keys = oauth.get("installed") or oauth.get("web")
             if not keys:
                 return creds.get("access_token")
@@ -165,8 +185,7 @@ async def get_drive_access_token() -> Optional[str]:
                     creds["access_token"] = token_data["access_token"]
                     if "expires_in" in token_data:
                         creds["expiry_date"] = int((time.time() + token_data["expires_in"]) * 1000)
-                    with open(cred_file, "w", encoding="utf-8") as f:
-                        json.dump(creds, f, indent=2)
+                    await asyncio.to_thread(_atomic_write_json_file_sync, cred_file, creds)
                 else:
                     logger.warning(f"Failed to refresh Drive token: {res.text}")
 
@@ -184,7 +203,7 @@ class DriveSyncService:
     def __init__(self):
         self._sync_lock = asyncio.Lock()
 
-    async def scan_drive_folder(self, folder_id: str, recursive: bool = False) -> List[FolderFileItem]:
+    async def scan_drive_folder(self, folder_id: str, recursive: bool = False) -> list[FolderFileItem]:
         """
         Scans a remote Google Drive folder for files via Google Drive REST API.
         """
@@ -194,13 +213,13 @@ class DriveSyncService:
             return []
 
         headers = {"Authorization": f"Bearer {token}"}
-        items_found: List[FolderFileItem] = []
+        items_found: list[FolderFileItem] = []
         page_token = None
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 while True:
-                    params: Dict[str, Any] = {
+                    params: dict[str, Any] = {
                         "q": f"'{folder_id}' in parents and trashed = false",
                         "fields": "nextPageToken, files(id, name, mimeType, modifiedTime, size)",
                         "pageSize": 100
@@ -246,7 +265,7 @@ class DriveSyncService:
                                 status = "new"
 
                         size_b = int(f.get("size") or 0)
-                        mod_iso = f.get("modifiedTime") or datetime.now().isoformat()
+                        mod_iso = f.get("modifiedTime") or datetime.now(timezone.utc).isoformat()
 
                         items_found.append(FolderFileItem(
                             name=name,
@@ -280,7 +299,7 @@ class DriveSyncService:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 res = await client.get(f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media", headers=headers)
                 if res.status_code == 200:
-                    dest_path.write_bytes(res.content)
+                    await asyncio.to_thread(dest_path.write_bytes, res.content)
                     return True
                 else:
                     logger.warning(f"Failed to download Drive file {file_id}: HTTP {res.status_code}")
@@ -289,7 +308,7 @@ class DriveSyncService:
             logger.error(f"Error downloading Drive file {file_id}: {e}")
             return False
 
-    async def get_notebook_sources(self, notebook_id: str, profile_id: str = "default") -> List[Dict[str, Any]]:
+    async def get_notebook_sources(self, notebook_id: str, profile_id: str = "default") -> list[dict[str, Any]]:
         """Fetches current sources from NotebookLM."""
         res = await run_nlm_cmd(["source", "list", notebook_id, "--profile", profile_id, "--json"], timeout=45)
         if res.get("success") and res.get("stdout"):
@@ -301,7 +320,7 @@ class DriveSyncService:
                 logger.warning(f"Failed to parse source list output for {notebook_id}: {e}")
         return []
 
-    async def get_stale_drive_sources(self, notebook_id: str, profile_id: str = "default") -> List[str]:
+    async def get_stale_drive_sources(self, notebook_id: str, profile_id: str = "default") -> list[str]:
         """Returns IDs or titles of stale Drive sources."""
         res = await run_nlm_cmd(["source", "stale", notebook_id, "--profile", profile_id, "--json"], timeout=30)
         stale_items = []
@@ -318,44 +337,46 @@ class DriveSyncService:
                     stale_items.append("drive_stale")
         return stale_items
 
-    async def scan_local_folder(self, folder_path: str, recursive: bool = False) -> List[FolderFileItem]:
+    async def scan_local_folder(self, folder_path: str, recursive: bool = False) -> list[FolderFileItem]:
         """Scans local filesystem folder for files."""
-        dir_path = Path(folder_path)
-        if not dir_path.exists() or not dir_path.is_dir():
-            return []
+        def _scan_sync() -> list[FolderFileItem]:
+            dir_path = Path(folder_path)
+            if not dir_path.exists() or not dir_path.is_dir():
+                return []
 
-        files: List[FolderFileItem] = []
-        pattern = "**/*" if recursive else "*"
+            files: list[FolderFileItem] = []
+            pattern = "**/*" if recursive else "*"
 
-        try:
-            for entry in dir_path.glob(pattern):
-                if entry.is_file() and not entry.name.startswith((".", "~$")):
-                    category, status, req_adapter = categorize_file(entry.name)
-                    stat = entry.stat()
-                    mod_iso = datetime.fromtimestamp(stat.st_mtime).isoformat()
-                    detail = ""
-                    if req_adapter:
-                        detail = "Auto-converted via Academic Code Adapter"
-                    elif status == "unsupported":
-                        detail = "Non-document format (skipped)"
+            try:
+                for entry in dir_path.glob(pattern):
+                    if entry.is_file() and not entry.name.startswith((".", "~$")):
+                        category, status, req_adapter = categorize_file(entry.name)
+                        stat = entry.stat()
+                        mod_iso = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+                        detail = ""
+                        if req_adapter:
+                            detail = "Auto-converted via Academic Code Adapter"
+                        elif status == "unsupported":
+                            detail = "Non-document format (skipped)"
 
-                    files.append(FolderFileItem(
-                        name=entry.name,
-                        path_or_id=str(entry.resolve()),
-                        extension=entry.suffix.lower(),
-                        size_bytes=stat.st_size,
-                        modified_at=mod_iso,
-                        status=status,
-                        category=category,
-                        requires_code_adapter=req_adapter,
-                        detail=detail
-                    ))
-        except Exception as e:
-            logger.error(f"Error scanning local folder {folder_path}: {e}")
+                        files.append(FolderFileItem(
+                            name=entry.name,
+                            path_or_id=str(entry.resolve()),
+                            extension=entry.suffix.lower(),
+                            size_bytes=stat.st_size,
+                            modified_at=mod_iso,
+                            status=status,
+                            category=category,
+                            requires_code_adapter=req_adapter,
+                            detail=detail
+                        ))
+            except Exception as e:
+                logger.error(f"Error scanning local folder {folder_path}: {e}")
 
-        # Sort files alphabetically by name
-        files.sort(key=lambda x: x.name.lower())
-        return files
+            files.sort(key=lambda x: x.name.lower())
+            return files
+
+        return await asyncio.to_thread(_scan_sync)
 
     async def get_folder_status(self, notebook_id: str) -> FolderStatusResponse:
         """Compares mapped folder contents against live NotebookLM sources and quota limits."""
@@ -379,7 +400,7 @@ class DriveSyncService:
         norm_titles = {normalize_title_for_matching(s.get("title", "")): s for s in sources if s.get("title")}
         norm_stems = {normalize_title_for_matching(Path(s.get("title", "")).stem): s for s in sources if s.get("title")}
 
-        files: List[FolderFileItem] = []
+        files: list[FolderFileItem] = []
         if mapping:
             if mapping.folder_type == "local_folder":
                 files = await self.scan_local_folder(mapping.target_path, recursive=mapping.recursive)
@@ -400,7 +421,7 @@ class DriveSyncService:
                             path_or_id=s_id,
                             extension=s_ext,
                             size_bytes=0,
-                            modified_at=datetime.now().isoformat(),
+                            modified_at=datetime.now(timezone.utc).isoformat(),
                             status="stale" if is_stale else "ingested",
                             category=category,
                             source_id=s_id,
@@ -470,7 +491,7 @@ class DriveSyncService:
         self,
         notebook_id: str,
         action: str = "ingest_new",
-        selected_files: Optional[List[str]] = None
+        selected_files: list[str] | None = None
     ) -> FolderSyncResponse:
         """
         Executes sequential ingestion of new folder files and stale refreshes.
@@ -497,7 +518,7 @@ class DriveSyncService:
             ingested_count = 0
             stale_synced_count = 0
             failed_count = 0
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
 
             # 1. Process Stale Sync if requested
             if action in ("sync_stale", "full_sync"):
@@ -613,14 +634,12 @@ class DriveSyncService:
                             })
                         finally:
                             if temp_dl_file and temp_dl_file.exists():
-                                try:
+                                with contextlib.suppress(OSError):
                                     temp_dl_file.unlink()
-                                except Exception:
-                                    pass
                         continue
 
                     file_path = Path(file_item.path_or_id)
-                    if not file_path.exists():
+                    if not await asyncio.to_thread(file_path.exists):
                         results.append({
                             "file": file_item.name,
                             "status": "failed",
@@ -636,14 +655,17 @@ class DriveSyncService:
                         if file_item.requires_code_adapter:
                             # Handle Jupyter notebook or source code adapter
                             if file_item.extension == ".ipynb":
-                                content = convert_ipynb_to_markdown(file_path)
+                                content = await asyncio.to_thread(convert_ipynb_to_markdown, file_path)
                             else:
-                                content = prepare_code_file_as_markdown(file_path)
+                                content = await asyncio.to_thread(prepare_code_file_as_markdown, file_path)
 
-                            # Save to temporary text file for upload
-                            temp_fd, temp_path = tempfile.mkstemp(prefix="nlm_code_", suffix=".txt")
-                            with os.fdopen(temp_fd, "w", encoding="utf-8") as tf:
-                                tf.write(content)
+                            def _write_temp_adapter(text_data: str) -> str:
+                                temp_fd, t_path = tempfile.mkstemp(prefix="nlm_code_", suffix=".txt")
+                                with os.fdopen(temp_fd, "w", encoding="utf-8") as tf:
+                                    tf.write(text_data)
+                                return t_path
+
+                            temp_path = await asyncio.to_thread(_write_temp_adapter, content)
                             temp_file_to_clean = temp_path
 
                             cmd_args = [
@@ -655,9 +677,10 @@ class DriveSyncService:
                             ]
                         else:
                             # Direct file upload
+                            resolved_path = await asyncio.to_thread(file_path.resolve)
                             cmd_args = [
                                 "source", "add", notebook_id,
-                                "--file", str(file_path.resolve()),
+                                "--file", str(resolved_path),
                                 "--profile", profile_id,
                                 "--wait"
                             ]
@@ -665,11 +688,9 @@ class DriveSyncService:
                         logger.info(f"Ingesting folder file: {file_item.name} -> notebook {notebook_id}")
                         res = await run_nlm_cmd(cmd_args, timeout=180)
 
-                        if temp_file_to_clean and os.path.exists(temp_file_to_clean):
-                            try:
-                                os.remove(temp_file_to_clean)
-                            except Exception:
-                                pass
+                        if temp_file_to_clean:
+                            with contextlib.suppress(OSError):
+                                await asyncio.to_thread(os.remove, temp_file_to_clean)
 
                         if res.get("success"):
                             ingested_count += 1
@@ -697,7 +718,7 @@ class DriveSyncService:
                         })
 
             # Update mapping's last_scanned timestamp
-            mapping.last_scanned = datetime.now().isoformat()
+            mapping.last_scanned = datetime.now(timezone.utc).isoformat()
             await save_folder_mapping(mapping)
 
             # Update cached notebook source count
