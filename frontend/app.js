@@ -21,6 +21,10 @@ let state = {
   isUsageLoading: false,
   isLoading: false,
   editingProfileId: null,
+  showPendingAccountPills: false,
+  showPendingSidebarAccounts: false,
+  accountsModalFilter: 'all',
+  accountsModalSearch: '',
   folderMappings: {}, // key: notebookId, value: FolderMapping
   activeFolderNotebookId: null,
   activeFolderStatus: null,
@@ -197,6 +201,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initGoogleRipple();
   loadAllChatHistories();
   setupEventListeners();
+  initAccountsModalControls();
   updateRemoteApiKeyBadge();
   renderAccountPills();
   renderCategoryChips();
@@ -1100,16 +1105,26 @@ function renderAuthAlertBanner() {
     return;
   }
 
+  const isMany = expiredProfiles.length > 2;
+  const previewNames = expiredProfiles
+    .slice(0, 3)
+    .map(p => escapeHtml(p.displayName || p.id))
+    .join(', ');
+  const summaryNames = expiredProfiles.length > 3
+    ? `${previewNames} and +${expiredProfiles.length - 3} more`
+    : previewNames;
+  const inlineButtons = expiredProfiles.slice(0, 2);
+
   container.classList.remove('hidden');
   container.innerHTML = `
     <div class="auth-alert-banner p-4 relative overflow-hidden animate-m3-enter">
-      <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+      <div class="flex ${isMany ? 'flex-col gap-3' : 'flex-col md:flex-row items-start md:items-center justify-between gap-3'}">
         
-        <div class="flex items-start gap-3 min-w-0">
+        <div class="flex items-start gap-3 flex-1 min-w-0">
           <div class="p-2.5 rounded-2xl bg-[var(--google-red-container)] text-[var(--google-red)] shrink-0 mt-0.5 md:mt-0 shadow-sm">
             <i data-lucide="alert-triangle" class="w-5 h-5"></i>
           </div>
-          <div class="min-w-0 space-y-1">
+          <div class="flex-1 min-w-0 space-y-1">
             <div class="flex items-center gap-2 flex-wrap">
               <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--google-red)] flex items-center gap-1.5">
                 <span>Google Session Expired</span>
@@ -1119,18 +1134,18 @@ function renderAuthAlertBanner() {
               </h3>
             </div>
             <p class="text-xs text-[var(--m3-on-surface)] leading-relaxed">
-              Notebooks from <strong class="text-[var(--google-red)]">${expiredProfiles.map(p => escapeHtml(p.displayName || p.id) + (p.email ? ` (${escapeHtml(p.email)})` : '')).join(', ')}</strong> cannot be displayed or queried because Google authentication has expired.
+              Notebooks from <strong class="text-[var(--google-red)]">${summaryNames}</strong> cannot be displayed or queried until re-authenticated.
             </p>
             ${expiredProfiles.some(p => p.lastError) ? `
-              <p class="text-[11px] font-mono text-[var(--m3-on-surface-subtle)] bg-[var(--m3-surface-container-low)] px-2.5 py-1 rounded-lg border border-[var(--m3-outline-variant)]/60 truncate max-w-2xl" title="${escapeHtml(expiredProfiles.map(p => `${p.displayName}: ${p.lastError || ''}`).join(' | '))}">
-                Error: ${escapeHtml(expiredProfiles.map(p => `${p.displayName}: ${p.lastError || 'Session expired or missing cookies'}`).join(' • '))}
+              <p class="text-[11px] font-mono text-[var(--m3-on-surface-subtle)] bg-[var(--m3-surface-container-low)] px-2.5 py-1 rounded-lg border border-[var(--m3-outline-variant)]/60 truncate max-w-2xl" title="${escapeHtml(expiredProfiles.slice(0, 5).map(p => `${p.displayName}: ${p.lastError || ''}`).join(' | '))}">
+                Error: ${escapeHtml(expiredProfiles.slice(0, 2).map(p => `${p.displayName}: ${(p.lastError || 'Session expired').split('\n')[0]}`).join(' • '))}${expiredProfiles.length > 2 ? ` (+${expiredProfiles.length - 2} more)` : ''}
               </p>
             ` : ''}
           </div>
         </div>
 
-        <div class="flex items-center gap-2 shrink-0 self-end md:self-center w-full md:w-auto justify-end pt-2 md:pt-0 border-t md:border-t-0 border-[var(--m3-outline-variant)]/40 flex-wrap">
-          ${expiredProfiles.map(p => `
+        <div class="flex items-center gap-2 flex-wrap ${isMany ? 'pt-2 border-t border-[var(--m3-outline-variant)]/40' : 'self-end md:self-center w-full md:w-auto justify-end pt-2 md:pt-0 border-t md:border-t-0 border-[var(--m3-outline-variant)]/40'}">
+          ${inlineButtons.map(p => `
             <button
               type="button"
               onclick="handleTriggerLogin('${escapeHtml(p.id)}')"
@@ -1141,6 +1156,17 @@ function renderAuthAlertBanner() {
               <span>Relogin ${escapeHtml(p.displayName)}</span>
             </button>
           `).join('')}
+          ${isMany ? `
+            <button
+              type="button"
+              id="btn-manage-expired-accounts"
+              class="google-btn-primary px-3.5 py-1.5 text-xs font-semibold flex items-center gap-1.5 bg-[var(--google-red)] hover:bg-[var(--google-red)]/90 text-white shadow-sm cursor-pointer"
+              title="Review all ${expiredProfiles.length} accounts needing login"
+            >
+              <i data-lucide="users" class="w-3.5 h-3.5"></i>
+              <span>Manage Expired (${expiredProfiles.length})</span>
+            </button>
+          ` : ''}
           <button
             type="button"
             onclick="handleSyncAll()"
@@ -1155,6 +1181,15 @@ function renderAuthAlertBanner() {
       </div>
     </div>
   `;
+
+  const manageExpiredBtn = document.getElementById('btn-manage-expired-accounts');
+  if (manageExpiredBtn) {
+    manageExpiredBtn.addEventListener('click', () => {
+      state.accountsModalFilter = 'needs_login';
+      openModal('modal-accounts');
+      renderAccountsModalList();
+    });
+  }
 
   if (window.lucide) lucide.createIcons({ root: container });
 }
@@ -1331,7 +1366,14 @@ function renderAccountPills() {
   container.appendChild(allPill);
 
   // Individual Account Pills (AI Pro Family Plan first, then Standard Accounts)
-  const { proProfiles, standardProfiles } = partitionProfilesByTier(state.profiles);
+  const isVisiblePill = (p) => p.status === 'connected' || p.id === state.activeProfileFilter;
+  const hasConnectedOrActive = state.profiles.some(isVisiblePill);
+  const pillsPool = (!state.showPendingAccountPills && hasConnectedOrActive)
+    ? state.profiles.filter(isVisiblePill)
+    : state.profiles;
+  const hiddenPendingCount = state.profiles.length - pillsPool.length;
+
+  const { proProfiles, standardProfiles } = partitionProfilesByTier(pillsPool);
   const appendProfilePill = (p) => {
     const isExpired = p.status === 'expired';
     const count = state.notebooks.filter(n => n.profileId === p.id).length;
@@ -1362,6 +1404,21 @@ function renderAccountPills() {
     container.appendChild(divider);
   }
   standardProfiles.forEach(appendProfilePill);
+
+  if (hiddenPendingCount > 0 || (state.showPendingAccountPills && state.profiles.some(p => !isVisiblePill(p)))) {
+    const pendingToggleBtn = document.createElement('button');
+    pendingToggleBtn.type = 'button';
+    pendingToggleBtn.id = 'btn-toggle-pending-pills';
+    pendingToggleBtn.className = 'google-btn-outlined flex items-center gap-1.5 px-3 py-1.5 text-xs text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] transition whitespace-nowrap cursor-pointer';
+    pendingToggleBtn.innerHTML = state.showPendingAccountPills
+      ? '<i data-lucide="eye-off" class="w-3.5 h-3.5"></i> <span>Hide Pending</span>'
+      : `<i data-lucide="eye" class="w-3.5 h-3.5"></i> <span>+${hiddenPendingCount} Pending</span>`;
+    pendingToggleBtn.addEventListener('click', () => {
+      state.showPendingAccountPills = !state.showPendingAccountPills;
+      renderAccountPills();
+    });
+    container.appendChild(pendingToggleBtn);
+  }
 
   // Add Account shortcut button
   const addBtn = document.createElement('button');
@@ -1450,26 +1507,54 @@ function renderSidebarAccounts() {
   };
 
   const { proProfiles, standardProfiles } = partitionProfilesByTier(state.profiles);
+  let innerHtml = '';
   if (proProfiles.length > 0) {
-    html += `
+    innerHtml += `
       <div class="flex items-center justify-between px-2.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--google-yellow)]">
         <span class="flex items-center gap-1"><i data-lucide="sparkles" class="w-3 h-3"></i> AI Pro · Family Plan</span>
         <span class="font-mono text-[var(--m3-on-surface-subtle)]">${proProfiles.length}</span>
       </div>
     `;
-    html += proProfiles.map(renderSidebarProfileBtn).join('');
+    innerHtml += proProfiles.map(renderSidebarProfileBtn).join('');
   }
   if (standardProfiles.length > 0) {
-    html += `
+    const activeStandard = standardProfiles.filter(p => p.status !== 'not_logged_in' || p.id === state.activeProfileFilter);
+    const pendingStandard = standardProfiles.filter(p => p.status === 'not_logged_in' && p.id !== state.activeProfileFilter);
+
+    innerHtml += `
       <div class="flex items-center justify-between px-2.5 pt-2.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--m3-on-surface-subtle)]">
         <span>Standard Accounts</span>
         <span class="font-mono">${standardProfiles.length}</span>
       </div>
     `;
-    html += standardProfiles.map(renderSidebarProfileBtn).join('');
+    innerHtml += activeStandard.map(renderSidebarProfileBtn).join('');
+    if (pendingStandard.length > 0) {
+      if (state.showPendingSidebarAccounts) {
+        innerHtml += pendingStandard.map(renderSidebarProfileBtn).join('');
+      }
+      innerHtml += `
+        <button
+          type="button"
+          id="btn-toggle-sidebar-pending"
+          class="w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 mt-1 rounded-xl text-[11px] font-medium text-[var(--m3-on-surface-subtle)] hover:text-[var(--m3-on-surface)] hover:bg-[var(--m3-surface-container-high)] transition cursor-pointer"
+        >
+          <i data-lucide="${state.showPendingSidebarAccounts ? 'chevron-up' : 'chevron-down'}" class="w-3.5 h-3.5"></i>
+          <span>${state.showPendingSidebarAccounts ? 'Hide pending' : `Show ${pendingStandard.length} pending account${pendingStandard.length === 1 ? '' : 's'}`}</span>
+        </button>
+      `;
+    }
   }
 
-  listEl.innerHTML = html;
+  listEl.innerHTML = `<div class="max-h-[340px] overflow-y-auto pr-0.5 space-y-0.5">${html}${innerHtml}</div>`;
+
+  const toggleSidebarPendingBtn = listEl.querySelector('#btn-toggle-sidebar-pending');
+  if (toggleSidebarPendingBtn) {
+    toggleSidebarPendingBtn.addEventListener('click', () => {
+      state.showPendingSidebarAccounts = !state.showPendingSidebarAccounts;
+      renderSidebarAccounts();
+      if (window.lucide) lucide.createIcons({ root: listEl });
+    });
+  }
 
   listEl.querySelectorAll('.sidebar-account-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2164,9 +2249,62 @@ function clearSelection() {
 
 const PROFILE_COLOR_PRESETS = ['#8ab4f8', '#81c995', '#fdd663', '#f28b82', '#c58af9', '#78d9ec', '#ff8bc9', '#f9ab00'];
 
+function initAccountsModalControls() {
+  const searchInput = document.getElementById('accounts-modal-search');
+  if (searchInput && !searchInput.dataset.bound) {
+    searchInput.dataset.bound = '1';
+    searchInput.addEventListener('input', (e) => {
+      state.accountsModalSearch = e.target.value || '';
+      renderAccountsModalList();
+    });
+  }
+  const filtersContainer = document.getElementById('accounts-modal-filters');
+  if (filtersContainer && !filtersContainer.dataset.bound) {
+    filtersContainer.dataset.bound = '1';
+    filtersContainer.querySelectorAll('.accounts-filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.accountsModalFilter = btn.getAttribute('data-accounts-filter') || 'all';
+        renderAccountsModalList();
+      });
+    });
+  }
+}
+
+function updateAccountsModalToolbar() {
+  const searchInput = document.getElementById('accounts-modal-search');
+  if (searchInput && searchInput.value !== state.accountsModalSearch) {
+    searchInput.value = state.accountsModalSearch;
+  }
+
+  const counts = {
+    all: state.profiles.length,
+    connected: state.profiles.filter(p => p.status === 'connected').length,
+    pro: state.profiles.filter(p => p.isDefaultPro || p.tier === 'pro').length,
+    needs_login: state.profiles.filter(p => p.status !== 'connected').length,
+  };
+
+  const filtersContainer = document.getElementById('accounts-modal-filters');
+  if (!filtersContainer) return;
+  filtersContainer.querySelectorAll('.accounts-filter-btn').forEach(btn => {
+    const key = btn.getAttribute('data-accounts-filter');
+    const countSpan = btn.querySelector(`[data-filter-count="${key}"]`);
+    if (countSpan && key in counts) {
+      countSpan.textContent = counts[key];
+    }
+    const isActive = state.accountsModalFilter === key;
+    btn.className = `accounts-filter-btn px-2.5 py-1 rounded-full text-[11px] font-medium cursor-pointer transition ${
+      isActive
+        ? 'bg-[var(--google-blue-container)] text-[var(--google-blue-on-container)]'
+        : 'm3-subcard text-[var(--m3-on-surface-variant)] hover:text-[var(--m3-on-surface)]'
+    }`;
+  });
+}
+
 function renderAccountsModalList() {
   const container = document.getElementById('accounts-list');
   if (!container) return;
+  initAccountsModalControls();
+  updateAccountsModalToolbar();
   
   if (state.profiles.length === 0) {
     container.innerHTML = `
@@ -2479,7 +2617,29 @@ function renderAccountsModalList() {
     `;
   };
 
-  const { proProfiles, standardProfiles } = partitionProfilesByTier(state.profiles);
+  const query = (state.accountsModalSearch || '').trim().toLowerCase();
+  const filteredProfiles = state.profiles.filter(p => {
+    if (state.accountsModalFilter === 'connected' && p.status !== 'connected') return false;
+    if (state.accountsModalFilter === 'pro' && !(p.isDefaultPro || p.tier === 'pro')) return false;
+    if (state.accountsModalFilter === 'needs_login' && p.status === 'connected') return false;
+    if (query) {
+      const hay = `${p.displayName || ''} ${p.email || ''} ${p.id || ''}`.toLowerCase();
+      if (!hay.includes(query)) return false;
+    }
+    return true;
+  });
+
+  if (filteredProfiles.length === 0) {
+    container.innerHTML = `
+      <div class="p-6 rounded-2xl m3-subcard text-center space-y-1.5">
+        <p class="text-xs font-medium text-[var(--m3-on-surface)]">No matching accounts</p>
+        <p class="text-[11px] text-[var(--m3-on-surface-subtle)]">Adjust your search or filter selection to view other profiles.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const { proProfiles, standardProfiles } = partitionProfilesByTier(filteredProfiles);
   const sections = [];
   if (proProfiles.length > 0) {
     sections.push(`
@@ -5085,7 +5245,10 @@ function renderSidebarFleetQuota() {
   }
 
   if (dotsContainer) {
-    dotsContainer.innerHTML = data.profiles.map(p => {
+    const maxDots = 12;
+    const visibleProfiles = data.profiles.slice(0, maxDots);
+    const overflowCount = Math.max(0, data.profiles.length - maxDots);
+    dotsContainer.innerHTML = visibleProfiles.map(p => {
       const rolling = (p.windows || []).find(w => w.window === 'rolling');
       const used = rolling ? rolling.percent_used : 0;
       let statusColor = 'var(--google-green)';
@@ -5093,7 +5256,7 @@ function renderSidebarFleetQuota() {
       else if (used >= 70) statusColor = 'var(--google-yellow)';
 
       return `<div class="quota-dot shrink-0 cursor-pointer" style="background-color: ${statusColor};" title="${escapeHtml(p.display_name)} (${escapeHtml(p.profile_id)}): ${used.toFixed(1)}% used"></div>`;
-    }).join('');
+    }).join('') + (overflowCount > 0 ? `<span class="text-[10px] font-mono text-[var(--m3-on-surface-subtle)] ml-0.5">+${overflowCount}</span>` : '');
   }
 
   if (statusText) {
