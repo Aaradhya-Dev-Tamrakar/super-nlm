@@ -26,7 +26,8 @@ from backend.storage import (
     get_profiles, get_profile, save_profile, delete_profile,
     get_cached_notebooks, save_cached_notebooks, delete_cached_notebook,
     get_folder_mappings, get_folder_mapping, save_folder_mapping, delete_folder_mapping,
-    get_sharing_rules, get_notebook_sharing_rule, save_notebook_sharing_rule
+    get_sharing_rules, get_notebook_sharing_rule, save_notebook_sharing_rule,
+    remove_profile_from_sharing_rules
 )
 from backend.drive_sync_service import drive_sync_service, normalize_folder_target
 from backend.nlm_client import (
@@ -36,7 +37,7 @@ from backend.nlm_client import (
     synthesize_cross_notebook, launch_cli_login, delete_cli_profile,
     rename_cli_profile,
     run_nlm_cmd, ensure_notebook_shared, batch_share_notebooks_to_accounts,
-    auto_share_study_notebooks,
+    auto_share_study_notebooks, unshare_account_from_fleet,
     fetch_profile_usage, fetch_fleet_usage,
     check_profile_auth_status
 )
@@ -305,11 +306,43 @@ async def update_profile(profile_id: str, req: ProfileUpdateRequest, _auth: bool
     return profile
 
 @app.delete("/api/profiles/{profile_id}")
-async def remove_profile(profile_id: str, _auth: bool = Depends(verify_api_access)):
+async def remove_profile(
+    profile_id: str,
+    unshare: bool = True,
+    _auth: bool = Depends(verify_api_access),
+):
     clean_id = validate_profile_id(profile_id)
     profile = await get_profile(clean_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
+
+    if unshare and profile.email:
+        try:
+            unshare_summary = await unshare_account_from_fleet(clean_id, profile.email)
+        except Exception as e:
+            logger.warning(f"Failed to unshare fleet notebooks for '{clean_id}': {e}")
+            unshare_summary = {
+                "success": False,
+                "profileId": clean_id,
+                "targetEmail": profile.email,
+                "unshared": 0,
+                "skippedOwner": 0,
+                "skippedNotShared": 0,
+                "failed": 1,
+                "results": [],
+                "error": str(e),
+            }
+    else:
+        unshare_summary = {
+            "success": True,
+            "profileId": clean_id,
+            "targetEmail": profile.email,
+            "unshared": 0,
+            "skippedOwner": 0,
+            "skippedNotShared": 0,
+            "failed": 0,
+            "results": [],
+        }
 
     await delete_profile(clean_id)
     try:
@@ -317,13 +350,29 @@ async def remove_profile(profile_id: str, _auth: bool = Depends(verify_api_acces
     except Exception as e:
         logger.warning(f"Failed to delete CLI profile: {e}")
 
-    # Remove cached notebooks belonging to this profile
+    await remove_profile_from_sharing_rules(clean_id)
+
+    # Remove cached notebooks belonging to this profile and strip its email from remaining sharedWith lists
     notebooks = await get_cached_notebooks()
-    filtered = [n for n in notebooks if n.profileId != clean_id]
+    email_lower = (profile.email or "").strip().lower()
+    filtered = []
+    for n in notebooks:
+        if n.profileId == clean_id:
+            continue
+        if email_lower and isinstance(getattr(n, "sharedWith", None), list):
+            n.sharedWith = [
+                c for c in n.sharedWith
+                if not (isinstance(c, dict) and (c.get("email") or "").strip().lower() == email_lower)
+            ]
+        filtered.append(n)
     await save_cached_notebooks(filtered)
     _invalidate_fleet_usage_cache()
 
-    return {"success": True, "message": f"Profile '{clean_id}' removed"}
+    return {
+        "success": True,
+        "message": f"Profile '{clean_id}' removed",
+        "unshareSummary": unshare_summary,
+    }
 
 @app.post("/api/profiles/{profile_id}/login")
 async def trigger_profile_login(profile_id: str, clear: bool = False, _auth: bool = Depends(verify_api_access)):

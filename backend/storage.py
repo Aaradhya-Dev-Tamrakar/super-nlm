@@ -206,3 +206,20 @@ async def save_notebook_sharing_rule(rule: NotebookSharingRule):
             rules[rule.notebook_id] = rule
         await asyncio.to_thread(_save_sharing_rules_sync, rules)
 
+
+async def remove_profile_from_sharing_rules(profile_id: str) -> int:
+    """Remove a deleted profile ID from all per-notebook sharing exclusion lists."""
+    async with _lock:
+        rules = await asyncio.to_thread(_load_sharing_rules_sync)
+        updated = 0
+        for nb_id in list(rules.keys()):
+            rule = rules[nb_id]
+            if profile_id in rule.exclude_profiles:
+                rule.exclude_profiles = [pid for pid in rule.exclude_profiles if pid != profile_id]
+                updated += 1
+                if not rule.exclude_all and not rule.exclude_profiles:
+                    del rules[nb_id]
+        if updated > 0:
+            await asyncio.to_thread(_save_sharing_rules_sync, rules)
+        return updated
+

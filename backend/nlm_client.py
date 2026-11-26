@@ -1,11 +1,13 @@
 import asyncio
 import datetime
+import importlib.util
 import json
 import logging
 import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -189,14 +191,7 @@ def _run_subprocess_sync(cmd: List[str], timeout: int, env: Optional[Dict[str, s
         }
 
 
-async def run_nlm_cmd(args: List[str], timeout: int = 60, profile_id: Optional[str] = None) -> Dict[str, Any]:
-    env = None
-    if profile_id is not None:
-        env = os.environ.copy()
-        env["NLM_PROFILE"] = profile_id
-        # Explicit account selection takes precedence over inherited cookie auth.
-        env.pop("NOTEBOOKLM_COOKIES", None)
-    cmd = [NLM_EXECUTABLE] + args
+async def _exec_subprocess(cmd: List[str], timeout: int = 60, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     logger.info(f"Running command: {' '.join(cmd)}")
     try:
         # On Windows, synchronous subprocess in thread pool is immune to IOCP pipe/reloader conflicts
@@ -249,6 +244,16 @@ async def run_nlm_cmd(args: List[str], timeout: int = 60, profile_id: Optional[s
             "stderr": str(e) or type(e).__name__,
             "success": False
         }
+
+
+async def run_nlm_cmd(args: List[str], timeout: int = 60, profile_id: Optional[str] = None) -> Dict[str, Any]:
+    env = None
+    if profile_id is not None:
+        env = os.environ.copy()
+        env["NLM_PROFILE"] = profile_id
+        # Explicit account selection takes precedence over inherited cookie auth.
+        env.pop("NOTEBOOKLM_COOKIES", None)
+    return await _exec_subprocess([NLM_EXECUTABLE] + args, timeout=timeout, env=env)
 
 async def get_cli_profiles() -> Dict[str, str]:
     """
@@ -829,6 +834,266 @@ async def auto_share_study_notebooks(
         role=role,
         respect_auto_share_rules=True,
     )
+
+
+SHARE_ROLE_REMOVE = 4
+
+_UNSHARE_RPC_SCRIPT = (
+    "import sys; "
+    "from notebooklm_tools.cli.utils import get_client; "
+    "profile, nb_id, email = sys.argv[1], sys.argv[2], sys.argv[3]; "
+    "with get_client(profile) as client: "
+    "res = client._call_rpc(client.RPC_SHARE_NOTEBOOK, [[[nb_id, [[email, None, 4]], None, [1, '']]], 1, None, [2]]); "
+    "sys.exit(0 if res is not None else 1)"
+)
+
+
+def _resolve_nlm_python() -> Optional[str]:
+    """Locate the Python executable whose environment has notebooklm_tools installed."""
+    override = os.environ.get("NLM_PYTHON_EXECUTABLE", "").strip()
+    if override and Path(override).exists():
+        return override
+
+    nlm_path = Path(NLM_EXECUTABLE)
+    if nlm_path.is_absolute() and nlm_path.parent.exists():
+        for name in ("python.exe", "python"):
+            candidate = nlm_path.parent / name
+            if candidate.exists():
+                return str(candidate)
+
+    uv_candidates = []
+    for env_var in ("APPDATA", "LOCALAPPDATA"):
+        base = os.environ.get(env_var, "").strip()
+        if base:
+            uv_candidates.append(Path(base) / "uv" / "tools" / "notebooklm-mcp-cli" / "Scripts" / "python.exe")
+    uv_candidates.append(Path.home() / ".local" / "share" / "uv" / "tools" / "notebooklm-mcp-cli" / "bin" / "python")
+    for candidate in uv_candidates:
+        if candidate.exists():
+            return str(candidate)
+
+    if importlib.util.find_spec("notebooklm_tools") is not None:
+        return sys.executable
+    return None
+
+
+async def remove_notebook_collaborator(
+    notebook_id: str,
+    owner_profile_id: str,
+    target_email: str,
+    timeout: int = 25,
+) -> Dict[str, Any]:
+    """Revoke collaborator access for target_email on notebook_id via owner_profile_id."""
+    py_exe = _resolve_nlm_python()
+    if not py_exe:
+        return {"success": False, "error": "notebooklm_tools Python runtime not found"}
+
+    env = os.environ.copy()
+    env["NLM_PROFILE"] = owner_profile_id
+    env.pop("NOTEBOOKLM_COOKIES", None)
+
+    cmd = [py_exe, "-c", _UNSHARE_RPC_SCRIPT, owner_profile_id, notebook_id, target_email]
+    res = await _exec_subprocess(cmd, timeout=timeout, env=env)
+    if res.get("success"):
+        return {"success": True}
+    return {
+        "success": False,
+        "error": res.get("stderr") or res.get("stdout") or "Unshare RPC failed",
+    }
+
+
+async def unshare_account_from_fleet(profile_id: str, target_email: str) -> Dict[str, Any]:
+    """Unshare fleet notebooks from a leaving account across remaining owner profiles."""
+    from backend.storage import get_cached_notebooks, get_profiles
+
+    email_lower = (target_email or "").strip().lower()
+    if not email_lower:
+        return {
+            "success": True,
+            "profileId": profile_id,
+            "targetEmail": target_email,
+            "unshared": 0,
+            "skippedOwner": 0,
+            "skippedNotShared": 0,
+            "failed": 0,
+            "results": [],
+        }
+
+    profiles = await get_profiles()
+    cached_notebooks = await get_cached_notebooks()
+
+    remaining_profiles = [p for p in profiles if p.id != profile_id]
+    remaining_by_id = {p.id: p for p in remaining_profiles}
+    email_to_profile = {
+        p.email.strip().lower(): p.id
+        for p in remaining_profiles
+        if getattr(p, "email", None)
+    }
+
+    candidate_ids: List[str] = []
+    seen_ids = set()
+    for n in cached_notebooks:
+        shared_emails = {
+            (c.get("email") or "").strip().lower()
+            for c in (getattr(n, "sharedWith", None) or [])
+            if isinstance(c, dict)
+        }
+        if (n.profileId == profile_id or email_lower in shared_emails) and n.id not in seen_ids:
+            seen_ids.add(n.id)
+            candidate_ids.append(n.id)
+
+    unshared = 0
+    skipped_owner = 0
+    skipped_not_shared = 0
+    failed = 0
+    results: List[Dict[str, Any]] = []
+
+    for nb_id in candidate_ids:
+        nb_entries = [n for n in cached_notebooks if n.id == nb_id]
+        nb_title = next((n.title for n in nb_entries if n.title), nb_id)
+
+        cached_owner_emails = [
+            n.ownerEmail.strip().lower()
+            for n in nb_entries
+            if getattr(n, "ownerEmail", None)
+        ]
+        if email_lower in cached_owner_emails:
+            skipped_owner += 1
+            results.append({
+                "notebookId": nb_id,
+                "notebookTitle": nb_title,
+                "status": "skipped_owner",
+                "message": "Leaving account owns this notebook",
+            })
+            continue
+
+        owner_profile_id = next(
+            (email_to_profile[oe] for oe in cached_owner_emails if oe in email_to_profile),
+            None,
+        )
+        if not owner_profile_id:
+            holding_remaining = [
+                n.profileId for n in nb_entries if n.profileId in remaining_by_id
+            ]
+            if "default" in holding_remaining:
+                owner_profile_id = "default"
+            elif any(getattr(remaining_by_id[pid], "isDefaultPro", False) for pid in holding_remaining):
+                owner_profile_id = next(
+                    pid for pid in holding_remaining
+                    if getattr(remaining_by_id[pid], "isDefaultPro", False)
+                )
+            elif "main" in holding_remaining:
+                owner_profile_id = "main"
+            elif holding_remaining:
+                owner_profile_id = holding_remaining[0]
+
+        if not owner_profile_id:
+            skipped_owner += 1
+            results.append({
+                "notebookId": nb_id,
+                "notebookTitle": nb_title,
+                "status": "skipped_no_owner",
+                "message": "No remaining profile has access to revoke sharing",
+            })
+            continue
+
+        status_res = await run_nlm_cmd(
+            ["share", "status", nb_id, "--profile", owner_profile_id, "--json"],
+            timeout=20,
+        )
+        if not status_res.get("success"):
+            failed += 1
+            results.append({
+                "notebookId": nb_id,
+                "notebookTitle": nb_title,
+                "ownerProfileId": owner_profile_id,
+                "status": "failed",
+                "message": status_res.get("stderr") or status_res.get("stdout") or "Failed to read share status",
+            })
+            continue
+
+        try:
+            data = json.loads(status_res["stdout"])
+            collaborators = data.get("collaborators")
+            if not isinstance(collaborators, list):
+                raise ValueError("Missing collaborators list")
+        except (ValueError, TypeError, AttributeError) as e:
+            failed += 1
+            results.append({
+                "notebookId": nb_id,
+                "notebookTitle": nb_title,
+                "ownerProfileId": owner_profile_id,
+                "status": "failed",
+                "message": f"Invalid share status response: {e}",
+            })
+            continue
+
+        target_collab = next(
+            (c for c in collaborators if isinstance(c, dict) and (c.get("email") or "").strip().lower() == email_lower),
+            None,
+        )
+        if target_collab is not None and target_collab.get("role") == "owner":
+            skipped_owner += 1
+            results.append({
+                "notebookId": nb_id,
+                "notebookTitle": nb_title,
+                "ownerProfileId": owner_profile_id,
+                "status": "skipped_owner",
+                "message": "Leaving account owns this notebook",
+            })
+            continue
+
+        if target_collab is None:
+            skipped_not_shared += 1
+            results.append({
+                "notebookId": nb_id,
+                "notebookTitle": nb_title,
+                "ownerProfileId": owner_profile_id,
+                "status": "skipped_not_shared",
+                "message": "Account is not a collaborator on this notebook",
+            })
+            continue
+
+        live_owner_email = next(
+            (
+                (c.get("email") or "").strip().lower()
+                for c in collaborators
+                if isinstance(c, dict) and c.get("role") == "owner" and c.get("email")
+            ),
+            None,
+        )
+        if live_owner_email and live_owner_email in email_to_profile:
+            owner_profile_id = email_to_profile[live_owner_email]
+
+        remove_res = await remove_notebook_collaborator(nb_id, owner_profile_id, email_lower)
+        if remove_res.get("success"):
+            unshared += 1
+            results.append({
+                "notebookId": nb_id,
+                "notebookTitle": nb_title,
+                "ownerProfileId": owner_profile_id,
+                "status": "unshared",
+                "message": "Collaborator access revoked",
+            })
+        else:
+            failed += 1
+            results.append({
+                "notebookId": nb_id,
+                "notebookTitle": nb_title,
+                "ownerProfileId": owner_profile_id,
+                "status": "failed",
+                "message": remove_res.get("error") or "Failed to revoke collaborator access",
+            })
+
+    return {
+        "success": failed == 0,
+        "profileId": profile_id,
+        "targetEmail": target_email,
+        "unshared": unshared,
+        "skippedOwner": skipped_owner,
+        "skippedNotShared": skipped_not_shared,
+        "failed": failed,
+        "results": results,
+    }
 
 async def check_or_share_with_pro(notebook_id: str, source_profile_id: str, pro_email: str) -> bool:
     """Backward-compatible wrapper for Pro fallback sharing."""
