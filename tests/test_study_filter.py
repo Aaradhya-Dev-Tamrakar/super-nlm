@@ -10,6 +10,7 @@ from backend.models import (
     Notebook,
     detect_course_info,
 )
+from tests.frontend_helpers import read_frontend_js_sources
 
 COURSE_CASES = [
     ("96a12a04-073e-43ca-9f6d-ca0048d63486", "CT653 - Artificial Intelligence", "CT653"),
@@ -116,8 +117,7 @@ def test_frontend_markup_and_scripts():
     assert "btn-telemetry-courses" in html, "btn-telemetry-courses missing in index.html"
     assert "Toggle Study / Course NLMs filter" in html, "U shortcut missing in shortcuts modal"
 
-    js_path = Path(__file__).resolve().parent.parent / "frontend" / "app.js"
-    js = js_path.read_text(encoding="utf-8")
+    js = read_frontend_js_sources()
 
     assert "activeCategoryFilter" in js, "activeCategoryFilter state missing in app.js"
     assert "isStudyNotebook" in js, "isStudyNotebook function missing in app.js"

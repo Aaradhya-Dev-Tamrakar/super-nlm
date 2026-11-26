@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from tests.frontend_helpers import read_frontend_js_sources
+
 
 def test_shortcuts_in_html():
     html_path = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
@@ -28,8 +30,7 @@ def test_shortcuts_in_css():
     print("  [PASS] CSS: .kbd-badge and selection styles defined.")
 
 def test_shortcuts_in_js():
-    js_path = Path(__file__).resolve().parent.parent / "frontend" / "app.js"
-    content = js_path.read_text(encoding="utf-8")
+    content = read_frontend_js_sources()
 
     # Key functions
     assert "function toggleThemeMode(" in content, "toggleThemeMode must be defined"

@@ -1,4 +1,3 @@
-import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -9,9 +8,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.models import AccountProfile
 from backend.nlm_client import _is_missing_profile_error, check_profile_auth_status
+from tests.frontend_helpers import (
+    check_all_frontend_js_syntax,
+    read_frontend_js_sources,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
-APP_JS = ROOT / "frontend" / "app.js"
 INDEX_HTML = ROOT / "frontend" / "index.html"
 
 
@@ -57,7 +59,7 @@ async def test_check_profile_auth_status_distinguishes_not_logged_in_vs_expired(
 
 
 def test_scalable_fleet_ui_controls_present_and_valid():
-    app_src = APP_JS.read_text(encoding="utf-8")
+    app_src = read_frontend_js_sources()
     html_src = INDEX_HTML.read_text(encoding="utf-8")
 
     assert "Manage Expired" in app_src
@@ -70,5 +72,4 @@ def test_scalable_fleet_ui_controls_present_and_valid():
     assert 'id="accounts-modal-filters"' in html_src
     assert 'id="sidebar-quota-dots" class="flex items-center flex-wrap' in html_src
 
-    proc = subprocess.run(["node", "--check", str(APP_JS)], capture_output=True, text=True, check=False)
-    assert proc.returncode == 0, proc.stderr or proc.stdout
+    check_all_frontend_js_syntax()
