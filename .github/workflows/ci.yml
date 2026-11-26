@@ -25,7 +25,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run pytest
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run verification suite
         run: uv run --locked --group dev python scripts/verify.py
 
       - name: Upload verification metadata

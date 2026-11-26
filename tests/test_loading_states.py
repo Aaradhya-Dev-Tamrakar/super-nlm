@@ -1,5 +1,6 @@
 from pathlib import Path
 
+
 def test_loading_states_in_html():
     html_path = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
     content = html_path.read_text(encoding="utf-8")

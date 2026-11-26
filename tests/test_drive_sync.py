@@ -1,35 +1,34 @@
-import sys
-import os
 import json
+import sys
 import tempfile
-import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient
+
 from backend.app import app
 from backend.drive_sync_service import (
-    normalize_folder_target,
     categorize_file,
     convert_ipynb_to_markdown,
-    prepare_code_file_as_markdown,
+    drive_sync_service,
+    normalize_folder_target,
     normalize_title_for_matching,
-    drive_sync_service
+    prepare_code_file_as_markdown,
 )
 from backend.models import FolderMapping
 from backend.storage import (
-    save_folder_mapping,
-    get_folder_mapping,
     delete_folder_mapping,
-    get_folder_mappings
+    get_folder_mapping,
+    get_folder_mappings,
+    save_folder_mapping,
 )
 
 client = TestClient(app)
 
 def test_normalize_folder_target():
     # Local paths
-    t1, p1 = normalize_folder_target(r"C:\Users\Aaradhya\Documents")
+    t1, _p1 = normalize_folder_target(r"C:\Users\Aaradhya\Documents")
     assert t1 == "local_folder"
 
     # Drive web folder URLs
@@ -105,6 +104,7 @@ def test_code_adapter_and_ipynb():
         assert "fs = 8000" in md_ipynb
 
 import asyncio
+
 
 def test_folder_mapping_persistence():
     async def _test():

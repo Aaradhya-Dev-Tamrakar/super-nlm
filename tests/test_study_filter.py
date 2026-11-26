@@ -1,15 +1,14 @@
 import sys
-import re
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient
+
 from backend.app import app
 from backend.models import (
     Notebook,
-    COURSE_NOTEBOOK_IDS,
-    COURSE_CODE_REGEX,
-    detect_course_info
+    detect_course_info,
 )
 
 COURSE_CASES = [
@@ -75,7 +74,7 @@ def test_api_category_filter():
         for nb_id, title in NON_COURSE_CASES
     ]
 
-    from unittest.mock import patch, AsyncMock
+    from unittest.mock import AsyncMock, patch
     with patch("backend.app.get_cached_notebooks", new_callable=AsyncMock, return_value=mock_nbs):
         res_all = client.get("/api/notebooks")
         assert res_all.status_code == 200
@@ -133,7 +132,7 @@ def test_auto_share_study_endpoint():
         Notebook(id=nb_id, title=title, profileId="main", profileName="Personal", profileEmail="test@gmail.com")
         for nb_id, title, _ in COURSE_CASES
     ]
-    from unittest.mock import patch, AsyncMock
+    from unittest.mock import AsyncMock, patch
     with patch("backend.app.get_cached_notebooks", new_callable=AsyncMock, return_value=mock_nbs), \
          patch("backend.app.auto_share_study_notebooks", new_callable=AsyncMock, return_value={"totalNotebooks": len(mock_nbs), "shared": [], "alreadyShared": [n.id for n in mock_nbs]}):
         res = client.post("/api/notebooks/auto-share-study")

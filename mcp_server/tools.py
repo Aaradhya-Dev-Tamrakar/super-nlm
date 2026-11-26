@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
@@ -27,12 +27,12 @@ def register_tools(server: MCPServer):
     async def query_notebook(
         notebook_id: str,
         query: str,
-        conversation_id: Optional[str] = None,
-        source_ids: Optional[str] = None,
+        conversation_id: str | None = None,
+        source_ids: str | None = None,
         timeout: int = 120,
         new_conversation: bool = False,
-        use_pro: Optional[bool] = None
-    ) -> Dict[str, Any]:
+        use_pro: bool | None = None
+    ) -> dict[str, Any]:
         """
         Ask questions to a Google NotebookLM notebook with automatic multi-account rotation
         or direct Pro account execution.
@@ -63,10 +63,10 @@ def register_tools(server: MCPServer):
 
     @server.tool()
     async def list_notebooks(
-        search: Optional[str] = None,
-        profile_id: Optional[str] = None,
-        category: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        search: str | None = None,
+        profile_id: str | None = None,
+        category: str | None = None
+    ) -> list[dict[str, Any]]:
         """
         List all notebooks across all connected Google accounts from the Super-NLM cache.
         Does not consume Google API quota.
@@ -104,7 +104,7 @@ def register_tools(server: MCPServer):
         return [n.model_dump() for n in notebooks]
 
     @server.tool()
-    async def list_profiles() -> List[Dict[str, Any]]:
+    async def list_profiles() -> list[dict[str, Any]]:
         """
         List all configured Google accounts in Super-NLM with their tiers, emails,
         and connection statuses.
@@ -113,7 +113,7 @@ def register_tools(server: MCPServer):
         return [p.model_dump() for p in profiles]
 
     @server.tool()
-    async def sync_notebooks() -> Dict[str, Any]:
+    async def sync_notebooks() -> dict[str, Any]:
         """
         Force a fresh sync of all notebooks from Google across every authenticated profile.
         Updates the local notebook cache and profile stats.
@@ -132,10 +132,10 @@ def register_tools(server: MCPServer):
 
     @server.tool()
     async def cross_query(
-        notebook_ids: List[str],
+        notebook_ids: list[str],
         query: str,
-        synthesizer_profile_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+        synthesizer_profile_id: str | None = None
+    ) -> dict[str, Any]:
         """
         Query multiple notebooks across different accounts simultaneously and synthesize the
         findings into a cohesive summary. Each notebook query is automatically routed and rotated.
@@ -146,7 +146,7 @@ def register_tools(server: MCPServer):
             synthesizer_profile_id: Optional profile to use for final synthesis (defaults to Pro AI).
         """
         cached_notebooks = await get_cached_notebooks()
-        refs: List[NotebookRef] = []
+        refs: list[NotebookRef] = []
         for nid in notebook_ids:
             found = next((n for n in cached_notebooks if n.id == nid), None)
             if found:
@@ -164,7 +164,7 @@ def register_tools(server: MCPServer):
         return await synthesize_cross_notebook(refs, query, synthesizer)
 
     @server.tool()
-    async def rotation_status() -> Dict[str, Any]:
+    async def rotation_status() -> dict[str, Any]:
         """
         Get real-time diagnostic information on the account rotation engine, including:
         - Monotonic global query counter
@@ -176,7 +176,7 @@ def register_tools(server: MCPServer):
         return await rotator.get_status()
 
     @server.tool()
-    async def check_fleet_health() -> Dict[str, Any]:
+    async def check_fleet_health() -> dict[str, Any]:
         """
         Proactively check the operational health of all configured Google AI Pro accounts.
         Verifies CLI credentials, active session status, in-flight loads, and cooldowns.
@@ -185,11 +185,11 @@ def register_tools(server: MCPServer):
 
     @server.tool()
     async def batch_share_notebooks(
-        notebook_ids: List[str],
-        target_profile_ids: Optional[List[str]] = None,
+        notebook_ids: list[str],
+        target_profile_ids: list[str] | None = None,
         role: str = "editor",
         auto_sync: bool = True
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Batch shares one or more notebooks across specified (or all other registered) Google accounts.
 
@@ -225,7 +225,7 @@ def register_tools(server: MCPServer):
     async def auto_share_study_courses(
         role: str = "editor",
         auto_sync: bool = True
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Automatically detects all Study / Course notebooks (e.g. CT653, EX751, CT704, EX752, ME708, EX725)
         and ensures they are automatically shared across all configured Google accounts.
@@ -252,7 +252,7 @@ def register_tools(server: MCPServer):
         return res
 
     @server.tool()
-    async def get_agenda(days: int = 7) -> Dict[str, Any]:
+    async def get_agenda(days: int = 7) -> dict[str, Any]:
         """
         Retrieves upcoming events from Google Calendar (classes, labs, exams, deadlines)
         with smart automatic matching against Google NotebookLM course/project notebooks.
@@ -267,20 +267,20 @@ def register_tools(server: MCPServer):
 
     @server.tool()
     async def schedule_batch_creation(
-        notebook_ids: List[str],
+        notebook_ids: list[str],
         artifact_type: str = "video",
         format_option: str | None = None,
         style: str = "auto_select",
-        custom_prompt: Optional[str] = None,
-        quantity: Optional[int] = None,
-        difficulty: Optional[str] = None,
-        preferred_profile_id: Optional[str] = None,
+        custom_prompt: str | None = None,
+        quantity: int | None = None,
+        difficulty: str | None = None,
+        preferred_profile_id: str | None = None,
         source_ids: list[str] | None = None,
         source_ids_by_notebook: dict[str, list[str]] | None = None,
         exclude_sources: list[str] | None = None,
         prompts: list[str] | None = None,
         request_key: str | None = None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Schedules a batch of heavy studio generations (e.g. Cinematic Videos, Audio Overviews, Study Guides)
         across multiple notebooks. Jobs are placed into an autonomous rotating multi-account queue.
@@ -327,7 +327,7 @@ def register_tools(server: MCPServer):
         return res.model_dump()
 
     @server.tool()
-    async def get_scheduled_queue(status_filter: Optional[str] = None) -> Dict[str, Any]:
+    async def get_scheduled_queue(status_filter: str | None = None) -> dict[str, Any]:
         """
         Returns the current state of the rotating multi-account creation queue,
         active worker accounts, and all pending, in-progress, completed, failed, and download-failed generation jobs.
@@ -335,8 +335,8 @@ def register_tools(server: MCPServer):
         Args:
             status_filter: Optional filter ('queued', 'scheduled', 'in_progress', 'completed', 'failed', 'download_failed', 'cancelled').
         """
-        from backend.scheduler import scheduler
         from backend.queue_bridge import forward_queue, queue_owned_elsewhere
+        from backend.scheduler import scheduler
         if queue_owned_elsewhere(scheduler):
             status = await forward_queue("status")
             if status_filter:
@@ -348,15 +348,15 @@ def register_tools(server: MCPServer):
         return {**status.model_dump(), "scheduler_running": scheduler.running, "dispatch_paused": scheduler.dispatch_paused}
 
     @server.tool()
-    async def cancel_scheduled_job(job_id: str) -> Dict[str, Any]:
+    async def cancel_scheduled_job(job_id: str) -> dict[str, Any]:
         """
         Cancels a queued or scheduled artifact generation job by its UUID.
 
         Args:
             job_id: Unique job UUID to cancel.
         """
-        from backend.scheduler import scheduler
         from backend.queue_bridge import claim_scheduler, forward_queue
+        from backend.scheduler import scheduler
         if not claim_scheduler(scheduler):
             return await forward_queue("cancel", {"job_id": job_id})
         success = await scheduler.cancel_job(job_id)
@@ -369,8 +369,8 @@ def register_tools(server: MCPServer):
         Existing queued jobs are reused. Fleet capacity and cooldowns still apply.
         Jobs use the scheduler's existing sharing and download behavior.
         """
-        from backend.scheduler import scheduler
         from backend.queue_bridge import claim_scheduler, forward_queue
+        from backend.scheduler import scheduler
         if not claim_scheduler(scheduler):
             return await forward_queue("resume")
         await scheduler.dispatch_now()
@@ -382,8 +382,8 @@ def register_tools(server: MCPServer):
 
         This does not cancel generation already submitted to Google.
         """
-        from backend.scheduler import scheduler
         from backend.queue_bridge import claim_scheduler, forward_queue
+        from backend.scheduler import scheduler
         if not claim_scheduler(scheduler):
             return await forward_queue("stop")
         await scheduler.stop()
@@ -396,8 +396,8 @@ def register_tools(server: MCPServer):
         Does not create a duplicate job. Busy accounts or cooldowns can leave it queued.
         Failed, cancelled and download-failed jobs can be retried explicitly.
         """
-        from backend.scheduler import scheduler
         from backend.queue_bridge import claim_scheduler, forward_queue
+        from backend.scheduler import scheduler
         if not claim_scheduler(scheduler):
             return await forward_queue("run-now", {"job_id": job_id})
         job = scheduler.get_job(job_id)
@@ -458,11 +458,11 @@ def register_tools(server: MCPServer):
     async def map_notebook_folder(
         notebook_id: str,
         target_path: str,
-        folder_type: Optional[str] = None,
-        display_name: Optional[str] = None,
+        folder_type: str | None = None,
+        display_name: str | None = None,
         auto_sync: bool = False,
         recursive: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Map a local filesystem folder (e.g. 'F:\\College\\Semester 7\\CT704') or a
         Google Drive Web Folder URL/ID to a NotebookLM notebook.
@@ -475,7 +475,7 @@ def register_tools(server: MCPServer):
             auto_sync: Whether to auto-check on schedule.
             recursive: Whether to scan nested subdirectories (default False).
         """
-        from datetime import datetime
+        from datetime import datetime, timezone
         from pathlib import Path
 
         from backend.drive_sync_service import (
@@ -496,14 +496,14 @@ def register_tools(server: MCPServer):
             display_name=display_name.strip() if display_name else Path(target).name,
             auto_sync=auto_sync,
             recursive=recursive,
-            last_scanned=datetime.now().isoformat()
+            last_scanned=datetime.now(timezone.utc).isoformat()
         )
         await save_folder_mapping(mapping)
         status = await drive_sync_service.get_folder_status(notebook_id)
         return status.model_dump()
 
     @server.tool()
-    async def get_folder_status(notebook_id: str) -> Dict[str, Any]:
+    async def get_folder_status(notebook_id: str) -> dict[str, Any]:
         """
         Check the status of a notebook's mapped folder, compare folder files against
         currently ingested notebook sources, list new un-ingested files and stale Drive docs,
@@ -520,8 +520,8 @@ def register_tools(server: MCPServer):
     async def sync_notebook_folder(
         notebook_id: str,
         action: str = "ingest_new",
-        selected_files: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        selected_files: list[str] | None = None
+    ) -> dict[str, Any]:
         """
         Sequentially ingest new files from the mapped folder into the notebook,
         and/or refresh stale Google Drive sources, using a 1.5s delay to protect rate limits.

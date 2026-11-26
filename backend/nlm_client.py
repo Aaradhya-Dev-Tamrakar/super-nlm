@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -31,19 +31,17 @@ logger = logging.getLogger(__name__)
 
 # Windows Process Optimization Flags & Job Object Management
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-_NLM_JOB_OBJECT = None
-_NLM_JOB_INITIALIZED = False
+_NLM_JOB_STATE: dict[str, Any] = {"handle": None, "initialized": False}
 
 
 def _get_nlm_job_object():
     """Initializes and returns a Win32 Job Object configured to kill children on close."""
-    global _NLM_JOB_OBJECT, _NLM_JOB_INITIALIZED
     if sys.platform != "win32":
         return None
-    if _NLM_JOB_INITIALIZED:
-        return _NLM_JOB_OBJECT
+    if _NLM_JOB_STATE["initialized"]:
+        return _NLM_JOB_STATE["handle"]
 
-    _NLM_JOB_INITIALIZED = True
+    _NLM_JOB_STATE["initialized"] = True
     try:
         import ctypes
         from ctypes import wintypes
@@ -107,8 +105,8 @@ def _get_nlm_job_object():
             kernel32.CloseHandle(h_job)
             return None
 
-        _NLM_JOB_OBJECT = h_job
-        return _NLM_JOB_OBJECT
+        _NLM_JOB_STATE["handle"] = h_job
+        return _NLM_JOB_STATE["handle"]
     except Exception:
         return None
 
@@ -138,12 +136,12 @@ def _bind_to_nlm_job(proc_or_pid: Any) -> bool:
                     return bool(kernel32.AssignProcessToJobObject(h_job, h_proc))
                 finally:
                     kernel32.CloseHandle(h_proc)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to assign process to Win32 job object: %s", exc)
     return False
 
 
-def _run_subprocess_sync(cmd: List[str], timeout: int, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+def _run_subprocess_sync(cmd: list[str], timeout: int, env: dict[str, str] | None = None) -> dict[str, Any]:
     extra_kwargs = {}
     if sys.platform == "win32":
         extra_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
@@ -191,7 +189,7 @@ def _run_subprocess_sync(cmd: List[str], timeout: int, env: Optional[Dict[str, s
         }
 
 
-async def _exec_subprocess(cmd: List[str], timeout: int = 60, env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+async def _exec_subprocess(cmd: list[str], timeout: int = 60, env: dict[str, str] | None = None) -> dict[str, Any]:
     logger.info(f"Running command: {' '.join(cmd)}")
     try:
         # On Windows, synchronous subprocess in thread pool is immune to IOCP pipe/reloader conflicts
@@ -229,8 +227,8 @@ async def _exec_subprocess(cmd: List[str], timeout: int = 60, env: Optional[Dict
         try:
             proc.kill()
             await proc.wait()
-        except Exception:
-            pass
+        except Exception as cleanup_err:
+            logger.debug("Process cleanup after timeout ignored error: %s", cleanup_err)
         return {
             "returncode": -1,
             "stdout": "",
@@ -246,16 +244,16 @@ async def _exec_subprocess(cmd: List[str], timeout: int = 60, env: Optional[Dict
         }
 
 
-async def run_nlm_cmd(args: List[str], timeout: int = 60, profile_id: Optional[str] = None) -> Dict[str, Any]:
+async def run_nlm_cmd(args: list[str], timeout: int = 60, profile_id: str | None = None) -> dict[str, Any]:
     env = None
     if profile_id is not None:
         env = os.environ.copy()
         env["NLM_PROFILE"] = profile_id
         # Explicit account selection takes precedence over inherited cookie auth.
         env.pop("NOTEBOOKLM_COOKIES", None)
-    return await _exec_subprocess([NLM_EXECUTABLE] + args, timeout=timeout, env=env)
+    return await _exec_subprocess([NLM_EXECUTABLE, *args], timeout=timeout, env=env)
 
-async def get_cli_profiles() -> Dict[str, str]:
+async def get_cli_profiles() -> dict[str, str]:
     """
     Parses 'nlm login profile list' to discover known CLI profiles and associated emails.
     Returns a dict of {profile_id: email}.
@@ -267,8 +265,8 @@ async def get_cli_profiles() -> Dict[str, str]:
         # Available profiles:
         #   default: aaradhyadevtmr@gmail.com
         #   work: user@work.com
-        for line in res["stdout"].splitlines():
-            line = line.strip()
+        for raw_line in res["stdout"].splitlines():
+            line = raw_line.strip()
             if ":" in line and not line.startswith("Available"):
                 parts = line.split(":", 1)
                 p_id = parts[0].strip()
@@ -276,7 +274,7 @@ async def get_cli_profiles() -> Dict[str, str]:
                 profiles[p_id] = p_email
     return profiles
 
-async def fetch_notebooks_for_profile(profile: AccountProfile, retries: int = 1) -> List[Notebook]:
+async def fetch_notebooks_for_profile(profile: AccountProfile, retries: int = 1) -> list[Notebook]:
     """
     Fetches all notebooks for a given profile with error resilience and transient retry.
     """
@@ -309,7 +307,7 @@ async def fetch_notebooks_for_profile(profile: AccountProfile, retries: int = 1)
         return notebooks
     except Exception as e:
         logger.error(f"Error parsing JSON from profile {profile.id}: {e}")
-        raise RuntimeError(f"Invalid JSON response from profile {profile.id}: {e}")
+        raise RuntimeError(f"Invalid JSON response from profile {profile.id}: {e}") from e
 
 def _is_missing_profile_error(err_text: str) -> bool:
     lower = (err_text or "").lower()
@@ -325,9 +323,9 @@ def _is_missing_profile_error(err_text: str) -> bool:
 
 
 async def fetch_all_notebooks_concurrently(
-    profiles: List[AccountProfile],
-    fallback_cached: Optional[List[Notebook]] = None
-) -> Dict[str, Any]:
+    profiles: list[AccountProfile],
+    fallback_cached: list[Notebook] | None = None
+) -> dict[str, Any]:
     """
     Fetches notebooks for all profiles with bounded concurrency (Semaphore=3).
     Retains cached notebooks if a profile fails to sync.
@@ -341,15 +339,15 @@ async def fetch_all_notebooks_concurrently(
     tasks = [_fetch_with_sem(p) for p in profiles]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    all_notebooks: List[Notebook] = []
-    profile_counts: Dict[str, int] = {}
-    cached_by_profile: Dict[str, List[Notebook]] = {}
+    all_notebooks: list[Notebook] = []
+    profile_counts: dict[str, int] = {}
+    cached_by_profile: dict[str, list[Notebook]] = {}
     if fallback_cached:
         for n in fallback_cached:
             cached_by_profile.setdefault(n.profileId, []).append(n)
 
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    for profile, res in zip(profiles, results):
+    for profile, res in zip(profiles, results, strict=False):
         profile.lastAuthCheck = now_iso
         if isinstance(res, list):
             all_notebooks.extend(res)
@@ -386,7 +384,7 @@ async def fetch_all_notebooks_concurrently(
         "profile_counts": profile_counts
     }
 
-async def check_profile_auth_status(profile: AccountProfile, timeout: int = 20) -> Dict[str, Any]:
+async def check_profile_auth_status(profile: AccountProfile, timeout: int = 20) -> dict[str, Any]:
     """
     Probes authentication status for a single profile using 'nlm login --check -p <id>'.
     Updates profile status and returns diagnosis.
@@ -442,11 +440,11 @@ async def query_notebook(
     profile_id: str,
     notebook_id: str,
     question: str,
-    conversation_id: Optional[str] = None,
-    source_ids: Optional[Any] = None,
+    conversation_id: str | None = None,
+    source_ids: Any | None = None,
     timeout: int = 120,
     new_conversation: bool = False
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Runs a query against a specific notebook under a specific profile.
     Supports multi-turn context via conversation_id.
@@ -480,8 +478,8 @@ async def query_notebook(
                 err_data = json.loads(clean_stdout)
                 if isinstance(err_data, dict):
                     err_msg = err_data.get("error") or err_data.get("message") or ""
-            except Exception:
-                pass
+            except (ValueError, TypeError) as parse_err:
+                logger.debug("CLI error stdout was not JSON: %s", parse_err)
         if not err_msg:
             err_msg = clean_stderr or clean_stdout or "Query failed or timed out"
 
@@ -549,7 +547,7 @@ async def query_notebook(
             "raw": res.get("stdout")
         }
 
-def classify_quota_error(err: str) -> Optional[str]:
+def classify_quota_error(err: str) -> str | None:
     """
     Classifies a quota/rate limit error into:
       - 'daily': Daily hard quota cap reached (resets at midnight UTC).
@@ -603,7 +601,7 @@ async def ensure_notebook_shared(notebook_id: str, source_profile_id: str, targe
         try:
             data = json.loads(status_res["stdout"])
             if not isinstance(data, dict) or not isinstance(data.get("collaborators"), list):
-                raise ValueError("Missing collaborators list")
+                raise TypeError("Missing collaborators list")
             collaborators = data.get("collaborators", [])
             for c in collaborators:
                 if c.get("email", "").lower() == target_email.lower():
@@ -631,11 +629,11 @@ async def ensure_notebook_shared(notebook_id: str, source_profile_id: str, targe
     return True
 
 async def batch_share_notebooks_to_accounts(
-    notebook_ids: List[str],
-    target_profile_ids: Optional[List[str]] = None,
+    notebook_ids: list[str],
+    target_profile_ids: list[str] | None = None,
     role: str = "editor",
     respect_auto_share_rules: bool = False
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Batch shares multiple notebooks across specified (or all registered) Google accounts.
     When respect_auto_share_rules=True, skips notebooks excluded via sharing_rules.json and
@@ -819,9 +817,9 @@ async def batch_share_notebooks_to_accounts(
     }
 
 async def auto_share_study_notebooks(
-    notebooks: Optional[List[Any]] = None,
+    notebooks: list[Any] | None = None,
     role: str = "editor"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Identifies all unique study course notebooks (detected via detect_course_info or is_study=True)
     and automatically batch shares them across all registered Google accounts as editor.
@@ -875,7 +873,7 @@ _UNSHARE_RPC_SCRIPT = (
 )
 
 
-def _resolve_nlm_python() -> Optional[str]:
+def _resolve_nlm_python() -> str | None:
     """Locate the Python executable whose environment has notebooklm_tools installed."""
     override = os.environ.get("NLM_PYTHON_EXECUTABLE", "").strip()
     if override and Path(override).exists():
@@ -908,7 +906,7 @@ async def remove_notebook_collaborator(
     owner_profile_id: str,
     target_email: str,
     timeout: int = 25,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Revoke collaborator access for target_email on notebook_id via owner_profile_id."""
     py_exe = _resolve_nlm_python()
     if not py_exe:
@@ -928,7 +926,7 @@ async def remove_notebook_collaborator(
     }
 
 
-async def unshare_account_from_fleet(profile_id: str, target_email: str) -> Dict[str, Any]:
+async def unshare_account_from_fleet(profile_id: str, target_email: str) -> dict[str, Any]:
     """Unshare fleet notebooks from a leaving account across remaining owner profiles."""
     from backend.storage import get_cached_notebooks, get_profiles
 
@@ -956,7 +954,7 @@ async def unshare_account_from_fleet(profile_id: str, target_email: str) -> Dict
         if getattr(p, "email", None)
     }
 
-    candidate_ids: List[str] = []
+    candidate_ids: list[str] = []
     seen_ids = set()
     for n in cached_notebooks:
         shared_emails = {
@@ -972,7 +970,7 @@ async def unshare_account_from_fleet(profile_id: str, target_email: str) -> Dict
     skipped_owner = 0
     skipped_not_shared = 0
     failed = 0
-    results: List[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
 
     for nb_id in candidate_ids:
         nb_entries = [n for n in cached_notebooks if n.id == nb_id]
@@ -1042,7 +1040,7 @@ async def unshare_account_from_fleet(profile_id: str, target_email: str) -> Dict
             data = json.loads(status_res["stdout"])
             collaborators = data.get("collaborators")
             if not isinstance(collaborators, list):
-                raise ValueError("Missing collaborators list")
+                raise TypeError("Missing collaborators list")
         except (ValueError, TypeError, AttributeError) as e:
             failed += 1
             results.append({
@@ -1130,10 +1128,10 @@ async def query_notebook_with_pro_fallback(
     profile_id: str,
     notebook_id: str,
     question: str,
-    conversation_id: Optional[str] = None,
-    pro_profile_id: Optional[str] = None,
-    pro_email: Optional[str] = None
-) -> Dict[str, Any]:
+    conversation_id: str | None = None,
+    pro_profile_id: str | None = None,
+    pro_email: str | None = None
+) -> dict[str, Any]:
     """
     Queries a notebook under its home profile. If a rate limit or quota exhaustion
     is encountered and a Pro profile is configured, automatically shares the notebook
@@ -1186,9 +1184,9 @@ async def query_notebook_with_pro_fallback(
 
 async def synthesize_with_gemini(
     question: str,
-    sub_results: List[Dict[str, Any]],
-    api_key: Optional[str] = None
-) -> Dict[str, Any]:
+    sub_results: list[dict[str, Any]],
+    api_key: str | None = None
+) -> dict[str, Any]:
     """
     Second-stage synthesis pass:
     Takes answers and citations retrieved from multiple Google notebooks and synthesizes
@@ -1299,10 +1297,10 @@ async def synthesize_with_gemini(
         }
 
 async def synthesize_cross_notebook(
-    notebooks: List[NotebookRef],
+    notebooks: list[NotebookRef],
     question: str,
     synthesizer_profile_id: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Stage 1: Queries multiple notebooks concurrently via nlm with quota fallback, retries, and deterministic ordering.
     Stage 2: Synthesizes the retrieved knowledge into a stable, unified comparative brief via Google Gemini.
@@ -1422,7 +1420,7 @@ def launch_cli_login(profile_id: str, clear: bool = True):
     if clear:
         flags.append("--clear")
 
-    cmd_args = [NLM_EXECUTABLE] + flags
+    cmd_args = [NLM_EXECUTABLE, *flags]
 
     if sys.platform == "win32":
         quoted_cmd = subprocess.list2cmdline(cmd_args)
@@ -1509,7 +1507,7 @@ async def fetch_profile_usage(profile: AccountProfile, timeout: int = 25) -> Pro
             fetched_at=now_iso
         )
 
-async def fetch_fleet_usage(profiles: List[AccountProfile]) -> FleetUsageResponse:
+async def fetch_fleet_usage(profiles: list[AccountProfile]) -> FleetUsageResponse:
     """
     Concurrently fetches usage limits for all profiles with bounded concurrency (Semaphore=3).
     Computes aggregate metrics (average rolling usage, healthy/warning/critical counts).
@@ -1522,7 +1520,7 @@ async def fetch_fleet_usage(profiles: List[AccountProfile]) -> FleetUsageRespons
             return await fetch_profile_usage(p)
 
     tasks = [_fetch_with_sem(p) for p in profiles]
-    results: List[ProfileUsage] = await asyncio.gather(*tasks)
+    results: list[ProfileUsage] = await asyncio.gather(*tasks)
 
     connected_count = sum(1 for r in results if r.status == "connected")
     rolling_percents = []
@@ -1563,13 +1561,13 @@ async def create_studio_artifact(
     profile_id: str,
     notebook_id: str,
     artifact_type: str = "video",
-    format_option: Optional[str] = None,
-    style: Optional[str] = None,
-    custom_prompt: Optional[str] = None,
-    quantity: Optional[int] = None,
-    difficulty: Optional[str] = None,
-    source_ids: Optional[List[str]] = None
-) -> Dict[str, Any]:
+    format_option: str | None = None,
+    style: str | None = None,
+    custom_prompt: str | None = None,
+    quantity: int | None = None,
+    difficulty: str | None = None,
+    source_ids: list[str] | None = None
+) -> dict[str, Any]:
     """
     Triggers creation of a studio artifact (video, audio, report, quiz, flashcards, mindmap, slides, etc.)
     using 'nlm <artifact_type> create <notebook_id> --profile <profile_id> --confirm [flags]'.
@@ -1620,7 +1618,7 @@ async def create_studio_artifact(
     res = await run_nlm_cmd(args, timeout=90)
     return res
 
-async def get_studio_status(profile_id: str, notebook_id: str) -> List[Dict[str, Any]]:
+async def get_studio_status(profile_id: str, notebook_id: str) -> list[dict[str, Any]]:
     """
     Fetches the studio artifact status list for a given notebook and profile.
     Returns a list of dicts with artifact details (id, type, status, title, created_at).
@@ -1645,9 +1643,9 @@ async def download_studio_artifact(
     profile_id: str,
     notebook_id: str,
     artifact_type: str,
-    artifact_id: Optional[str],
+    artifact_id: str | None,
     output_filepath: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Downloads a studio artifact to the specified local file path.
     """

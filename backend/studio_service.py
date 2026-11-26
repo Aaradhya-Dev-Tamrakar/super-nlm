@@ -82,7 +82,7 @@ class StudioCommandError(RuntimeError):
 async def inspect_command(
     args: list[str], stage: str, notebook_id: str, profile_id: str
 ) -> Any:
-    result = await run_nlm_cmd(args + ["--profile", profile_id, "--json"], timeout=45)
+    result = await run_nlm_cmd([*args, "--profile", profile_id, "--json"], timeout=45)
     data = parse_payload(result.get("stdout", ""))
     if not result.get("success") or (
         isinstance(data, dict) and data.get("status") == "error"

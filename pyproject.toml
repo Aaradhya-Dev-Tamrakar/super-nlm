@@ -9,7 +9,7 @@ dependencies = [
     "uvicorn>=0.30.0",
     "pydantic>=2.7.0",
     "httpx>=0.27.0",
-    "aiosqlite>=0.20.0",
+    "orjson>=3.10.0",
     "qrcode>=7.4.2",
     "mcp>=2.0.0",
     "icalendar>=5.0.13",
@@ -30,10 +30,53 @@ packages = ["backend", "mcp_server"]
 [tool.uv]
 # Optimized for Windows Dev Drive (ReFS) with Block Cloning / Copy-on-Write
 link-mode = "clone"
-cache-dir = "F:/.uv-cache"
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=0.24.0",
+    "ruff>=0.11.0",
 ]
+
+[tool.ruff]
+target-version = "py310"
+exclude = [
+    ".agents",
+    ".venv",
+    "graphify-out",
+    "verification-results",
+    "data",
+    "downloads",
+    "tools",
+    "chat_history",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+    "ASYNC",
+    "DTZ",
+    "G",
+    "PIE",
+    "PLW",
+    "RUF",
+    "TRY004",
+    "S110",
+    "S112",
+]
+ignore = [
+    "E501",
+    "G004",
+    "RUF001",
+    "RUF006",
+    "ASYNC110",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["E402", "ASYNC240"]
+"scripts/**/*.py" = ["E402"]

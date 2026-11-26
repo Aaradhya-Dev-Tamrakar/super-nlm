@@ -1,18 +1,28 @@
-import re
-import logging
 import asyncio
-from datetime import datetime, date, time, timedelta, timezone
-from typing import List, Optional, Dict, Any, Tuple
+import logging
+import re
+from datetime import date, datetime, time, timedelta, timezone
+
 import httpx
 import icalendar
 import recurring_ical_events
 from dateutil import tz
 
-from backend.config import GOOGLE_CALENDAR_ICAL_URL, CALENDAR_CACHE_TTL_SECONDS
+from backend.config import (
+    CALENDAR_CACHE_TTL_SECONDS,
+    GOOGLE_CALENDAR_ICAL_URL,
+    SUPER_NLM_DEFAULT_EMAIL,
+    load_user_catalog,
+)
 from backend.models import (
-    CalendarAgendaResponse, CalendarAgendaEvent, MatchedNotebookSummary, Notebook,
-    DEFAULT_COURSE_NOTEBOOK_MAP, BIASAPERTURE_NOTEBOOK_ID, SPARK_NOTEBOOK_ID,
-    AERO_NOTEBOOK_ID, ELECTIVE_I_NOTEBOOK_ID
+    BIASAPERTURE_NOTEBOOK_ID,
+    DEFAULT_COURSE_NOTEBOOK_MAP,
+    ELECTIVE_I_NOTEBOOK_ID,
+    SPARK_NOTEBOOK_ID,
+    CalendarAgendaEvent,
+    CalendarAgendaResponse,
+    MatchedNotebookSummary,
+    Notebook,
 )
 
 logger = logging.getLogger("super_nlm.calendar")
@@ -26,13 +36,14 @@ ACRONYM_TO_KEYWORDS = {
     "O&M": ["organization and management", "me708"],
     "WC": ["wireless communications", "ex751"],
     "AERO": ["aeronautical telecommunication", "ex725", "aero"],
+    **load_user_catalog().get("acronym_to_keywords", {}),
 }
 
 COURSE_CODE_REGEX = re.compile(r'\b([A-Z]{2,4}\s*\d{3}(?:\s*\d{2})?)\b', re.IGNORECASE)
 
 class CalendarService:
     def __init__(self):
-        self._cache_raw_ics: Optional[str] = None
+        self._cache_raw_ics: str | None = None
         self._last_fetch_time: float = 0.0
         self._lock = asyncio.Lock()
 
@@ -50,16 +61,16 @@ class CalendarService:
                 ident = ident.replace("%40", "@")
                 if "@" in ident:
                     return ident
-        except Exception:
-            pass
-        return "aaradhyadevtmr@gmail.com"
+        except Exception as exc:
+            logger.debug("Could not parse calendar email from iCal URL: %s", exc)
+        return SUPER_NLM_DEFAULT_EMAIL
 
     async def fetch_raw_ics(self, force_refresh: bool = False) -> str:
         """Fetch the .ics calendar string, using in-memory cache when within TTL."""
         if not self.is_configured():
             raise ValueError("Google Calendar iCal URL is not configured in .env")
 
-        now_ts = datetime.now().timestamp()
+        now_ts = datetime.now(timezone.utc).timestamp()
         async with self._lock:
             if not force_refresh and self._cache_raw_ics and (now_ts - self._last_fetch_time < CALENDAR_CACHE_TTL_SECONDS):
                 return self._cache_raw_ics
@@ -77,7 +88,7 @@ class CalendarService:
             self._last_fetch_time = now_ts
             return raw_ics
 
-    def _match_event_to_notebook(self, summary: str, description: str, notebooks: List[Notebook]) -> Optional[MatchedNotebookSummary]:
+    def _match_event_to_notebook(self, summary: str, description: str, notebooks: list[Notebook]) -> MatchedNotebookSummary | None:
         """
         Smart matching of an event to a notebook using:
         1. Explicit course codes (e.g. CT704, EX751)
@@ -92,7 +103,7 @@ class CalendarService:
 
         def _is_copy(title: str) -> bool:
             t = title.lower().strip()
-            return t.startswith("copy ") or t.startswith("copy of")
+            return t.startswith(("copy ", "copy of"))
 
         # 1. Match by Course Code in event text (e.g. CT653, EX751, ME708, CT704)
         found_codes = COURSE_CODE_REGEX.findall(combined_text)
@@ -225,10 +236,11 @@ class CalendarService:
                             break
                 if candidates:
                     canonical_id = DEFAULT_COURSE_NOTEBOOK_MAP.get(acronym)
-                    def _acronym_sort_key(nb):
-                        nb_id = getattr(nb, 'id', '')
-                        title = getattr(nb, 'title', '')
-                        is_canonical = (nb_id == canonical_id)
+
+                    def _acronym_sort_key(nb, expected_id=canonical_id):
+                        nb_id = getattr(nb, "id", "")
+                        title = getattr(nb, "title", "")
+                        is_canonical = nb_id == expected_id
                         return (not is_canonical, _is_copy(title))
 
                     candidates.sort(key=_acronym_sort_key)
@@ -303,7 +315,7 @@ class CalendarService:
             return "class"
         return "general"
 
-    async def get_agenda(self, notebooks: List[Notebook], days: int = 7, force_refresh: bool = False) -> CalendarAgendaResponse:
+    async def get_agenda(self, notebooks: list[Notebook], days: int = 7, force_refresh: bool = False) -> CalendarAgendaResponse:
         """
         Fetch and parse events for [today, today + days], matching events with notebooks.
         """
@@ -328,8 +340,8 @@ class CalendarService:
 
         events_in_range = recurring_ical_events.of(cal).between(today_start, window_end)
 
-        today_events: List[CalendarAgendaEvent] = []
-        upcoming_events: List[CalendarAgendaEvent] = []
+        today_events: list[CalendarAgendaEvent] = []
+        upcoming_events: list[CalendarAgendaEvent] = []
         matched_counter = 0
 
         for comp in events_in_range:
@@ -339,7 +351,7 @@ class CalendarService:
             summary = str(comp.get("SUMMARY", "Untitled Event")).strip()
             description = str(comp.get("DESCRIPTION", "")).strip()
             location = str(comp.get("LOCATION", "")).strip()
-            uid = str(comp.get("UID", f"{summary}_{datetime.now().timestamp()}"))
+            uid = str(comp.get("UID", f"{summary}_{datetime.now(timezone.utc).timestamp()}"))
 
             dtstart_prop = comp.get("DTSTART")
             dtend_prop = comp.get("DTEND")

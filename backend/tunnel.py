@@ -1,12 +1,12 @@
-import os
+import atexit
+import logging
 import re
-import sys
 import subprocess
+import sys
 import threading
 import urllib.request
-import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Optional, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
 CLOUDFLARED_URL = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
 CLOUDFLARED_EXE = TOOLS_DIR / "cloudflared.exe"
 
-def ensure_cloudflared() -> Optional[Path]:
+def ensure_cloudflared() -> Path | None:
     """Ensures cloudflared.exe is available, downloading it if needed."""
     # 1. Check if already installed in system PATH
     import shutil
@@ -54,10 +54,9 @@ def print_qr_code(url: str):
         qr.add_data(url)
         print(" 📷 Scan with your phone camera to open instantly:")
         qr.print_ascii(invert=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not print QR code: %s", exc)
 
-import atexit
 
 def _cleanup_tunnel_proc(p: subprocess.Popen):
     try:
@@ -67,10 +66,10 @@ def _cleanup_tunnel_proc(p: subprocess.Popen):
     except Exception:
         try:
             p.kill()
-        except Exception:
-            pass
+        except Exception as kill_err:
+            logger.debug("Failed to kill tunnel process: %s", kill_err)
 
-def start_cloudflare_tunnel(local_port: int, on_url_found: Optional[Callable[[str], None]] = None) -> Optional[subprocess.Popen]:
+def start_cloudflare_tunnel(local_port: int, on_url_found: Callable[[str], None] | None = None) -> subprocess.Popen | None:
     """
     Starts an ephemeral Cloudflare Quick Tunnel forwarding to http://127.0.0.1:{local_port}.
     Captures the public https://*.trycloudflare.com URL, copies it to the clipboard,
@@ -115,11 +114,11 @@ def start_cloudflare_tunnel(local_port: int, on_url_found: Optional[Callable[[st
                     copied = copy_to_clipboard(public_url)
 
                     print("\n" + "="*65)
-                    print(f" 🌍 PUBLIC CLOUDFLARE TUNNEL ACTIVE:")
+                    print(" 🌍 PUBLIC CLOUDFLARE TUNNEL ACTIVE:")
                     print(f" 🔗 {public_url}")
                     if copied:
-                        print(f" 📋 [COPIED TO CLIPBOARD!] Press Ctrl+V to paste anywhere.")
-                    print(f" 📱 Access this URL from your phone, tablet, or laptop anywhere!")
+                        print(" 📋 [COPIED TO CLIPBOARD!] Press Ctrl+V to paste anywhere.")
+                    print(" 📱 Access this URL from your phone, tablet, or laptop anywhere!")
                     print("="*65 + "\n")
 
                     # 2. Print QR Code for instant phone camera scanning

@@ -5,16 +5,15 @@ Deterministic academic folder scaffolder and syllabus extractor for Year IV Part
 Replicates the proven structure of IV-I while supporting modular, undecided Electives.
 """
 
-import os
 import re
-import sys
 import shutil
+import sys
 from pathlib import Path
 
 BASE_DIR = Path(r"D:\Misc Aaradhya\Electronics (NEW 075-079)\[IV-II]")
 SYLLABUS_MD = BASE_DIR / "BEIE_IV_II_Study_Syllabus.md"
 
-def extract_section(content: str, header_regex: str, next_header_regex: str = None) -> str:
+def extract_section(content: str, header_regex: str, next_header_regex: str | None = None) -> str:
     """Extracts a section from markdown between header_regex and next_header_regex."""
     match = re.search(header_regex, content, re.MULTILINE)
     if not match:
@@ -28,7 +27,7 @@ def extract_section(content: str, header_regex: str, next_header_regex: str = No
     return content[start_pos:].strip()
 
 def main(dry_run: bool = False):
-    print(f"=== Starting IV-II Scaffolding ===")
+    print("=== Starting IV-II Scaffolding ===")
     print(f"Target Directory: {BASE_DIR}")
     print(f"Dry Run: {dry_run}")
 
@@ -40,7 +39,7 @@ def main(dry_run: bool = False):
         print(f"ERROR: Syllabus markdown does not exist: {SYLLABUS_MD}")
         sys.exit(1)
 
-    with open(SYLLABUS_MD, "r", encoding="utf-8") as f:
+    with open(SYLLABUS_MD, encoding="utf-8") as f:
         full_syllabus = f.read()
 
     # 1. Core Subjects Scaffolding
@@ -150,9 +149,8 @@ This hub consolidates official TU/IOE past examination questions, solution manua
 
     # 3. Modular Elective II Options Scaffolding
     el2_dir = BASE_DIR / "Elective II"
-    if not el2_dir.exists():
-        if not dry_run:
-            el2_dir.mkdir(parents=True, exist_ok=True)
+    if not el2_dir.exists() and not dry_run:
+        el2_dir.mkdir(parents=True, exist_ok=True)
 
     elective_ii_options = [
         {"code": "CT 765 02", "name": "Agile Software Development", "folder": "CT 765 02 - Agile Software Development", "regex": r"^### 8\.1 Agile Software Development", "next_regex": r"^### 8\.2 Networking with IPv6"},
@@ -191,9 +189,8 @@ This hub consolidates official TU/IOE past examination questions, solution manua
 
     # 4. Modular Elective III Options Scaffolding
     el3_dir = BASE_DIR / "Elective III"
-    if not el3_dir.exists():
-        if not dry_run:
-            el3_dir.mkdir(parents=True, exist_ok=True)
+    if not el3_dir.exists() and not dry_run:
+        el3_dir.mkdir(parents=True, exist_ok=True)
 
     elective_iii_options = [
         {"code": "CT 785 03", "name": "Multimedia System", "folder": "Multimedia System", "regex": r"^### 9\.1 Multimedia System", "next_regex": r"^### 9\.2 Enterprise Application Design and Development"},

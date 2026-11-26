@@ -1,12 +1,14 @@
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import pytest
 from fastapi.testclient import TestClient
-from backend.models import Notebook
-from backend.calendar_service import calendar_service, CalendarService
+
 from backend.app import app
+from backend.calendar_service import CalendarService
+from backend.models import Notebook
+
 
 def test_calendar_service_matching():
     svc = CalendarService()

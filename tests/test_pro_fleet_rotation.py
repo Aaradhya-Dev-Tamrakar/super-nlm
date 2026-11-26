@@ -1,15 +1,18 @@
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import asyncio
 from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 
+from backend.app import app
 from backend.models import AccountProfile
 from mcp_server.rotator import AccountRotator
-from backend.app import app
 from mcp_server.server import create_server
+
 
 def get_mock_six_pro_profiles():
     return [
@@ -29,7 +32,7 @@ def test_pro_fleet_round_robin_equalization():
         with patch.object(rotator, "get_active_profiles", return_value=profiles):
             dispatched_nodes = []
             for _ in range(6):
-                profile, q_num = await rotator.pick_next_profile(require_pro=True)
+                profile, _q_num = await rotator.pick_next_profile(require_pro=True)
                 dispatched_nodes.append(profile.id)
                 
             # Verify all 6 distinct Pro nodes were picked across 6 dispatches
