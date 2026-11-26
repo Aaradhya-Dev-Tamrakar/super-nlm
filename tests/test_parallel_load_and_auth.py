@@ -74,7 +74,9 @@ def test_create_profile_with_login_sets_checking_status():
 
 
 def test_frontend_parallel_load_and_auth_status_separation():
-    app_js = (Path(__file__).resolve().parent.parent / "frontend" / "app.js").read_text(encoding="utf-8")
+    from tests.frontend_helpers import read_frontend_js_sources
+
+    app_js = read_frontend_js_sources()
     assert "await Promise.all([loadProfiles(), loadNotebooks()])" in app_js
     assert "p.status === 'expired' || p.status === 'not_logged_in'" not in app_js
     assert "pollProfileAuthCompletion" in app_js

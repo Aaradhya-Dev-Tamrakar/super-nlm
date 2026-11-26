@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from tests.frontend_helpers import read_frontend_js_sources
+
 
 def test_loading_states_in_html():
     html_path = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
@@ -23,8 +25,7 @@ def test_loading_states_in_css():
     assert ".skeleton-card" in content, "Staggered skeleton card delay rules must be defined"
 
 def test_loading_states_in_js():
-    js_path = Path(__file__).resolve().parent.parent / "frontend" / "app.js"
-    content = js_path.read_text(encoding="utf-8")
+    content = read_frontend_js_sources()
     assert "function setGlobalLoading(" in content, "setGlobalLoading must be defined in app.js"
     assert "function setSyncStatus(" in content, "setSyncStatus must be defined in app.js"
     assert "function startThinkingTimer(" in content, "startThinkingTimer must be defined in app.js"
