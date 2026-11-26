@@ -1285,6 +1285,20 @@ async function handleSyncAll() {
 
 // ----------------- RENDERING -----------------
 
+function partitionProfilesByTier(profiles) {
+  const proProfiles = [];
+  const standardProfiles = [];
+  for (const p of (profiles || [])) {
+    if (p.isDefaultPro || p.tier === 'pro') {
+      proProfiles.push(p);
+    } else {
+      standardProfiles.push(p);
+    }
+  }
+  proProfiles.sort((a, b) => Number(Boolean(b.isDefaultPro)) - Number(Boolean(a.isDefaultPro)));
+  return { proProfiles, standardProfiles };
+}
+
 function renderAccountPills() {
   const container = document.getElementById('account-pills-container');
   if (!container) return;
@@ -1316,8 +1330,9 @@ function renderAccountPills() {
   });
   container.appendChild(allPill);
 
-  // Individual Account Pills
-  state.profiles.forEach(p => {
+  // Individual Account Pills (AI Pro Family Plan first, then Standard Accounts)
+  const { proProfiles, standardProfiles } = partitionProfilesByTier(state.profiles);
+  const appendProfilePill = (p) => {
     const isExpired = p.status === 'expired';
     const count = state.notebooks.filter(n => n.profileId === p.id).length;
     const pill = createPill({
@@ -1337,7 +1352,16 @@ function renderAccountPills() {
       renderNotebooksGrid();
     });
     container.appendChild(pill);
-  });
+  };
+
+  proProfiles.forEach(appendProfilePill);
+  if (proProfiles.length > 0 && standardProfiles.length > 0) {
+    const divider = document.createElement('span');
+    divider.className = 'w-px h-5 bg-[var(--m3-outline-variant)] mx-0.5 shrink-0';
+    divider.setAttribute('aria-hidden', 'true');
+    container.appendChild(divider);
+  }
+  standardProfiles.forEach(appendProfilePill);
 
   // Add Account shortcut button
   const addBtn = document.createElement('button');
@@ -1387,13 +1411,13 @@ function renderSidebarAccounts() {
     </button>
   `;
 
-  state.profiles.forEach(p => {
+  const renderSidebarProfileBtn = (p) => {
     const isExpired = p.status === 'expired';
     const count = state.notebooks.filter(n => n.profileId === p.id).length;
     const isActive = state.activeProfileFilter === p.id;
     const isPro = p.isDefaultPro || p.tier === 'pro';
 
-    html += `
+    return `
       <button
         type="button"
         data-filter="${escapeHtml(p.id)}"
@@ -1423,7 +1447,27 @@ function renderSidebarAccounts() {
         <span class="px-1.5 py-0.2 text-[10px] rounded-full m3-subcard font-mono shrink-0 ml-1.5 ${isExpired ? 'text-[var(--google-red)] font-bold' : (isActive ? 'text-[var(--google-blue-on-container)]' : 'text-[var(--m3-on-surface-subtle)]')}">${count}</span>
       </button>
     `;
-  });
+  };
+
+  const { proProfiles, standardProfiles } = partitionProfilesByTier(state.profiles);
+  if (proProfiles.length > 0) {
+    html += `
+      <div class="flex items-center justify-between px-2.5 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--google-yellow)]">
+        <span class="flex items-center gap-1"><i data-lucide="sparkles" class="w-3 h-3"></i> AI Pro · Family Plan</span>
+        <span class="font-mono text-[var(--m3-on-surface-subtle)]">${proProfiles.length}</span>
+      </div>
+    `;
+    html += proProfiles.map(renderSidebarProfileBtn).join('');
+  }
+  if (standardProfiles.length > 0) {
+    html += `
+      <div class="flex items-center justify-between px-2.5 pt-2.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--m3-on-surface-subtle)]">
+        <span>Standard Accounts</span>
+        <span class="font-mono">${standardProfiles.length}</span>
+      </div>
+    `;
+    html += standardProfiles.map(renderSidebarProfileBtn).join('');
+  }
 
   listEl.innerHTML = html;
 
@@ -2150,7 +2194,7 @@ function renderAccountsModalList() {
     return;
   }
 
-  container.innerHTML = state.profiles.map(p => {
+  const renderProfileCard = (p) => {
     const isPro = p.isDefaultPro;
     const isEditing = state.editingProfileId === p.id;
 
@@ -2433,7 +2477,41 @@ function renderAccountsModalList() {
         </div>
       </div>
     `;
-  }).join('');
+  };
+
+  const { proProfiles, standardProfiles } = partitionProfilesByTier(state.profiles);
+  const sections = [];
+  if (proProfiles.length > 0) {
+    sections.push(`
+      <div class="space-y-2">
+        <div class="flex flex-wrap items-center justify-between gap-2 px-1 pt-1">
+          <div class="flex items-center gap-1.5">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5 text-[var(--google-yellow)]"></i>
+            <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--google-yellow)]">AI Pro · Family Plan</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.2 rounded-full m3-subcard text-[var(--m3-on-surface-subtle)]">${proProfiles.length}</span>
+          </div>
+          <span class="text-[10px] text-[var(--m3-on-surface-subtle)]">Higher Power Access · 300 sources/notebook · Independent Pro quota per account</span>
+        </div>
+        <div class="space-y-2.5">${proProfiles.map(renderProfileCard).join('')}</div>
+      </div>
+    `);
+  }
+  if (standardProfiles.length > 0) {
+    sections.push(`
+      <div class="space-y-2">
+        <div class="flex flex-wrap items-center justify-between gap-2 px-1 pt-2 border-t border-[var(--m3-outline-variant)]">
+          <div class="flex items-center gap-1.5">
+            <i data-lucide="user" class="w-3.5 h-3.5 text-[var(--m3-on-surface-subtle)]"></i>
+            <span class="text-[11px] font-semibold uppercase tracking-wider text-[var(--m3-on-surface-variant)]">Standard Accounts</span>
+            <span class="text-[10px] font-mono px-1.5 py-0.2 rounded-full m3-subcard text-[var(--m3-on-surface-subtle)]">${standardProfiles.length}</span>
+          </div>
+          <span class="text-[10px] text-[var(--m3-on-surface-subtle)]">50 sources/notebook · Independent standard quota per account</span>
+        </div>
+        <div class="space-y-2.5">${standardProfiles.map(renderProfileCard).join('')}</div>
+      </div>
+    `);
+  }
+  container.innerHTML = sections.join('');
 
   // Wire event listeners
   container.querySelectorAll('.btn-account-edit').forEach(btn => {
