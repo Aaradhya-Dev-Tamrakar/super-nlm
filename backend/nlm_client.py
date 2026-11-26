@@ -311,6 +311,19 @@ async def fetch_notebooks_for_profile(profile: AccountProfile, retries: int = 1)
         logger.error(f"Error parsing JSON from profile {profile.id}: {e}")
         raise RuntimeError(f"Invalid JSON response from profile {profile.id}: {e}")
 
+def _is_missing_profile_error(err_text: str) -> bool:
+    lower = (err_text or "").lower()
+    return any(
+        needle in lower
+        for needle in (
+            "profile not found",
+            "not logged in",
+            "no credentials",
+            "create a profile",
+        )
+    )
+
+
 async def fetch_all_notebooks_concurrently(
     profiles: List[AccountProfile],
     fallback_cached: Optional[List[Notebook]] = None
@@ -359,8 +372,12 @@ async def fetch_all_notebooks_concurrently(
             else:
                 profile_counts[profile.id] = 0
                 profile.notebookCount = 0
-            profile.status = "expired"
-            profile.lastError = err_str or "Authentication expired or session invalid"
+            if _is_missing_profile_error(err_str):
+                profile.status = "not_logged_in"
+                profile.lastError = None
+            else:
+                profile.status = "expired"
+                profile.lastError = err_str or "Authentication expired or session invalid"
 
     # Sort notebooks by updated_at descending (latest first)
     all_notebooks.sort(key=lambda n: n.updated_at or "", reverse=True)
@@ -401,6 +418,16 @@ async def check_profile_auth_status(profile: AccountProfile, timeout: int = 20) 
         }
     else:
         err_msg = err or out or "Authentication session expired or missing cookies"
+        if _is_missing_profile_error(err_msg):
+            profile.status = "not_logged_in"
+            profile.lastError = None
+            return {
+                "profile_id": profile.id,
+                "status": "not_logged_in",
+                "is_valid": False,
+                "message": "Account has not been signed in yet",
+                "details": err_msg
+            }
         profile.status = "expired"
         profile.lastError = err_msg
         return {

@@ -241,8 +241,8 @@
               --% Used
             </span>
           </div>
-          <!-- 6-Account Visual Dots / Meter -->
-          <div id="sidebar-quota-dots" class="flex items-center gap-1 pt-0.5">
+          <!-- Account Visual Dots / Meter -->
+          <div id="sidebar-quota-dots" class="flex items-center flex-wrap gap-1 pt-0.5">
             <div class="h-1.5 flex-1 rounded-full bg-[var(--m3-outline-variant)] animate-pulse"></div>
             <div class="h-1.5 flex-1 rounded-full bg-[var(--m3-outline-variant)] animate-pulse"></div>
             <div class="h-1.5 flex-1 rounded-full bg-[var(--m3-outline-variant)] animate-pulse"></div>
@@ -940,10 +940,36 @@
       <div class="p-6 overflow-y-auto space-y-6">
         
         <!-- Connected Accounts List -->
-        <div>
-          <h4 class="text-xs font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider mb-3">
-            Connected Profiles
-          </h4>
+        <div class="space-y-3">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <h4 class="text-xs font-medium text-[var(--m3-on-surface-subtle)] uppercase tracking-wider">
+              Fleet Profiles
+            </h4>
+            <div class="relative flex-1 sm:max-w-xs">
+              <i data-lucide="search" class="w-3.5 h-3.5 text-[var(--m3-on-surface-subtle)] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+              <input
+                type="text"
+                id="accounts-modal-search"
+                placeholder="Search name, email, or ID..."
+                autocomplete="off"
+                class="w-full pl-8 pr-3 py-1.5 bg-[var(--m3-surface-container)] border border-[var(--m3-outline-variant)] rounded-full text-xs text-[var(--m3-on-surface)] placeholder-[var(--m3-on-surface-subtle)] focus:outline-none focus:border-[var(--google-blue)] transition"
+              >
+            </div>
+          </div>
+          <div id="accounts-modal-filters" class="flex items-center gap-1.5 flex-wrap">
+            <button type="button" data-accounts-filter="all" class="accounts-filter-btn px-2.5 py-1 rounded-full text-[11px] font-medium cursor-pointer transition bg-[var(--google-blue-container)] text-[var(--google-blue-on-container)]">
+              All <span data-filter-count="all" class="font-mono opacity-80 ml-0.5">0</span>
+            </button>
+            <button type="button" data-accounts-filter="connected" class="accounts-filter-btn px-2.5 py-1 rounded-full text-[11px] font-medium cursor-pointer transition m3-subcard text-[var(--m3-on-surface-variant)] hover:text-[var(--m3-on-surface)]">
+              Connected <span data-filter-count="connected" class="font-mono opacity-80 ml-0.5">0</span>
+            </button>
+            <button type="button" data-accounts-filter="pro" class="accounts-filter-btn px-2.5 py-1 rounded-full text-[11px] font-medium cursor-pointer transition m3-subcard text-[var(--m3-on-surface-variant)] hover:text-[var(--m3-on-surface)]">
+              AI Pro <span data-filter-count="pro" class="font-mono opacity-80 ml-0.5">0</span>
+            </button>
+            <button type="button" data-accounts-filter="needs_login" class="accounts-filter-btn px-2.5 py-1 rounded-full text-[11px] font-medium cursor-pointer transition m3-subcard text-[var(--m3-on-surface-variant)] hover:text-[var(--m3-on-surface)]">
+              Needs Login <span data-filter-count="needs_login" class="font-mono opacity-80 ml-0.5">0</span>
+            </button>
+          </div>
           <div id="accounts-list" class="space-y-2">
             <!-- Dynamically populated accounts -->
           </div>
