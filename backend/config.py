@@ -18,6 +18,7 @@ SCHEDULED_JOBS_FILE = DATA_DIR / "scheduled_jobs.json"
 FOLDER_MAPPINGS_FILE = DATA_DIR / "folder_mappings.json"
 SHARING_RULES_FILE = DATA_DIR / "sharing_rules.json"
 USER_CATALOG_FILE = DATA_DIR / "user_catalog.json"
+NLM_AUTH_MIRROR_DIR = BASE_DIR / ".nlm-auth"
 DOWNLOADS_DIR = Path.home() / "Downloads" / "Super-NLM" / "Generated"
 
 # NotebookLM Quotas & Capacity Limits
@@ -67,6 +68,8 @@ def _load_env_file():
 
 
 _load_env_file()
+if not os.environ.get("NLM_AUTH_STORAGE", "").strip():
+    os.environ["NLM_AUTH_STORAGE"] = "file"
 
 
 def load_user_catalog() -> dict[str, Any]:

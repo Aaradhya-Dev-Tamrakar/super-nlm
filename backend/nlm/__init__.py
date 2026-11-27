@@ -17,6 +17,7 @@ from backend.nlm.profiles import (
     fetch_notebooks_for_profile,
     get_cli_profiles,
     launch_cli_login,
+    mirror_nlm_auth_to_repo,
     rename_cli_profile,
 )
 from backend.nlm.query import (
@@ -72,6 +73,7 @@ __all__ = [
     "get_studio_status",
     "is_rate_limit_or_quota_error",
     "launch_cli_login",
+    "mirror_nlm_auth_to_repo",
     "query_notebook",
     "query_notebook_with_pro_fallback",
     "remove_notebook_collaborator",

@@ -6,15 +6,75 @@ import asyncio
 import datetime
 import json
 import logging
+import os
 import re
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
+import backend.config as _config
 from backend.config import NLM_EXECUTABLE, SUPER_NLM_FLEET_CONCURRENCY
 from backend.models import AccountProfile, Notebook
 
 logger = logging.getLogger("backend.nlm_client")
+
+_PROFILE_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]{1,64}$")
+_MIRROR_PROFILE_FILES = ("cookies.json", "metadata.json", "storage-mode.json")
+
+
+def mirror_nlm_auth_to_repo(profile_id: str | None = None) -> list[str]:
+    """Copy plain-file NotebookLM profile credentials into the gitignored repo mirror (.nlm-auth)."""
+    src_root = Path(os.environ.get("NOTEBOOKLM_MCP_CLI_PATH") or (Path.home() / ".notebooklm-mcp-cli"))
+    dst_root = Path(_config.NLM_AUTH_MIRROR_DIR)
+    if not src_root.exists():
+        return []
+    try:
+        if src_root.resolve() == dst_root.resolve():
+            return []
+    except OSError:
+        pass
+
+    src_profiles = src_root / "profiles"
+    if not src_profiles.is_dir():
+        return []
+
+    if profile_id is not None:
+        if not _PROFILE_ID_RE.match(profile_id):
+            return []
+        candidates = [src_profiles / profile_id]
+    else:
+        candidates = sorted((d for d in src_profiles.iterdir() if d.is_dir()), key=lambda d: d.name)
+
+    mirrored: list[str] = []
+    for p_dir in candidates:
+        if not p_dir.is_dir():
+            continue
+        files_to_copy = [p_dir / name for name in _MIRROR_PROFILE_FILES if (p_dir / name).is_file()]
+        if not any(f.name == "cookies.json" and f.stat().st_size > 0 for f in files_to_copy):
+            continue
+        target_dir = dst_root / "profiles" / p_dir.name
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for src_file in files_to_copy:
+                if src_file.stat().st_size > 0:
+                    shutil.copy2(src_file, target_dir / src_file.name)
+            mirrored.append(p_dir.name)
+        except OSError as exc:
+            logger.debug("Failed to mirror NLM auth for profile '%s': %s", p_dir.name, exc)
+
+    if profile_id is None:
+        root_auth = src_root / "auth.json"
+        if root_auth.is_file():
+            try:
+                if root_auth.stat().st_size > 0:
+                    dst_root.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(root_auth, dst_root / "auth.json")
+            except OSError as exc:
+                logger.debug("Failed to mirror root auth.json: %s", exc)
+
+    return mirrored
 
 
 def _facade():
@@ -169,6 +229,7 @@ async def check_profile_auth_status(profile: AccountProfile, timeout: int = 20) 
     if is_valid:
         profile.status = "connected"
         profile.lastError = None
+        mirror_nlm_auth_to_repo(profile.id)
         for line in out.splitlines():
             stripped = line.strip()
             if stripped.lower().startswith("account:"):
@@ -219,17 +280,21 @@ def launch_cli_login(profile_id: str, clear: bool = True):
         flags.append("--clear")
 
     cmd_args = [NLM_EXECUTABLE, *flags]
+    child_env = os.environ.copy()
+    if not child_env.get("NLM_AUTH_STORAGE", "").strip():
+        child_env["NLM_AUTH_STORAGE"] = "file"
 
     if sys.platform == "win32":
         quoted_cmd = subprocess.list2cmdline(cmd_args)
         console_cmd = f'cmd.exe /k "echo Logging in to Super-NLM profile: {profile_id}... && {quoted_cmd} && echo. && echo Profile auth complete! You can close this window now. && pause"'
         return subprocess.Popen(
             console_cmd,
+            env=child_env,
             creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
         )
 
     logger.info(f"Launching login CLI for profile: {profile_id}")
-    return subprocess.Popen(cmd_args)
+    return subprocess.Popen(cmd_args, env=child_env)
 
 
 async def delete_cli_profile(profile_id: str) -> bool:

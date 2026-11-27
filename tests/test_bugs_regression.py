@@ -133,6 +133,59 @@ def test_regression_unique_notebook_aggregation():
     assert len(unique_ids) > 0
     print(f'  [PASS] Deduplication: Successfully identified {len(unique_ids)} unique notebook IDs across profiles.')
 
+
+def test_launch_cli_login_defaults_plain_file_storage(monkeypatch):
+    from unittest.mock import MagicMock
+
+    captured = {}
+
+    def fake_popen(*args, **kwargs):
+        captured["env"] = kwargs.get("env") or {}
+        return MagicMock()
+
+    monkeypatch.delenv("NLM_AUTH_STORAGE", raising=False)
+    monkeypatch.setattr("backend.nlm.profiles.subprocess.Popen", fake_popen)
+    launch_cli_login("agy-user2")
+    assert captured["env"].get("NLM_AUTH_STORAGE") == "file"
+
+    monkeypatch.setenv("NLM_AUTH_STORAGE", "protected")
+    launch_cli_login("agy-user2")
+    assert captured["env"].get("NLM_AUTH_STORAGE") == "protected"
+
+
+def test_mirror_nlm_auth_to_repo_copies_only_plain_auth_files(tmp_path, monkeypatch):
+    from backend import config as config_module
+    from backend.nlm_client import mirror_nlm_auth_to_repo
+
+    src_root = tmp_path / "nlm-src"
+    dst_root = tmp_path / "repo-mirror"
+    monkeypatch.setenv("NOTEBOOKLM_MCP_CLI_PATH", str(src_root))
+    monkeypatch.setattr(config_module, "NLM_AUTH_MIRROR_DIR", dst_root)
+
+    # Create two profiles and unrelated browser cache that must NOT be copied
+    for pid in ("default", "agy-user2"):
+        p_dir = src_root / "profiles" / pid
+        p_dir.mkdir(parents=True)
+        (p_dir / "cookies.json").write_text('{"SID": "abc"}', encoding="utf-8")
+        (p_dir / "metadata.json").write_text('{"email": "user@example.invalid"}', encoding="utf-8")
+        (p_dir / "storage-mode.json").write_text('{"version": 1, "mode": "file"}', encoding="utf-8")
+
+    (src_root / "chrome-profiles" / "default").mkdir(parents=True)
+    (src_root / "chrome-profiles" / "default" / "BigCache").write_text("junk", encoding="utf-8")
+    (src_root / "auth.json").write_text('{"cookies": {}}', encoding="utf-8")
+
+    mirrored_single = mirror_nlm_auth_to_repo("agy-user2")
+    assert mirrored_single == ["agy-user2"]
+    assert (dst_root / "profiles" / "agy-user2" / "cookies.json").exists()
+    assert not (dst_root / "profiles" / "default").exists()
+
+    mirrored_all = mirror_nlm_auth_to_repo()
+    assert mirrored_all == ["agy-user2", "default"]
+    assert (dst_root / "profiles" / "default" / "metadata.json").exists()
+    assert (dst_root / "auth.json").exists()
+    assert not (dst_root / "chrome-profiles").exists()
+
+
 if __name__ == '__main__':
     print('Running Super-NLM Regression Tests...')
     test_regression_security()

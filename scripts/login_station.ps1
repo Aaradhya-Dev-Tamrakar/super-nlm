@@ -8,6 +8,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+if (-not $env:NLM_AUTH_STORAGE) {
+    $env:NLM_AUTH_STORAGE = "file"
+}
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $ProfilesPath = Join-Path $RepoRoot "data\profiles.json"
@@ -197,6 +200,19 @@ for ($i = 0; $i -lt $pending.Count; $i++) {
         }
     }
     $profiles | ConvertTo-Json -Depth 10 | Set-Content -Path $ProfilesPath -Encoding UTF8
+
+    $nlmRoot = if ($env:NOTEBOOKLM_MCP_CLI_PATH) { $env:NOTEBOOKLM_MCP_CLI_PATH } else { Join-Path $env:USERPROFILE ".notebooklm-mcp-cli" }
+    $srcProfileDir = Join-Path $nlmRoot ("profiles\" + $p.id)
+    $dstProfileDir = Join-Path $RepoRoot (".nlm-auth\profiles\" + $p.id)
+    if (Test-Path (Join-Path $srcProfileDir "cookies.json")) {
+        New-Item -ItemType Directory -Path $dstProfileDir -Force | Out-Null
+        foreach ($fName in @("cookies.json", "metadata.json", "storage-mode.json")) {
+            $srcFile = Join-Path $srcProfileDir $fName
+            if (Test-Path $srcFile) {
+                Copy-Item -Path $srcFile -Destination (Join-Path $dstProfileDir $fName) -Force
+            }
+        }
+    }
 
     $completedCount++
     if ($completedCount % 5 -eq 0 -and $idx -lt $pending.Count) {

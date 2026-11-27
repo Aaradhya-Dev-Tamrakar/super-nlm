@@ -60,6 +60,7 @@ from backend.nlm_client import (
     fetch_profile_usage,
     get_cli_profiles,
     launch_cli_login,
+    mirror_nlm_auth_to_repo,
     query_notebook_with_pro_fallback,
     rename_cli_profile,
     synthesize_cross_notebook,
@@ -92,6 +93,11 @@ logger = logging.getLogger("super_nlm")
 
 async def _startup_background_sync():
     """Reconcile CLI profile emails and run initial notebook sync without blocking server startup."""
+    try:
+        await asyncio.to_thread(mirror_nlm_auth_to_repo)
+    except Exception as e:
+        logger.debug(f"Error mirroring NLM auth on startup: {e}")
+
     try:
         cli_profiles, profiles = await asyncio.gather(get_cli_profiles(), get_profiles())
         for p in profiles:
@@ -245,6 +251,7 @@ async def _watch_cli_login(profile_id: str, proc) -> None:
         if not profile:
             return
         await check_profile_auth_status(profile)
+        await asyncio.to_thread(mirror_nlm_auth_to_repo, profile.id)
         if not profile.email:
             cli_profiles = await get_cli_profiles()
             if cli_profiles.get(profile.id):

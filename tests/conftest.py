@@ -16,6 +16,7 @@ def isolated_runtime(tmp_path, monkeypatch):
     from backend.process_lease import ProcessLease
 
     monkeypatch.setattr(config_module, "USER_CATALOG_FILE", tmp_path / "user_catalog.json")
+    monkeypatch.setattr(config_module, "NLM_AUTH_MIRROR_DIR", tmp_path / ".nlm-auth")
     monkeypatch.setattr(scheduler_module, "SCHEDULED_JOBS_FILE", tmp_path / "jobs.json")
     monkeypatch.setattr(scheduler_module, "DOWNLOADS_DIR", tmp_path / "generated")
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
